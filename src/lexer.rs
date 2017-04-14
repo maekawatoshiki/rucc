@@ -35,6 +35,7 @@ pub struct Lexer<'a> {
     cur_line: i32,
     filename: String,
     peek: iter::Peekable<str::Chars<'a>>,
+    peek_pos: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -43,11 +44,17 @@ impl<'a> Lexer<'a> {
             cur_line: 0,
             filename: filename.to_string(),
             peek: input.chars().peekable(),
+            peek_pos: 0,
         };
         l
     }
     pub fn get_filename(self) -> String {
         self.filename
+    }
+
+    fn peek_next(&mut self) -> char {
+        self.peek_pos += 1;
+        self.peek.next().unwrap()
     }
 
     pub fn read_identifier(&mut self) -> Token {
@@ -62,18 +69,18 @@ impl<'a> Lexer<'a> {
                 }
                 _ => break,
             };
-            self.peek.next();
+            self.peek_next();
         }
         Token::new(TokenKind::Identifier, ident.as_str(), self.cur_line)
     }
     pub fn read_newline(&mut self) -> Token {
-        self.peek.next();
+        self.peek_next();
         Token::new(TokenKind::Newline, "", self.cur_line)
     }
     pub fn read_symbol(&mut self) -> Token {
-        let c = self.peek.next();
+        let c = self.peek_next();
         let mut sym = String::new();
-        sym.push(c.unwrap());
+        sym.push(c);
         Token::new(TokenKind::Symbol, sym.as_str(), self.cur_line)
     }
 
@@ -83,7 +90,7 @@ impl<'a> Lexer<'a> {
                 match c {
                     'a'...'z' | 'A'...'Z' | '_' => Some(self.read_identifier()),
                     ' ' | '\t' => {
-                        self.peek.next();
+                        self.peek_next();
                         self.read_token()
                     }
                     '\n' => Some(self.read_newline()),
@@ -91,6 +98,6 @@ impl<'a> Lexer<'a> {
                 }
             }
             None => None as Option<Token>,
-        };
+        }
     }
 }
