@@ -3,6 +3,7 @@ use std::io;
 use std::io::prelude::*;
 use std::iter;
 use std::str;
+use std::collections::VecDeque;
 
 pub enum TokenKind {
     Identifier,
@@ -35,32 +36,48 @@ pub struct Lexer<'a> {
     cur_line: i32,
     filename: String,
     peek: iter::Peekable<str::Chars<'a>>,
-    peek_pos: usize,
+    buf: VecDeque<char>,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(filename: String, input: &'a str) -> Lexer<'a> {
-        let l = Lexer {
+        Lexer {
             cur_line: 0,
             filename: filename.to_string(),
             peek: input.chars().peekable(),
-            peek_pos: 0,
-        };
-        l
+            buf: VecDeque::new(),
+        }
     }
     pub fn get_filename(self) -> String {
         self.filename
     }
 
+    fn peek_get(&mut self) -> Option<&char> {
+        if self.buf.len() > 0 {
+            self.buf.front()
+        } else {
+            self.peek.peek()
+        }
+    }
     fn peek_next(&mut self) -> char {
-        self.peek_pos += 1;
-        self.peek.next().unwrap()
+        if self.buf.len() > 0 {
+            self.buf.pop_front().unwrap()
+        } else {
+            self.peek.next().unwrap()
+        }
+    }
+    fn peek_unget(&mut self, ch: char) {
+        self.buf.push_back(ch);
+    }
+    fn peek_next_char_is(&mut self, ch: char) -> bool {
+        let nextc = self.peek_next();
+        nextc == ch
     }
 
     pub fn read_identifier(&mut self) -> Token {
         let mut ident = String::new();
         loop {
-            match self.peek.peek() {
+            match self.peek_get() {
                 Some(&c) => {
                     match c {
                         'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
@@ -85,7 +102,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn read_token(&mut self) -> Option<Token> {
-        match self.peek.peek() {
+        match self.peek_get() {
             Some(&c) => {
                 match c {
                     'a'...'z' | 'A'...'Z' | '_' => Some(self.read_identifier()),
