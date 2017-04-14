@@ -91,6 +91,6 @@ impl<'a> Lexer<'a> {
                 }
             }
             None => None as Option<Token>,
-        };
+        }
     }
 }
