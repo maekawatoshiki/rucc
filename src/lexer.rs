@@ -78,8 +78,7 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn read_token(&mut self) -> Option<Token> {
-        // TODO: tentatively
-        let ret = match self.peek.peek() {
+        match self.peek.peek() {
             Some(&c) => {
                 match c {
                     'a'...'z' | 'A'...'Z' | '_' => Some(self.read_identifier()),
@@ -93,6 +92,5 @@ impl<'a> Lexer<'a> {
             }
             None => None as Option<Token>,
         };
-        ret
     }
 }
