@@ -64,19 +64,11 @@ impl<'a> Lexer<'a> {
             };
             self.peek.next();
         }
-        Token {
-            kind: TokenKind::Identifier,
-            val: ident,
-            line: self.cur_line,
-        }
+        Token::new(TokenKind::Identifier, ident, self.cur_line);
     }
     pub fn read_newline(&mut self) -> Token {
         self.peek.next();
-        Token {
-            kind: TokenKind::Newline,
-            val: "".to_string(),
-            line: self.cur_line,
-        }
+        Token::new(TokenKind::Newline, "".to_string(), self.cur_line);
     }
     pub fn read_symbol(&mut self) -> Token {
         let c = self.peek.next();
