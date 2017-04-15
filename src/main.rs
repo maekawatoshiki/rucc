@@ -1,11 +1,9 @@
 mod version_info;
+mod node;
 mod lexer;
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader};
-use std::io;
 use std::io::prelude::*;
-use std::iter;
 use std::str;
 
 fn main() {
@@ -23,7 +21,6 @@ fn main() {
         let mut s = String::new();
         file.read_to_string(&mut s);
         let mut lexer = lexer::Lexer::new(input_file_name, s.as_str());
-
         // test
         let mut tok: Option<lexer::Token>;
         loop {

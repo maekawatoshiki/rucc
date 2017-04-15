@@ -13,7 +13,6 @@ pub enum TokenKind {
     Char,
     Symbol,
     Newline,
-    End,
 }
 
 pub struct Token {
@@ -104,7 +103,7 @@ impl<'a> Lexer<'a> {
                     match c {
                         '.' | '0'...'9' => {
                             num.push(c);
-                            if (c == '.') {
+                            if c == '.' {
                                 is_float = true;
                             }
                         }
@@ -131,20 +130,20 @@ impl<'a> Lexer<'a> {
         sym.push(c);
         match c {
             '+' | '-' | '*' | '/' | '%' | '=' | '^' | '!' => {
-                if (self.peek_char_is('=')) {
+                if self.peek_char_is('=') {
                     sym.push(self.peek_next());
                 }
             }
             '<' | '>' | '&' | '|' => {
-                if (self.peek_char_is(c)) {
+                if self.peek_char_is(c) {
                     sym.push(self.peek_next());
                 }
-                if (self.peek_char_is('=')) {
+                if self.peek_char_is('=') {
                     sym.push(self.peek_next());
                 }
             }
             '.' => {
-                if (self.peek_char_is('.') && self.peek_next_char_is('.')) {
+                if self.peek_char_is('.') && self.peek_next_char_is('.') {
                     sym.push(self.peek_next());
                     sym.push(self.peek_next());
                 }
