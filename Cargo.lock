@@ -1,6 +1,6 @@
 [root]
 name = "rucc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "llvm-sys 38.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

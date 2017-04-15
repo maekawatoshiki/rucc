@@ -24,7 +24,7 @@ fn main() {
         // test
         let mut tok: Option<lexer::Token>;
         loop {
-            tok = lexer.read_token();
+            tok = lexer.get();
             match tok {
                 Some(t) => {
                     println!("token: {}", t.val);

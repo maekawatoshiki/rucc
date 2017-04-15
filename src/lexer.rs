@@ -1,10 +1,13 @@
 use std::io::{BufRead, BufReader};
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::prelude::*;
 use std::iter;
 use std::str;
 use std::collections::VecDeque;
+use std::path;
 
+#[derive(PartialEq)]
 pub enum TokenKind {
     Identifier,
     IntNumber,
@@ -35,7 +38,8 @@ pub struct Lexer<'a> {
     cur_line: i32,
     filename: String,
     peek: iter::Peekable<str::Chars<'a>>,
-    buf: VecDeque<char>,
+    peek_buf: VecDeque<char>,
+    buf: VecDeque<Token>,
 }
 
 impl<'a> Lexer<'a> {
@@ -44,6 +48,7 @@ impl<'a> Lexer<'a> {
             cur_line: 0,
             filename: filename.to_string(),
             peek: input.chars().peekable(),
+            peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
         }
     }
@@ -52,30 +57,46 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_get(&mut self) -> Option<&char> {
-        if self.buf.len() > 0 {
-            self.buf.front()
+        if self.peek_buf.len() > 0 {
+            self.peek_buf.front()
         } else {
             self.peek.peek()
         }
     }
     fn peek_next(&mut self) -> char {
-        if self.buf.len() > 0 {
-            self.buf.pop_front().unwrap()
+        if self.peek_buf.len() > 0 {
+            self.peek_buf.pop_front().unwrap()
         } else {
             self.peek.next().unwrap()
         }
     }
     fn peek_unget(&mut self, ch: char) {
-        self.buf.push_back(ch);
+        self.peek_buf.push_back(ch);
     }
     fn peek_next_char_is(&mut self, ch: char) -> bool {
+        let c = self.peek_next();
         let nextc = self.peek_next();
+        self.peek_unget(c);
         self.peek_unget(nextc);
         nextc == ch
     }
     fn peek_char_is(&mut self, ch: char) -> bool {
         let peekc = self.peek_get().unwrap();
         *peekc == ch
+    }
+
+    fn skip(&mut self, s: &str) -> bool {
+        let next = self.read_token();
+        let n = next.ok_or("error").unwrap();
+        if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {
+            true
+        } else {
+            self.buf.push_back(n);
+            false
+        }
+    }
+    fn unget(&mut self, t: Token) {
+        self.buf.push_back(t);
     }
 
     pub fn read_identifier(&mut self) -> Token {
@@ -172,6 +193,10 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn do_read_token(&mut self) -> Option<Token> {
+        if !self.buf.is_empty() {
+            return self.buf.pop_front();
+        }
+
         match self.peek_get() {
             Some(&c) => {
                 match c {
@@ -184,6 +209,28 @@ impl<'a> Lexer<'a> {
                     '\"' => Some(self.read_string_literal()),
                     '\'' => Some(self.read_char_literal()),
                     '\n' => Some(self.read_newline()),
+                    '/' => {
+                        if self.peek_next_char_is('*') {
+                            self.peek_next(); // /
+                            self.peek_next(); // *
+                            while !(self.peek_char_is('*') && self.peek_next_char_is('/')) {
+                                self.peek_next();
+                            }
+                            self.peek_next();
+                            self.peek_next();
+                            println!("{}", self.peek_get().unwrap());
+                            self.do_read_token()
+                        } else if self.peek_next_char_is('/') {
+                            self.peek_next(); // /
+                            self.peek_next(); // /
+                            while !self.peek_char_is('\n') {
+                                self.peek_next();
+                            }
+                            self.do_read_token()
+                        } else {
+                            Some(self.read_symbol())
+                        }
+                    }
                     _ => Some(self.read_symbol()),
                 }
             }
@@ -201,5 +248,71 @@ impl<'a> Lexer<'a> {
             }
             _ => t,
         }
+    }
+
+    pub fn get(&mut self) -> Option<Token> {
+        let t = self.read_token();
+        match t {
+            Some(tok) => {
+                if tok.val == "#" {
+                    // preprocessor directive
+                    self.read_cpp_directive();
+                    self.get()
+                } else {
+                    Some(tok)
+                }
+            }
+            _ => t,
+        }
+    }
+
+    // for c preprocessor
+
+    fn read_cpp_directive(&mut self) {
+        let t = self.do_read_token(); // cpp directive
+        match t.ok_or("error").unwrap().val.as_str() {
+            "include" => self.read_cpp_include(),
+            _ => {}
+        }
+    }
+
+    fn read_cpp_include(&mut self) {
+        let mut filename = String::new();
+        if self.skip("<") {
+            while !self.peek_char_is('>') {
+                filename.push(*self.peek_get().ok_or("error").unwrap());
+                self.peek_next();
+            }
+            self.peek_next();
+        }
+        let header_paths = vec!["./include/",
+                                "/include/",
+                                "/usr/include/",
+                                "/usr/include/linux/",
+                                "/usr/include/x86_64-linux-gnu/",
+                                ""];
+        let mut real_fname = "".to_string();
+        for header_path in header_paths {
+            real_fname = format!("{}{}", header_path, filename);
+            if path::Path::new(real_fname.as_str()).exists() {
+                break;
+            }
+        }
+        println!("include filename: {}", real_fname);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(real_fname.to_string())
+            .unwrap();
+        let mut body = String::new();
+        file.read_to_string(&mut body);
+        let mut lexer = Lexer::new(filename, body.as_str());
+        loop {
+            let t = lexer.get();
+            match t {
+                Some(tok) => self.buf.push_back(tok),
+                None => break,
+            }
+        }
+        println!("end filename: {}", real_fname);
     }
 }
