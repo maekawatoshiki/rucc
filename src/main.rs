@@ -1,6 +1,6 @@
-mod version_info;
-mod node;
-mod lexer;
+extern crate rucc;
+use rucc::version_info;
+use rucc::lexer;
 
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;

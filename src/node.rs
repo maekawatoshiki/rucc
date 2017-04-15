@@ -89,7 +89,6 @@ impl BinaryOpAST {
             CBinOps::Ge => (lhs >= rhs) as i32,
             CBinOps::Shl => lhs << rhs,
             CBinOps::Shr => lhs >> rhs,
-            _ => panic!("unknown operator"),
         }
     }
 }
