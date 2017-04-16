@@ -1,10 +1,12 @@
 extern crate rucc;
+
 use rucc::version_info;
 use rucc::lexer;
 
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::str;
+
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

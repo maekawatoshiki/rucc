@@ -9,14 +9,14 @@ use std::path;
 use std::process;
 use std::collections::HashMap;
 use error;
+use MacroMap;
 
-enum Macro {
+pub enum Macro {
     Object(Vec<Token>),
     // FuncLile()
 }
 
-
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum TokenKind {
     Identifier,
     IntNumber,
@@ -27,6 +27,7 @@ pub enum TokenKind {
     Newline,
 }
 
+#[derive(PartialEq, Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
     pub space: bool, // leading space
@@ -51,7 +52,6 @@ pub struct Lexer<'a> {
     peek: iter::Peekable<str::Chars<'a>>,
     peek_buf: VecDeque<char>,
     buf: VecDeque<Token>,
-    macro_map: HashMap<String, Macro>,
 }
 
 impl<'a> Lexer<'a> {
@@ -62,7 +62,6 @@ impl<'a> Lexer<'a> {
             peek: input.chars().peekable(),
             peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
-            macro_map: HashMap::new(),
         }
     }
     pub fn get_filename(self) -> String {
@@ -278,9 +277,25 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn expand(&mut self, token: Option<Token>) -> Option<Token> {
+        token.and_then(|tok| match MacroMap.lock().unwrap().get(tok.val.as_str()) {
+                           Some(a) => {
+            match a {
+                &Macro::Object(ref t) => {
+                    for tt in t {
+                        self.unget(tt.clone());
+                    }
+                }
+            }
+            self.read_token()
+        }
+                           None => Some(tok),
+                       })
+    }
+
     pub fn get(&mut self) -> Option<Token> {
         let t = self.read_token();
-        match t {
+        let tok = match t {
             Some(tok) => {
                 if tok.val == "#" {
                     // preprocessor directive
@@ -290,8 +305,9 @@ impl<'a> Lexer<'a> {
                     Some(tok)
                 }
             }
-            _ => t,
-        }
+            _ => return t,
+        };
+        self.expand(tok)
     }
 
     // for c preprocessor
@@ -355,10 +371,6 @@ impl<'a> Lexer<'a> {
                 None => break,
             }
         }
-        // copying macros
-        for (key, val) in lexer.macro_map {
-            self.macro_map.insert(key, val);
-        }
         println!("end of: {}", real_filename);
     }
 
@@ -384,6 +396,9 @@ impl<'a> Lexer<'a> {
             body.push(c);
         }
         println!();
-        self.macro_map.insert(mcro.val, Macro::Object(body));
+        MacroMap
+            .lock()
+            .unwrap()
+            .insert(mcro.val, Macro::Object(body));
     }
 }
