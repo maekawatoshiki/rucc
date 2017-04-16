@@ -7,7 +7,14 @@ use std::str;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
+use std::collections::HashMap;
 use error;
+
+enum Macro {
+    Object(Vec<Token>),
+    // FuncLile()
+}
+
 
 #[derive(PartialEq, Debug)]
 pub enum TokenKind {
@@ -44,6 +51,7 @@ pub struct Lexer<'a> {
     peek: iter::Peekable<str::Chars<'a>>,
     peek_buf: VecDeque<char>,
     buf: VecDeque<Token>,
+    macro_map: HashMap<String, Macro>,
 }
 
 impl<'a> Lexer<'a> {
@@ -54,6 +62,7 @@ impl<'a> Lexer<'a> {
             peek: input.chars().peekable(),
             peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
+            macro_map: HashMap::new(),
         }
     }
     pub fn get_filename(self) -> String {
@@ -224,6 +233,10 @@ impl<'a> Lexer<'a> {
                     '\"' => Some(self.read_string_literal()),
                     '\'' => Some(self.read_char_literal()),
                     '\n' => Some(self.read_newline()),
+                    '\\' => {
+                        self.peek_next();
+                        self.read_token()
+                    }
                     '/' => {
                         if self.peek_next_char_is('*') {
                             self.peek_next(); // /
@@ -342,6 +355,10 @@ impl<'a> Lexer<'a> {
                 None => break,
             }
         }
+        // copying macros
+        for (key, val) in lexer.macro_map {
+            self.macro_map.insert(key, val);
+        }
         println!("end of: {}", real_filename);
     }
 
@@ -349,14 +366,15 @@ impl<'a> Lexer<'a> {
         let mcro = self.do_read_token().unwrap();
         assert_eq!(mcro.kind, TokenKind::Identifier);
 
+        // TODO: func like macro is unsupported now..
         if self.skip("(") {
             error::error_exit(self.cur_line, "unsupported");
         }
 
-        println!("macro name: {}", mcro.val);
+        println!("\tmacro name: {}", mcro.val);
 
         let mut body: Vec<Token> = Vec::new();
-        print!("macro body: ");
+        print!("\tmacro body: ");
         loop {
             let c = self.do_read_token().unwrap();
             if c.kind == TokenKind::Newline {
@@ -366,5 +384,6 @@ impl<'a> Lexer<'a> {
             body.push(c);
         }
         println!();
+        self.macro_map.insert(mcro.val, Macro::Object(body));
     }
 }
