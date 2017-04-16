@@ -9,7 +9,7 @@ use std::path;
 use std::process;
 use error;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum TokenKind {
     Identifier,
     IntNumber,
@@ -22,6 +22,7 @@ pub enum TokenKind {
 
 pub struct Token {
     pub kind: TokenKind,
+    pub space: bool, // leading space
     pub val: String,
     pub line: i32,
 }
@@ -30,6 +31,7 @@ impl Token {
     pub fn new(kind: TokenKind, val: &str, line: i32) -> Token {
         Token {
             kind: kind,
+            space: false,
             val: val.to_string(),
             line: line,
         }
@@ -84,7 +86,7 @@ impl<'a> Lexer<'a> {
     fn peek_char_is(&mut self, ch: char) -> bool {
         let line = self.cur_line;
         let errf = || -> Option<&char> {
-            error::error_exit(line, format!("expected '{}'", ch));
+            error::error_exit(line, format!("expected '{}'", ch).as_str());
             None
         };
 
@@ -210,7 +212,13 @@ impl<'a> Lexer<'a> {
                     'a'...'z' | 'A'...'Z' | '_' => Some(self.read_identifier()),
                     ' ' | '\t' => {
                         self.peek_next();
-                        self.read_token()
+                        // set a leading space
+                        fn f(tok: Token) -> Option<Token> {
+                            let mut t = tok;
+                            t.space = true;
+                            Some(t)
+                        }
+                        self.read_token().and_then(f)
                     }
                     '0'...'9' => Some(self.read_number_literal()),
                     '\"' => Some(self.read_string_literal()),
@@ -279,6 +287,7 @@ impl<'a> Lexer<'a> {
         let t = self.do_read_token(); // cpp directive
         match t.ok_or("error").unwrap().val.as_str() {
             "include" => self.read_cpp_include(),
+            "define" => self.read_cpp_define(),
             _ => {}
         }
     }
@@ -333,6 +342,29 @@ impl<'a> Lexer<'a> {
                 None => break,
             }
         }
-        println!("end of : {}", real_filename);
+        println!("end of: {}", real_filename);
+    }
+
+    fn read_cpp_define(&mut self) {
+        let mcro = self.do_read_token().unwrap();
+        assert_eq!(mcro.kind, TokenKind::Identifier);
+
+        if self.skip("(") {
+            error::error_exit(self.cur_line, "unsupported");
+        }
+
+        println!("macro name: {}", mcro.val);
+
+        let mut body: Vec<Token> = Vec::new();
+        print!("macro body: ");
+        loop {
+            let c = self.do_read_token().unwrap();
+            if c.kind == TokenKind::Newline {
+                break;
+            }
+            print!("{}{}", if c.space { " " } else { "" }, c.val);
+            body.push(c);
+        }
+        println!();
     }
 }

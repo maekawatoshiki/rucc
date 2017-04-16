@@ -27,7 +27,7 @@ fn main() {
             tok = lexer.get();
             match tok {
                 Some(t) => {
-                    println!("token: {}", t.val);
+                    println!("token:{}{}", if t.space { " " } else { "" }, t.val);
                 }
                 None => break,
             }
