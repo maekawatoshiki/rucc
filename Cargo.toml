@@ -5,3 +5,6 @@ authors = ["uint256_t <konndennsa@gmail.com>"]
 
 [dependencies]
 llvm-sys = "38.0.0"
+
+lazy_static = "0.2.6"
+

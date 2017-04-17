@@ -7,7 +7,7 @@ use std::str;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use error;
 use MacroMap;
 
@@ -32,6 +32,7 @@ pub struct Token {
     pub kind: TokenKind,
     pub space: bool, // leading space
     pub val: String,
+    pub hideset: HashSet<String>,
     pub line: i32,
 }
 
@@ -41,6 +42,7 @@ impl Token {
             kind: kind,
             space: false,
             val: val.to_string(),
+            hideset: HashSet::new(),
             line: line,
         }
     }
@@ -278,19 +280,31 @@ impl<'a> Lexer<'a> {
     }
 
     fn expand(&mut self, token: Option<Token>) -> Option<Token> {
-        token.and_then(|tok| match MacroMap.lock().unwrap().get(tok.val.as_str()) {
-                           Some(a) => {
-            match a {
-                &Macro::Object(ref t) => {
-                    for tt in t {
-                        self.unget(tt.clone());
+        token.and_then(|tok| {
+            let name = tok.val.clone();
+            if tok.hideset.contains(tok.val.as_str()) {
+                Some(tok)
+            } else {
+                // if cur token is macro:
+                match MacroMap.lock().unwrap().get(name.as_str()) {
+                    Some(mcro) => {
+                        match mcro {
+                            &Macro::Object(ref body) => {
+                                for t in body {
+                                    self.unget(|| -> Token {
+                                                   let mut a = t.clone();
+                                                   a.hideset.insert(name.to_string());
+                                                   a
+                                               }());
+                                }
+                            }
+                        }
+                        self.read_token()
                     }
+                    None => Some(tok),
                 }
             }
-            self.read_token()
-        }
-                           None => Some(tok),
-                       })
+        })
     }
 
     pub fn get(&mut self) -> Option<Token> {
