@@ -1,7 +1,7 @@
 # rucc
 
-- rucc is a tiny & toy C ompiler implemented in Rust
-- this compiler is developing to leran Rust(for me)
+- rucc is a tiny & toy C compiler implemented in Rust
+- developing to leran Rust(for me)
 
 # requirements
 
