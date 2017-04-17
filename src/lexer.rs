@@ -13,7 +13,12 @@ use MacroMap;
 
 pub enum Macro {
     Object(Vec<Token>),
-    // FuncLile()
+    FuncLike(FuncLikeMacro),
+}
+
+pub struct FuncLikeMacro {
+    args: Vec<String>,
+    body: Vec<Token>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -298,6 +303,7 @@ impl<'a> Lexer<'a> {
                                                }());
                                 }
                             }
+                            &Macro::FuncLike(ref m) => {}
                         }
                         self.read_token()
                     }
@@ -394,25 +400,71 @@ impl<'a> Lexer<'a> {
 
         // TODO: func like macro is unsupported now..
         if self.skip("(") {
-            error::error_exit(self.cur_line, "unsupported");
-        }
-
-        println!("\tmacro name: {}", mcro.val);
-
-        let mut body: Vec<Token> = Vec::new();
-        print!("\tmacro body: ");
-        loop {
-            let c = self.do_read_token().unwrap();
-            if c.kind == TokenKind::Newline {
-                break;
+            print!("\tmacro: {}(", mcro.val);
+            let mut args: Vec<String> = Vec::new();
+            loop {
+                let arg = self.get()
+                    .or_else(|| {
+                                 error::error_exit(self.cur_line, "");
+                                 None
+                             })
+                    .unwrap()
+                    .val;
+                args.push(arg);
+                if self.skip(")") {
+                    break;
+                }
+                self.skip(",");
             }
-            print!("{}{}", if c.space { " " } else { "" }, c.val);
-            body.push(c);
+            for arg in args.clone() {
+                print!("{},", arg);
+            }
+            println!(")");
+
+            let mut body: Vec<Token> = Vec::new();
+            print!("\tmacro body: ");
+            loop {
+                let c = self.do_read_token().unwrap();
+                if c.kind == TokenKind::Newline {
+                    break;
+                }
+                print!("{}{}", if c.space { " " } else { "" }, c.val);
+                body.push(c);
+            }
+            println!();
+            self.register_funclike_macro(mcro.val, args, body);
+        } else {
+            println!("\tmacro: {}", mcro.val);
+
+            let mut body: Vec<Token> = Vec::new();
+            print!("\tmacro body: ");
+            loop {
+                let c = self.do_read_token().unwrap();
+                if c.kind == TokenKind::Newline {
+                    break;
+                }
+                print!("{}{}", if c.space { " " } else { "" }, c.val);
+                body.push(c);
+            }
+            println!();
+            self.register_obj_macro(mcro.val, body);
         }
-        println!();
+    }
+
+    fn register_obj_macro(&mut self, name: String, body: Vec<Token>) {
         MacroMap
             .lock()
             .unwrap()
-            .insert(mcro.val, Macro::Object(body));
+            .insert(name, Macro::Object(body));
+    }
+    fn register_funclike_macro(&mut self, name: String, args: Vec<String>, body: Vec<Token>) {
+        MacroMap
+            .lock()
+            .unwrap()
+            .insert(name,
+                    Macro::FuncLike(FuncLikeMacro {
+                                        args: args,
+                                        body: body,
+                                    }));
     }
 }
