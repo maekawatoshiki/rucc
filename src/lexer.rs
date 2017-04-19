@@ -1,6 +1,4 @@
-use std::io::{BufRead, BufReader};
-use std::fs::{File, OpenOptions};
-use std::io;
+use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::iter;
 use std::str;
@@ -54,7 +52,7 @@ impl Token {
 }
 
 pub struct Lexer<'a> {
-    cur_line: i32,
+    pub cur_line: i32,
     filename: String,
     peek: iter::Peekable<str::Chars<'a>>,
     peek_buf: VecDeque<char>,

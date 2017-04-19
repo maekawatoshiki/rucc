@@ -1,11 +1,8 @@
 extern crate rucc;
 
 use rucc::version_info;
-use rucc::lexer;
 use rucc::parser;
 
-use std::fs::{File, OpenOptions};
-use std::io::prelude::*;
 use std::str;
 
 
@@ -20,7 +17,7 @@ fn main() {
         parser::run_file(input_file_name);
 
         println!("parser test:");
-        let mut v = parser::run("1 + 2, 3".to_string());
+        let v = parser::run("1 + (2, 3)".to_string());
         for e in v {
             e.show();
         }
