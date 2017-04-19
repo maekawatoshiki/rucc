@@ -109,17 +109,21 @@ impl<'a> Lexer<'a> {
         *peekc == ch
     }
 
-    fn skip(&mut self, s: &str) -> bool {
+    pub fn skip(&mut self, s: &str) -> bool {
         let next = self.read_token();
-        let n = next.ok_or("error").unwrap();
-        if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {
-            true
-        } else {
-            self.buf.push_back(n);
-            false
+        match next {
+            Some(n) => {
+                if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {
+                    true
+                } else {
+                    self.buf.push_back(n);
+                    false
+                }
+            }
+            None => false,
         }
     }
-    fn unget(&mut self, t: Token) {
+    pub fn unget(&mut self, t: Token) {
         self.buf.push_back(t);
     }
 
@@ -401,6 +405,7 @@ impl<'a> Lexer<'a> {
         // TODO: func like macro is unsupported now..
         if self.skip("(") {
             print!("\tmacro: {}(", mcro.val);
+            // read macro arguments
             let mut args: Vec<String> = Vec::new();
             loop {
                 let arg = self.get()

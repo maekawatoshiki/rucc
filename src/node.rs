@@ -11,6 +11,7 @@ pub enum AST {
     BinaryOp(BinaryOpAST),
 }
 
+#[derive(Debug)]
 pub enum CBinOps {
     Add,
     Sub,
@@ -30,6 +31,7 @@ pub enum CBinOps {
     Ge,
     Shl,
     Shr,
+    Comma,
 }
 
 pub struct BinaryOpAST {
@@ -38,33 +40,34 @@ pub struct BinaryOpAST {
     pub op: CBinOps,
 }
 impl BinaryOpAST {
-    pub fn new(lhs: Rc<AST>, rhs: Rc<AST>, op: String) -> BinaryOpAST {
-        let cop = match op.as_str() {
-            "+" => CBinOps::Add,
-            "-" => CBinOps::Sub,
-            "*" => CBinOps::Mul,
-            "/" => CBinOps::Div,
-            "%" => CBinOps::Rem,
-            "&" => CBinOps::And,
-            "|" => CBinOps::Or,
-            "^" => CBinOps::Xor,
-            "&&" => CBinOps::LAnd,
-            "||" => CBinOps::LOr,
-            "==" => CBinOps::Eq,
-            "!=" => CBinOps::Ne,
-            "<" => CBinOps::Lt,
-            ">" => CBinOps::Gt,
-            "<=" => CBinOps::Le,
-            ">=" => CBinOps::Ge,
-            "<<" => CBinOps::Shl,
-            ">>" => CBinOps::Shr,
-            _ => CBinOps::Add,
-        };
+    pub fn new(lhs: Rc<AST>, rhs: Rc<AST>, op: CBinOps) -> BinaryOpAST {
+        // let cop = match op.as_str() {
+        //     "+" => CBinOps::Add,
+        //     "-" => CBinOps::Sub,
+        //     "*" => CBinOps::Mul,
+        //     "/" => CBinOps::Div,
+        //     "%" => CBinOps::Rem,
+        //     "&" => CBinOps::And,
+        //     "|" => CBinOps::Or,
+        //     "^" => CBinOps::Xor,
+        //     "&&" => CBinOps::LAnd,
+        //     "||" => CBinOps::LOr,
+        //     "==" => CBinOps::Eq,
+        //     "!=" => CBinOps::Ne,
+        //     "<" => CBinOps::Lt,
+        //     ">" => CBinOps::Gt,
+        //     "<=" => CBinOps::Le,
+        //     ">=" => CBinOps::Ge,
+        //     "<<" => CBinOps::Shl,
+        //     ">>" => CBinOps::Shr,
+        //     "," => CBinOps::Comma,
+        //     _ => CBinOps::Add,
+        // };
 
         BinaryOpAST {
             lhs: lhs,
             rhs: rhs,
-            op: CBinOps::Add,
+            op: op,
         }
     }
     pub fn eval_constexpr(&self) -> i32 {
@@ -89,6 +92,7 @@ impl BinaryOpAST {
             CBinOps::Ge => (lhs >= rhs) as i32,
             CBinOps::Shl => lhs << rhs,
             CBinOps::Shr => lhs >> rhs,
+            CBinOps::Comma => rhs,
         }
     }
 }
@@ -100,5 +104,19 @@ impl AST {
             &AST::BinaryOp(ref bin) => bin.eval_constexpr(),
             _ => 0,
         }
+    }
+    pub fn show(&self) {
+        match self {
+            &AST::Int(n) => print!("{} ", n),
+            &AST::Float(n) => print!("{} ", n),
+            &AST::Variable(ref name) => print!("{} ", name),
+            &AST::BinaryOp(ref bin) => {
+                print!("({:?} ", bin.op);
+                bin.lhs.show();
+                bin.rhs.show();
+                print!(")");
+            }
+            _ => {}
+        };
     }
 }

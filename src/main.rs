@@ -2,6 +2,7 @@ extern crate rucc;
 
 use rucc::version_info;
 use rucc::lexer;
+use rucc::parser;
 
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
@@ -16,23 +17,12 @@ fn main() {
         version_info::show_usage();
     } else {
         let input_file_name = args[1].to_string(); // is this correct?
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(input_file_name.to_string())
-            .unwrap();
-        let mut s = String::new();
-        file.read_to_string(&mut s);
-        let mut lexer = lexer::Lexer::new(input_file_name, s.as_str());
-        // test
-        let mut tok: Option<lexer::Token>;
-        loop {
-            tok = lexer.get();
-            match tok {
-                Some(t) => {
-                    println!("token:{}{}", if t.space { " " } else { "" }, t.val);
-                }
-                None => break,
-            }
+        parser::run_file(input_file_name);
+
+        println!("parser test:");
+        let mut v = parser::run("1 + 2, 3".to_string());
+        for e in v {
+            e.show();
         }
     }
 }

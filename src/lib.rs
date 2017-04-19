@@ -1,6 +1,7 @@
 pub mod error;
 pub mod lexer;
 pub mod node;
+pub mod parser;
 pub mod version_info;
 
 #[macro_use]
