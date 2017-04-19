@@ -1,17 +1,15 @@
-use lexer::{Lexer, Token, TokenKind};
+use lexer::{Lexer, TokenKind};
 use node::AST;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::iter;
 use std::str;
-use std::collections::VecDeque;
 use std::rc::Rc;
 
 use node;
 use error;
 
 pub fn run_file(filename: String) -> Vec<AST> {
-    let mut nodes: Vec<AST> = Vec::new();
+    let nodes: Vec<AST> = Vec::new();
     let mut file = OpenOptions::new()
         .read(true)
         .open(filename.to_string())
@@ -53,7 +51,7 @@ fn read_toplevel(lexer: &mut Lexer) -> AST {
 
 ////////// operators start here
 fn read_expr(lexer: &mut Lexer) -> AST {
-    let mut lhs = read_comma(lexer);
+    let lhs = read_comma(lexer);
     lhs
 }
 fn read_comma(lexer: &mut Lexer) -> AST {

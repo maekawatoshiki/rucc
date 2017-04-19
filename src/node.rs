@@ -116,7 +116,6 @@ impl AST {
                 bin.rhs.show();
                 print!(")");
             }
-            _ => {}
         };
     }
 }

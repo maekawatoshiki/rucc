@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 lazy_static!{
-    pub static ref MacroMap: Mutex< HashMap<String, lexer::Macro> > = {
+    pub static ref MACRO_MAP: Mutex< HashMap<String, lexer::Macro> > = {
         Mutex::new( HashMap::new() )
     };
 }

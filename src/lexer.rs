@@ -5,9 +5,9 @@ use std::str;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use error;
-use MacroMap;
+use MACRO_MAP;
 
 pub enum Macro {
     Object(Vec<Token>),
@@ -98,10 +98,8 @@ impl<'a> Lexer<'a> {
     }
     fn peek_char_is(&mut self, ch: char) -> bool {
         let line = self.cur_line;
-        let errf = || -> Option<&char> {
-            error::error_exit(line, format!("expected '{}'", ch).as_str());
-            None
-        };
+        let errf =
+            || -> Option<&char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
 
         let peekc = self.peek_get().or_else(errf).unwrap();
         *peekc == ch
@@ -293,7 +291,7 @@ impl<'a> Lexer<'a> {
                 Some(tok)
             } else {
                 // if cur token is macro:
-                match MacroMap.lock().unwrap().get(name.as_str()) {
+                match MACRO_MAP.lock().unwrap().get(name.as_str()) {
                     Some(mcro) => {
                         match mcro {
                             &Macro::Object(ref body) => {
@@ -305,7 +303,8 @@ impl<'a> Lexer<'a> {
                                                }());
                                 }
                             }
-                            &Macro::FuncLike(ref m) => {}
+                            _ => {}
+                            // &Macro::FuncLike(ref m) => {}
                         }
                         self.read_token()
                     }
@@ -407,10 +406,7 @@ impl<'a> Lexer<'a> {
             let mut args: Vec<String> = Vec::new();
             loop {
                 let arg = self.get()
-                    .or_else(|| {
-                                 error::error_exit(self.cur_line, "");
-                                 None
-                             })
+                    .or_else(|| { error::error_exit(self.cur_line, ""); })
                     .unwrap()
                     .val;
                 args.push(arg);
@@ -455,13 +451,13 @@ impl<'a> Lexer<'a> {
     }
 
     fn register_obj_macro(&mut self, name: String, body: Vec<Token>) {
-        MacroMap
+        MACRO_MAP
             .lock()
             .unwrap()
             .insert(name, Macro::Object(body));
     }
     fn register_funclike_macro(&mut self, name: String, args: Vec<String>, body: Vec<Token>) {
-        MacroMap
+        MACRO_MAP
             .lock()
             .unwrap()
             .insert(name,
