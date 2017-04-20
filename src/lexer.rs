@@ -13,13 +13,7 @@ use MACRO_MAP;
 #[derive(Debug)]
 pub enum Macro {
     Object(Vec<Token>),
-    FuncLike(FuncLikeMacro),
-}
-
-#[derive(Debug)]
-pub struct FuncLikeMacro {
-    args: Vec<String>,
-    body: Vec<Token>,
+    FuncLike(Vec<String>, Vec<Token>), // args, body
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -470,11 +464,7 @@ impl<'a> Lexer<'a> {
         MACRO_MAP
             .lock()
             .unwrap()
-            .insert(name,
-                    Macro::FuncLike(FuncLikeMacro {
-                                        args: args,
-                                        body: body,
-                                    }));
+            .insert(name, Macro::FuncLike(args, body));
     }
 
     fn read_defined_op(&mut self) -> Token {
