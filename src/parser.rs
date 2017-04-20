@@ -50,7 +50,7 @@ fn read_toplevel(lexer: &mut Lexer) -> AST {
 }
 
 ////////// operators start here
-fn read_expr(lexer: &mut Lexer) -> AST {
+pub fn read_expr(lexer: &mut Lexer) -> AST {
     let lhs = read_comma(lexer);
     lhs
 }

@@ -7,13 +7,16 @@ use std::path;
 use std::process;
 use std::collections::HashSet;
 use error;
+use parser;
 use MACRO_MAP;
 
+#[derive(Debug)]
 pub enum Macro {
     Object(Vec<Token>),
     FuncLike(FuncLikeMacro),
 }
 
+#[derive(Debug)]
 pub struct FuncLikeMacro {
     args: Vec<String>,
     body: Vec<Token>,
@@ -57,6 +60,7 @@ pub struct Lexer<'a> {
     peek: iter::Peekable<str::Chars<'a>>,
     peek_buf: VecDeque<char>,
     buf: VecDeque<Token>,
+    cond_stack: Vec<bool>,
 }
 
 impl<'a> Lexer<'a> {
@@ -67,6 +71,7 @@ impl<'a> Lexer<'a> {
             peek: input.chars().peekable(),
             peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
+            cond_stack: Vec::new(),
         }
     }
     pub fn get_filename(self) -> String {
@@ -121,6 +126,11 @@ impl<'a> Lexer<'a> {
     }
     pub fn unget(&mut self, t: Token) {
         self.buf.push_back(t);
+    }
+    pub fn unget_all(&mut self, tv: Vec<Token>) {
+        for t in tv {
+            self.unget(t);
+        }
     }
 
     pub fn read_identifier(&mut self) -> Token {
@@ -252,7 +262,6 @@ impl<'a> Lexer<'a> {
                             }
                             self.peek_next();
                             self.peek_next();
-                            println!("{}", self.peek_get().unwrap());
                             self.do_read_token()
                         } else if self.peek_next_char_is('/') {
                             self.peek_next(); // /
@@ -336,13 +345,14 @@ impl<'a> Lexer<'a> {
     fn read_cpp_directive(&mut self) {
         let t = self.do_read_token(); // cpp directive
         match t.ok_or("error").unwrap().val.as_str() {
-            "include" => self.read_cpp_include(),
-            "define" => self.read_cpp_define(),
+            "include" => self.read_include(),
+            "define" => self.read_define(),
+            "if" => self.read_if(),
             _ => {}
         }
     }
 
-    fn cpp_try_include(&mut self, filename: &str) -> Option<String> {
+    fn try_include(&mut self, filename: &str) -> Option<String> {
         let header_paths = vec!["./include/",
                                 "/include/",
                                 "/usr/include/",
@@ -360,7 +370,7 @@ impl<'a> Lexer<'a> {
         }
         if found { Some(real_filename) } else { None }
     }
-    fn read_cpp_include(&mut self) {
+    fn read_include(&mut self) {
         // this will be a function
         let mut filename = String::new();
         if self.skip("<") {
@@ -370,7 +380,7 @@ impl<'a> Lexer<'a> {
             }
             self.peek_next();
         }
-        let real_filename = match self.cpp_try_include(filename.as_str()) {
+        let real_filename = match self.try_include(filename.as_str()) {
             Some(f) => f,
             _ => {
                 println!("error: {}: not found '{}'", self.cur_line, filename);
@@ -395,7 +405,7 @@ impl<'a> Lexer<'a> {
         println!("end of: {}", real_filename);
     }
 
-    fn read_cpp_define(&mut self) {
+    fn read_define(&mut self) {
         let mcro = self.do_read_token().unwrap();
         assert_eq!(mcro.kind, TokenKind::Identifier);
 
@@ -465,5 +475,87 @@ impl<'a> Lexer<'a> {
                                         args: args,
                                         body: body,
                                     }));
+    }
+
+    fn read_defined_op(&mut self) -> Token {
+        // TODO: add err handler
+        self.skip("(");
+        let tok = self.read_token().unwrap();
+        self.skip(")");
+        match MACRO_MAP.lock().unwrap().get(tok.val.as_str()) {
+            Some(v) => Token::new(TokenKind::IntNumber, "1", self.cur_line),
+            _ => Token::new(TokenKind::IntNumber, "0", self.cur_line),
+        }
+    }
+    fn read_intexpr_line(&mut self) -> Vec<Token> {
+        let mut v: Vec<Token> = Vec::new();
+        loop {
+            let tok = self.do_read_token()
+                .or_else(|| error::error_exit(self.cur_line, "expect a token, but reach EOF"))
+                .unwrap();
+            if tok.kind == TokenKind::Newline {
+                break;
+            } else if tok.val == "defined" {
+                v.push(self.read_defined_op());
+            } else if tok.kind == TokenKind::Identifier {
+                v.push(Token::new(TokenKind::IntNumber, "0", self.cur_line));
+            } else {
+                v.push(tok);
+            }
+        }
+        v
+    }
+    fn read_constexpr(&mut self) -> bool {
+        let v = self.read_intexpr_line();
+        self.unget_all(v);
+        let node = parser::read_expr(self);
+        node.show();
+        println!();
+        node.eval_constexpr() != 0
+    }
+
+    fn do_read_if(&mut self, cond: bool) {
+        self.cond_stack.push(cond);
+        if !cond {
+            self.skip_cond_include();
+        }
+    }
+    fn read_if(&mut self) {
+        let cond = self.read_constexpr();
+        self.do_read_if(cond);
+    }
+
+    fn skip_cond_include(&mut self) {
+        let mut nest = 0;
+        let get_tok = |lex: &mut Lexer| -> Token {
+            lex.do_read_token()
+                .or_else(|| error::error_exit(lex.cur_line, "reach EOF"))
+                .unwrap()
+        };
+        loop {
+            if !self.skip("#") {
+                continue;
+            }
+
+            let tok = get_tok(self);
+            if nest == 0 {
+                match tok.val.as_str() {
+                    "else" | "elif" | "endif" => {
+                        let line = self.cur_line;
+                        self.unget(Token::new(TokenKind::Symbol, "#", line));
+                        self.unget(tok);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            match tok.val.as_str() {
+                "if" | "ifdef" | "ifndef" => nest += 1,
+                "endif" => nest -= 1,
+                _ => {}
+            }
+            // TODO: if nest < 0 then?
+        }
     }
 }
