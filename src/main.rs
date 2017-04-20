@@ -20,6 +20,7 @@ fn main() {
         let v = parser::run("1 + (2, 3)".to_string());
         for e in v {
             e.show();
+            println!("\nconst eval: {}", e.eval_constexpr());
         }
     }
 }

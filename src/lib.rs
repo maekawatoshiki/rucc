@@ -9,7 +9,7 @@ extern crate lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-lazy_static!{
+lazy_static! {
     pub static ref MACRO_MAP: Mutex< HashMap<String, lexer::Macro> > = {
         Mutex::new( HashMap::new() )
     };
