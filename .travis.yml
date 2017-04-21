@@ -1,6 +1,6 @@
 language: rust
 
-sudo: required
+sudo: false 
 
 os:
   - linux
@@ -19,6 +19,6 @@ rust:
   - 1.16.0
 
 script:
-  - llvm-config --version
+  - sudo ln -sf /usr/bin/llvm-config-3.8 /usr/bin/llvm-config
   - cargo build --verbose
   - cargo test --verbose
