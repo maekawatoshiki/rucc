@@ -342,6 +342,8 @@ impl<'a> Lexer<'a> {
             "include" => self.read_include(),
             "define" => self.read_define(),
             "if" => self.read_if(),
+            "ifdef" => self.read_ifdef(),
+            "ifndef" => self.read_ifndef(),
             _ => {}
         }
     }
@@ -472,9 +474,10 @@ impl<'a> Lexer<'a> {
         self.skip("(");
         let tok = self.read_token().unwrap();
         self.skip(")");
-        match MACRO_MAP.lock().unwrap().get(tok.val.as_str()) {
-            Some(v) => Token::new(TokenKind::IntNumber, "1", self.cur_line),
-            _ => Token::new(TokenKind::IntNumber, "0", self.cur_line),
+        if MACRO_MAP.lock().unwrap().contains_key(tok.val.as_str()) {
+            Token::new(TokenKind::IntNumber, "1", self.cur_line)
+        } else {
+            Token::new(TokenKind::IntNumber, "0", self.cur_line)
         }
     }
     fn read_intexpr_line(&mut self) -> Vec<Token> {
@@ -488,6 +491,7 @@ impl<'a> Lexer<'a> {
             } else if tok.val == "defined" {
                 v.push(self.read_defined_op());
             } else if tok.kind == TokenKind::Identifier {
+                // identifier in expr line is replaced with 0i
                 v.push(Token::new(TokenKind::IntNumber, "0", self.cur_line));
             } else {
                 v.push(tok);
@@ -514,6 +518,20 @@ impl<'a> Lexer<'a> {
         let cond = self.read_constexpr();
         self.do_read_if(cond);
     }
+    fn read_ifdef(&mut self) {
+        let mcro_name = self.do_read_token()
+            .or_else(|| error::error_exit(self.cur_line, "expected macro"))
+            .unwrap()
+            .val;
+        self.do_read_if((*MACRO_MAP.lock().unwrap()).contains_key(mcro_name.as_str()));
+    }
+    fn read_ifndef(&mut self) {
+        let mcro_name = self.do_read_token()
+            .or_else(|| error::error_exit(self.cur_line, "expected macro"))
+            .unwrap()
+            .val;
+        self.do_read_if(!(*MACRO_MAP.lock().unwrap()).contains_key(mcro_name.as_str()));
+    }
 
     fn skip_cond_include(&mut self) {
         let mut nest = 0;
@@ -523,7 +541,7 @@ impl<'a> Lexer<'a> {
                 .unwrap()
         };
         loop {
-            if !self.skip("#") {
+            if get_tok(self).val != "#" {
                 continue;
             }
 
