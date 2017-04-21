@@ -1,8 +1,22 @@
 language: rust
 
+os:
+  - linux
+
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+      - llvm-toolchain-precise-3.8
+    packages:
+      - llvm-3.8
+      - llvm-3.8-dev
+      - clang-3.8
+      - libedit-dev
 rust:
   - 1.16.0
 
 script:
+  - ln -s /usr/bin/llvm-config-3.8 /usr/bin/llvm-config
   - cargo build --verbose
   - cargo test --verbose
