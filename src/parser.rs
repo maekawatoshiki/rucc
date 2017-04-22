@@ -32,16 +32,9 @@ pub fn run_file(filename: String) -> Vec<AST> {
 pub fn run(input: String) -> Vec<AST> {
     let mut nodes: Vec<AST> = Vec::new();
     let mut lexer = Lexer::new("__input__".to_string(), input.as_str());
+
     nodes.push(read_toplevel(&mut lexer));
-    // loop {
-    //     let tok = lexer.get();
-    //     match tok {
-    //         Some(t) => {
-    //             println!("token:{}{}", if t.space { " " } else { "" }, t.val);
-    //         }
-    //         None => break,
-    //     }
-    // }
+
     nodes
 }
 
@@ -118,19 +111,19 @@ fn read_eq_ne(lexer: &mut Lexer) -> AST {
     lhs
 }
 fn read_relation(lexer: &mut Lexer) -> AST {
-    let mut lhs = read_add_sub(lexer);
+    let mut lhs = read_shl_shr(lexer);
     loop {
         if lexer.skip("<") {
-            let rhs = read_add_sub(lexer);
+            let rhs = read_shl_shr(lexer);
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Lt);
         } else if lexer.skip("<=") {
-            let rhs = read_add_sub(lexer);
+            let rhs = read_shl_shr(lexer);
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Le);
         } else if lexer.skip(">") {
-            let rhs = read_add_sub(lexer);
+            let rhs = read_shl_shr(lexer);
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Gt);
         } else if lexer.skip(">=") {
-            let rhs = read_add_sub(lexer);
+            let rhs = read_shl_shr(lexer);
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ge);
         } else {
             break;
@@ -138,14 +131,29 @@ fn read_relation(lexer: &mut Lexer) -> AST {
     }
     lhs
 }
+fn read_shl_shr(lexer: &mut Lexer) -> AST {
+    let mut lhs = read_add_sub(lexer);
+    loop {
+        if lexer.skip("<<") {
+            let rhs = read_add_sub(lexer);
+            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shl);
+        } else if lexer.skip(">>") {
+            let rhs = read_add_sub(lexer);
+            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shr);
+        } else {
+            break;
+        }
+    }
+    lhs
+}
 fn read_add_sub(lexer: &mut Lexer) -> AST {
-    let mut lhs = read_primary(lexer);
+    let mut lhs = read_mul_div_rem(lexer);
     loop {
         if lexer.skip("+") {
-            let rhs = read_primary(lexer);
+            let rhs = read_mul_div_rem(lexer);
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Add);
         } else if lexer.skip("-") {
-            let rhs = read_primary(lexer);
+            let rhs = read_mul_div_rem(lexer);
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Sub);
         } else {
             break;
@@ -153,31 +161,79 @@ fn read_add_sub(lexer: &mut Lexer) -> AST {
     }
     lhs
 }
-////////// operators end here
+fn read_mul_div_rem(lexer: &mut Lexer) -> AST {
+    let mut lhs = read_cast(lexer);
+    loop {
+        if lexer.skip("*") {
+            let rhs = read_cast(lexer);
+            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Mul);
+        } else if lexer.skip("/") {
+            let rhs = read_cast(lexer);
+            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Div);
+        } else if lexer.skip("%") {
+            let rhs = read_cast(lexer);
+            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Rem);
+        } else {
+            break;
+        }
+    }
+    lhs
+}
+fn read_cast(lexer: &mut Lexer) -> AST {
+    read_unary(lexer)
+}
+fn read_unary(lexer: &mut Lexer) -> AST {
+    let tok = lexer
+        .get()
+        .or_else(|| error::error_exit(lexer.cur_line, "expected unary op"))
+        .unwrap();
+    if tok.kind == TokenKind::Symbol {
+        match tok.val.as_str() { 
+            "!" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::LNot),
+            "~" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::BNot),
+            "+" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Plus),
+            "-" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Minus),
+            "++" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Inc),
+            "--" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Dec),
+            "*" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Indir),
+            "&" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Addr),
+            _ => {}
+        }
+    }
+    lexer.unget(tok);
+    read_postfix(lexer)
+}
+fn read_postfix(lexer: &mut Lexer) -> AST {
+    read_primary(lexer)
+}
 
 fn read_primary(lexer: &mut Lexer) -> AST {
-    match lexer.get() {
-        Some(tok) => {
-            match tok.kind {
-                // TokenKind::Identifier => None,
-                TokenKind::IntNumber => AST::Int(tok.val.parse::<i32>().unwrap()),
-                // TokenKind::FloatNumber => None,
-                // TokenKind::String => None,
-                // TokenKind::Char => None,
-                TokenKind::Symbol => {
-                    match tok.val.as_str() {
-                        "(" => {
-                            let expr = read_expr(lexer);
-                            lexer.skip(")");
-                            expr
-                        }
-                        _ => error::error_exit(lexer.cur_line, "err"),
-                    }
+    let tok = lexer
+        .get()
+        .or_else(|| error::error_exit(lexer.cur_line, "expected primary"))
+        .unwrap();
+    match tok.kind {
+        // TokenKind::Identifier => None,
+        TokenKind::IntNumber => AST::Int(tok.val.parse::<i32>().unwrap()),
+        // TokenKind::FloatNumber => None,
+        // TokenKind::String => None,
+        // TokenKind::Char => None,
+        TokenKind::Symbol => {
+            match tok.val.as_str() {
+                "(" => {
+                    let expr = read_expr(lexer);
+                    lexer.skip(")");
+                    expr
                 }
-                // TokenKind::Newline => None,
-                _ => error::error_exit(lexer.cur_line, "err"),
+                _ => {
+                    error::error_exit(lexer.cur_line,
+                                      format!("read_primary unknown symbol '{}'", tok.val.as_str())
+                                          .as_str())
+                }
             }
         }
-        _ => error::error_exit(lexer.cur_line, "err"),
+        // TokenKind::Newline => None,
+        _ => error::error_exit(lexer.cur_line, "read_primary unknown token"),
     }
 }
+////////// operators end here

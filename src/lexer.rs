@@ -178,7 +178,12 @@ impl<'a> Lexer<'a> {
         let mut sym = String::new();
         sym.push(c);
         match c {
-            '+' | '-' | '*' | '/' | '%' | '=' | '^' | '!' => {
+            '+' | '-' => {
+                if self.peek_char_is('=') || self.peek_char_is('+') || self.peek_char_is('-') {
+                    sym.push(self.peek_next());
+                }
+            }
+            '*' | '/' | '%' | '=' | '^' | '!' => {
                 if self.peek_char_is('=') {
                     sym.push(self.peek_next());
                 }

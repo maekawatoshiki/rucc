@@ -8,7 +8,8 @@ pub enum AST {
     Int(i32),
     Float(f64),
     Variable(String),
-    BinaryOp(Rc<AST>, Rc<AST>, CBinOps), //BinaryOpAST)
+    UnaryOp(Rc<AST>, CUnaryOps),
+    BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
 }
 
 #[derive(Debug)]
@@ -34,73 +35,36 @@ pub enum CBinOps {
     Comma,
 }
 
-// pub struct BinaryOpAST {
-//     pub lhs: Rc<AST>,
-//     pub rhs: Rc<AST>,
-//     pub op: CBinOps,
-// }
-// impl BinaryOpAST {
-//     pub fn new(lhs: Rc<AST>, rhs: Rc<AST>, op: CBinOps) -> BinaryOpAST {
-//         // let cop = match op.as_str() {
-//         //     "+" => CBinOps::Add,
-//         //     "-" => CBinOps::Sub,
-//         //     "*" => CBinOps::Mul,
-//         //     "/" => CBinOps::Div,
-//         //     "%" => CBinOps::Rem,
-//         //     "&" => CBinOps::And,
-//         //     "|" => CBinOps::Or,
-//         //     "^" => CBinOps::Xor,
-//         //     "&&" => CBinOps::LAnd,
-//         //     "||" => CBinOps::LOr,
-//         //     "==" => CBinOps::Eq,
-//         //     "!=" => CBinOps::Ne,
-//         //     "<" => CBinOps::Lt,
-//         //     ">" => CBinOps::Gt,
-//         //     "<=" => CBinOps::Le,
-//         //     ">=" => CBinOps::Ge,
-//         //     "<<" => CBinOps::Shl,
-//         //     ">>" => CBinOps::Shr,
-//         //     "," => CBinOps::Comma,
-//         //     _ => CBinOps::Add,
-//         // };
-//
-//         BinaryOpAST {
-//             lhs: lhs,
-//             rhs: rhs,
-//             op: op,
-//         }
-//     }
-//     pub fn eval_constexpr(&self) -> i32 {
-//         let lhs = self.lhs.eval_constexpr();
-//         let rhs = self.rhs.eval_constexpr();
-//         match self.op {
-//             CBinOps::Add => lhs + rhs,
-//             CBinOps::Sub => lhs - rhs,
-//             CBinOps::Mul => lhs * rhs,
-//             CBinOps::Div => lhs / rhs,
-//             CBinOps::Rem => lhs % rhs,
-//             CBinOps::And => lhs & rhs,
-//             CBinOps::Or => lhs | rhs,
-//             CBinOps::Xor => lhs ^ rhs,
-//             CBinOps::LAnd => lhs & rhs,
-//             CBinOps::LOr => lhs | rhs,
-//             CBinOps::Eq => (lhs == rhs) as i32,
-//             CBinOps::Ne => (lhs != rhs) as i32,
-//             CBinOps::Lt => (lhs < rhs) as i32,
-//             CBinOps::Gt => (lhs > rhs) as i32,
-//             CBinOps::Le => (lhs <= rhs) as i32,
-//             CBinOps::Ge => (lhs >= rhs) as i32,
-//             CBinOps::Shl => lhs << rhs,
-//             CBinOps::Shr => lhs >> rhs,
-//             CBinOps::Comma => rhs,
-//         }
-//     }
-// }
+#[derive(Debug)]
+pub enum CUnaryOps {
+    LNot,
+    BNot,
+    Plus,
+    Minus,
+    Inc,
+    Dec,
+    Indir,
+    Addr,
+    // TODO: add Cast, Sizeof
+}
 
 impl AST {
     pub fn eval_constexpr(&self) -> i32 {
         match self {
             &AST::Int(n) => n,
+            &AST::UnaryOp(ref aexpr, ref op) => {
+                let expr = aexpr.eval_constexpr();
+                match op {
+                    &CUnaryOps::LNot => (expr > 0) as i32,
+                    &CUnaryOps::BNot => !expr,
+                    &CUnaryOps::Plus => expr,
+                    &CUnaryOps::Minus => -expr,
+                    &CUnaryOps::Inc => 1 + expr,
+                    &CUnaryOps::Dec => expr - 1,
+                    &CUnaryOps::Indir => expr,
+                    &CUnaryOps::Addr => expr,
+                }
+            }
             &AST::BinaryOp(ref alhs, ref arhs, ref op) => {
                 let lhs = alhs.eval_constexpr();
                 let rhs = arhs.eval_constexpr();
@@ -134,6 +98,11 @@ impl AST {
             &AST::Int(n) => print!("{} ", n),
             &AST::Float(n) => print!("{} ", n),
             &AST::Variable(ref name) => print!("{} ", name),
+            &AST::UnaryOp(ref expr, ref op) => {
+                print!("({:?} ", op);
+                expr.show();
+                print!(")");
+            }
             &AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 print!("({:?} ", op);
                 lhs.show();
