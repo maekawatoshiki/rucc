@@ -55,7 +55,7 @@ impl AST {
             &AST::UnaryOp(ref aexpr, ref op) => {
                 let expr = aexpr.eval_constexpr();
                 match op {
-                    &CUnaryOps::LNot => (expr > 0) as i32,
+                    &CUnaryOps::LNot => (expr == 0) as i32,
                     &CUnaryOps::BNot => !expr,
                     &CUnaryOps::Plus => expr,
                     &CUnaryOps::Minus => -expr,

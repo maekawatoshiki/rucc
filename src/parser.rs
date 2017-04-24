@@ -4,6 +4,7 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::str;
 use std::rc::Rc;
+use std::u32;
 
 use node;
 use error;
@@ -21,7 +22,11 @@ pub fn run_file(filename: String) -> Vec<AST> {
         let tok = lexer.get();
         match tok {
             Some(t) => {
-                println!("token:{}{}", if t.space { " " } else { "" }, t.val);
+                // if t.kind == TokenKind::Newline {
+                //     println!();
+                // } else {
+                println!("t:{}{}", if t.space { " " } else { "" }, t.val);
+                // }
             }
             None => break,
         }
@@ -214,7 +219,21 @@ fn read_primary(lexer: &mut Lexer) -> AST {
         .unwrap();
     match tok.kind {
         // TokenKind::Identifier => None,
-        TokenKind::IntNumber => AST::Int(tok.val.parse::<i32>().unwrap()),
+        TokenKind::IntNumber => {
+            let a = tok.val.clone();
+            if a.len() > 2 && a.chars().nth(1).unwrap() == 'x' {
+                AST::Int(u32::from_str_radix(&a[2..], 16).unwrap() as i32)
+            } else {
+                let mut n = 0;
+                for c in a.chars() {
+                    match c {
+                        '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i32, 
+                        _ => {} // TODO: suffix
+                    }
+                }
+                AST::Int(n)
+            }
+        }
         // TokenKind::FloatNumber => None,
         // TokenKind::String => None,
         // TokenKind::Char => None,
@@ -233,7 +252,10 @@ fn read_primary(lexer: &mut Lexer) -> AST {
             }
         }
         // TokenKind::Newline => None,
-        _ => error::error_exit(lexer.cur_line, "read_primary unknown token"),
+        _ => {
+            error::error_exit(lexer.cur_line,
+                              format!("read_primary unknown token {:?}", tok.kind).as_str())
+        }
     }
 }
 ////////// operators end here
