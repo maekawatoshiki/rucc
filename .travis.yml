@@ -20,6 +20,7 @@ rust:
 
 script:
   - sudo ln -sf /usr/bin/llvm-config-3.8 /usr/bin/llvm-config
+  - which llvm-config
   - llvm-config --version
   - cargo build --verbose
   - cargo test --verbose
