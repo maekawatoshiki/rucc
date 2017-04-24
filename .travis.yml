@@ -1,6 +1,6 @@
 language: rust
 
-sudo: false
+sudo: required
 
 os:
   - linux
@@ -19,7 +19,7 @@ rust:
   - 1.16.0
 
 script:
-  - ln -sf /usr/local/clang-3.4/bin/llvm-config /usr/bin/llvm-config # fix.
+  - sudo ln -sf /usr/local/clang-3.4/bin/llvm-config /usr/bin/llvm-config # fix.
   - llvm-config --version
   - cargo build --verbose
   - cargo test --verbose
