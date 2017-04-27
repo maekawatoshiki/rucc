@@ -508,17 +508,20 @@ impl<'a> Lexer<'a> {
             // read macro arguments
             let mut args: HashMap<String, usize> = HashMap::new();
             let mut count = 0usize;
-            loop {
-                let arg = self.get()
-                    .or_else(|| { error::error_exit(self.cur_line, "expcted macro args"); })
-                    .unwrap()
-                    .val;
-                args.insert(arg, count);
-                if self.skip(")") {
-                    break;
+            // TOD: not beautiful code :(
+            if !self.skip(")") {
+                loop {
+                    let arg = self.get()
+                        .or_else(|| { error::error_exit(self.cur_line, "expcted macro args"); })
+                        .unwrap()
+                        .val;
+                    args.insert(arg, count);
+                    if self.skip(")") {
+                        break;
+                    }
+                    self.expect_skip(",");
+                    count += 1;
                 }
-                self.expect_skip(",");
-                count += 1;
             }
             for (key, val) in args.clone() {
                 print!("{}({}),", key, val);
