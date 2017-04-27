@@ -14,5 +14,5 @@ void not_expanded() {
 
 int main() {
   macro + 123;
-  // func(2);
+  func(2);
 }
