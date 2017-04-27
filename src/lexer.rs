@@ -483,7 +483,7 @@ impl<'a> Lexer<'a> {
         let mut lexer = Lexer::new(filename, body.as_str());
         let mut v: Vec<Token> = Vec::new();
         loop {
-            match lexer.do_read_token() {
+            match lexer.get() {
                 Some(tok) => v.push(tok),
                 None => break,
             }
@@ -496,8 +496,14 @@ impl<'a> Lexer<'a> {
         let mcro = self.do_read_token().unwrap();
         assert_eq!(mcro.kind, TokenKind::Identifier);
 
-        // TODO: func like macro is unsupported now..
-        if self.skip("(") {
+        let t = self.do_read_token().unwrap();
+        let is_func_macro = if !t.space && t.val.as_str() == "(" {
+            true
+        } else {
+            self.unget(t);
+            false
+        };
+        if is_func_macro {
             print!("\tmacro: {}(", mcro.val);
             // read macro arguments
             let mut args: HashMap<String, usize> = HashMap::new();
