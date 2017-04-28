@@ -2,9 +2,8 @@ use lexer::{Lexer, TokenKind};
 use node::AST;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::str;
+use std::{str, u32};
 use std::rc::Rc;
-use std::u32;
 
 use node;
 use error;

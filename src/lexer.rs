@@ -12,8 +12,9 @@ use MACRO_MAP;
 
 #[derive(Debug)]
 pub enum Macro {
+    // Vec<Token> -> macro body
     Object(Vec<Token>),
-    FuncLike(Vec<Token>), // args, body
+    FuncLike(Vec<Token>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -361,16 +362,32 @@ impl<'a> Lexer<'a> {
 
         let mut expanded: Vec<Token> = Vec::new();
         let mut is_stringize = false;
+        let mut is_combine = false;
         for macro_tok in macro_body {
+            // TODO: refine code
             if macro_tok.val == "#" {
-                is_stringize = true;
+                // means ##
+                if is_stringize {
+                    is_stringize = false;
+                    is_combine = true;
+                } else {
+                    is_stringize = true;
+                }
                 continue;
             }
             if macro_tok.kind == TokenKind::MacroParam {
                 let position = macro_tok.macro_position;
+
                 if is_stringize {
                     expanded.push(self.stringize(&args[position]));
                     is_stringize = false;
+                } else if is_combine {
+                    let mut last = expanded.pop().unwrap();
+                    for t in &args[position] {
+                        last.val += t.val.as_str();
+                    }
+                    expanded.push(last);
+                    is_combine = false;
                 } else {
                     for t in &args[position] {
                         let mut a = t.clone();
