@@ -438,6 +438,16 @@ impl<'a> Lexer<'a> {
         self.expand(tok)
     }
 
+    pub fn peek(&mut self) -> Option<Token> {
+        let tok = self.get();
+        tok.clone()
+            .and_then(|t| {
+                          self.unget(t.clone());
+                          Some(t)
+                      });
+        tok
+    }
+
     // for c preprocessor
 
     fn read_cpp_directive(&mut self) {

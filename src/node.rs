@@ -1,7 +1,3 @@
-// use std::io;
-// use std::io::prelude::*;
-// use std::iter;
-// use std::str;
 use std::rc::Rc;
 
 pub enum AST {

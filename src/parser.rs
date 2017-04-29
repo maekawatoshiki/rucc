@@ -1,15 +1,17 @@
-use lexer::{Lexer, TokenKind};
+use lexer;
+use lexer::{Lexer, Token, TokenKind};
 use node::AST;
+use node;
+use error;
+use types::Type;
+
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::{str, u32};
 use std::rc::Rc;
 
-use node;
-use error;
-
 pub fn run_file(filename: String) -> Vec<AST> {
-    let nodes: Vec<AST> = Vec::new();
+    let mut nodes: Vec<AST> = Vec::new();
     let mut file = OpenOptions::new()
         .read(true)
         .open(filename.to_string())
@@ -30,6 +32,11 @@ pub fn run_file(filename: String) -> Vec<AST> {
             None => break,
         }
     }
+
+    // lexer = Lexer::new(filename.to_string(), s.as_str());
+    // nodes.push(read_toplevel(&mut lexer));
+    // nodes.pop().unwrap().show();
+
     nodes
 }
 
@@ -43,14 +50,114 @@ pub fn run(input: String) -> Vec<AST> {
 }
 
 fn read_toplevel(lexer: &mut Lexer) -> AST {
-    read_expr(lexer)
+    if is_function_def(lexer) {
+        println!("this is function");
+        read_func_def(lexer)
+    } else {
+        read_expr(lexer)
+    }
 }
 
-////////// operators start here
+fn read_func_def(lexer: &mut Lexer) -> AST {
+    AST::Int(0)
+}
+
+fn is_function_def(lexer: &mut Lexer) -> bool {
+    let mut buf: Vec<Token> = Vec::new();
+    let mut is_funcdef = false;
+
+    loop {
+        let mut tok = lexer.get().unwrap();
+        buf.push(tok.clone());
+
+        if is_type(&tok) {
+            continue;
+        }
+
+        if tok.val == "(" {
+            skip_brackets(lexer, &mut buf);
+            continue;
+        }
+
+        if tok.kind != TokenKind::Identifier {
+            continue;
+        }
+
+        if tok.val == "(" {
+            continue;
+        }
+
+        skip_brackets(lexer, &mut buf);
+
+        tok = lexer.peek().unwrap();
+        is_funcdef = tok.val.as_str() == "{";
+        break;
+    }
+
+    lexer.unget_all(buf);
+    is_funcdef
+}
+
+fn skip_brackets(lexer: &mut Lexer, buf: &mut Vec<Token>) {
+    loop {
+        let tok = lexer.get().unwrap();
+        buf.push(tok.clone());
+
+        match tok.val.as_str() {
+            "(*" => skip_brackets(lexer, buf),
+            ")" => break,
+            _ => {}
+        }
+    }
+}
+
+fn is_type(token: &Token) -> bool {
+    if token.kind != TokenKind::Identifier {
+        return true;
+    }
+    match token.val.as_str() {
+        "int" => true,
+        _ => false,
+    }
+}
+
+fn read_decl(lexer: &mut Lexer) -> AST {
+    let basety = read_type_spec(lexer);
+    AST::Int(0)
+}
+
+fn read_type_spec(lexer: &mut Lexer) -> Type {
+    enum Sign {
+        Signed,
+        Unsigned,
+    };
+    enum Size {
+        Short,
+        Normal,
+        Long,
+        LLong,
+    };
+    let sign: Sign = Sign::Signed;
+    let size: Size = Size::Normal;
+
+    loop {
+        let tok = lexer
+            .get()
+            .or_else(|| error::error_exit(lexer.cur_line, "expect types but reach EOF"))
+            .unwrap();
+
+        match tok.val.as_str() {
+            "void" => {}
+            _ => {}
+        }
+    }
+}
+
 pub fn read_expr(lexer: &mut Lexer) -> AST {
     let lhs = read_comma(lexer);
     lhs
 }
+////////// operators start from here
 fn read_comma(lexer: &mut Lexer) -> AST {
     let mut lhs = read_logor(lexer);
     while lexer.skip(",") {
