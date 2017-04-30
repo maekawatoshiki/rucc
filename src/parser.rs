@@ -33,6 +33,7 @@ pub fn run_file(filename: String) -> Vec<AST> {
         }
     }
 
+    // Debug:
     // lexer = Lexer::new(filename.to_string(), s.as_str());
     // nodes.push(read_toplevel(&mut lexer));
     // nodes.pop().unwrap().show();
@@ -41,24 +42,23 @@ pub fn run_file(filename: String) -> Vec<AST> {
 }
 
 pub fn run(input: String) -> Vec<AST> {
-    let mut nodes: Vec<AST> = Vec::new();
     let mut lexer = Lexer::new("__input__".to_string(), input.as_str());
-
-    nodes.push(read_toplevel(&mut lexer));
+    let mut nodes: Vec<AST> = Vec::new();
+    read_toplevel(&mut lexer, &mut nodes);
 
     nodes
 }
 
-fn read_toplevel(lexer: &mut Lexer) -> AST {
+fn read_toplevel(lexer: &mut Lexer, ast: &mut Vec<AST>) {
     if is_function_def(lexer) {
-        println!("this is function");
-        read_func_def(lexer)
+        ast.push(read_func_def(lexer));
     } else {
-        read_expr(lexer)
+        read_decl(lexer, ast);
     }
 }
 
 fn read_func_def(lexer: &mut Lexer) -> AST {
+    // TODO: IMPLEMENT
     let retty = read_type_spec(lexer);
     AST::Int(0)
 }
@@ -70,6 +70,10 @@ fn is_function_def(lexer: &mut Lexer) -> bool {
     loop {
         let mut tok = lexer.get().unwrap();
         buf.push(tok.clone());
+
+        if tok.val == ";" {
+            break;
+        }
 
         if is_type(&tok) {
             continue;
@@ -124,33 +128,45 @@ fn is_type(token: &Token) -> bool {
     }
 }
 
+fn read_decl_init(lexer: &mut Lexer) -> AST {
+    // TODO: implement for like 'int a[] = {...}, char *s="str";'
+    read_assign(lexer)
+}
+
 fn skip_type_qualifiers(lexer: &mut Lexer) {
     while lexer.skip("const") || lexer.skip("volatile") || lexer.skip("restrict") {}
 }
-fn read_decl(lexer: &mut Lexer) -> Option<AST> {
+fn read_decl(lexer: &mut Lexer, ast: &mut Vec<AST>) {
     let basety = read_type_spec(lexer);
-    println!("read_decl: baesty: {:?}", basety);
     if lexer.next_token_is(";") {
-        return None;
+        return;
     }
 
     loop {
-        let mut name = String::new();
-        let (ty, name, params) = read_declarator(lexer, basety.clone());
+        let (ty, name, _) = read_declarator(lexer, basety.clone());
+
+        let init = if lexer.skip("=") {
+            Some(Rc::new(read_decl_init(lexer)))
+        } else {
+            None
+        };
+        ast.push(AST::VariableDecl(ty, name, init));
 
         if lexer.next_token_is(";") {
-            // TODO: returns VariableDeclAST
-            return None;
+            return;
         }
         lexer.expect_skip(",");
     }
 }
 
 // returns (declarator type, name, params{for function})
-fn read_declarator(lexer: &mut Lexer, basety: Type) -> (Type, String, Option<Vec<(Type, String)>>) {
+fn read_declarator(lexer: &mut Lexer,
+                   basety: Type)
+                   -> (Type, String, Option<(Vec<Type>, Vec<String>)>) {
     if lexer.skip("(") {
         if is_type(&lexer.peek().unwrap()) {
-            // return read_declarator_func(basety, params);
+            let (ty, params) = read_declarator_func(lexer, basety);
+            return (ty, "".to_string(), params);
         }
 
         // TODO: HUH? MAKES NO SENSE!!
@@ -182,15 +198,20 @@ fn read_declarator(lexer: &mut Lexer, basety: Type) -> (Type, String, Option<Vec
     (ty, "".to_string(), params)
 }
 
-fn read_declarator_tail(lexer: &mut Lexer, basety: Type) -> (Type, Option<Vec<(Type, String)>>) {
+fn read_declarator_tail(lexer: &mut Lexer,
+                        basety: Type)
+                        -> (Type, Option<(Vec<Type>, Vec<String>)>) {
     if lexer.skip("[") {
         return (read_declarator_array(lexer, basety), None);
+    }
+    if lexer.skip("(") {
+        return read_declarator_func(lexer, basety);
     }
     (basety, None)
 }
 
 fn read_declarator_array(lexer: &mut Lexer, basety: Type) -> Type {
-    let mut len = 0;
+    let len: i32;
     if lexer.skip("]") {
         len = -1;
     } else {
@@ -199,6 +220,56 @@ fn read_declarator_array(lexer: &mut Lexer, basety: Type) -> Type {
     }
     let ty = read_declarator_tail(lexer, basety).0;
     Type::Array(Rc::new(ty), len)
+}
+
+fn read_declarator_func(lexer: &mut Lexer,
+                        retty: Type)
+                        -> (Type, Option<(Vec<Type>, Vec<String>)>) {
+    if lexer.skip("void") {
+        lexer.expect_skip(")");
+        return (Type::Func(Rc::new(retty), Vec::new(), false), None);
+    }
+    if lexer.skip(")") {
+        return (Type::Func(Rc::new(retty), Vec::new(), false), None);
+    }
+
+    let (paramtypes, paramnames, vararg) = read_declarator_params(lexer);
+    (Type::Func(Rc::new(retty), paramtypes.clone(), vararg), Some((paramtypes, paramnames)))
+}
+
+// returns (param types, param names, vararg?)
+fn read_declarator_params(lexer: &mut Lexer) -> (Vec<Type>, Vec<String>, bool) {
+    let mut paramtypes: Vec<Type> = Vec::new();
+    let mut paramnames: Vec<String> = Vec::new();
+    loop {
+        if lexer.skip("...") {
+            if paramtypes.len() == 0 {
+                error::error_exit(lexer.cur_line,
+                                  "at least one param is required before '...'");
+            }
+            lexer.expect_skip(")");
+            return (paramtypes, paramnames, true);
+        }
+
+        let (ty, name) = read_func_param(lexer);
+        paramtypes.push(ty);
+        paramnames.push(name);
+        if lexer.skip(")") {
+            return (paramtypes, paramnames, false);
+        }
+        lexer.expect_skip(",");
+    }
+}
+
+fn read_func_param(lexer: &mut Lexer) -> (Type, String) {
+    let basety = read_type_spec(lexer);
+    let (ty, name, _) = read_declarator(lexer, basety);
+    match ty {
+        Type::Array(_, _) => return (Type::Ptr(Rc::new(ty)), name),
+        Type::Func(_, _, _) => return (Type::Ptr(Rc::new(ty)), name),
+        _ => {}
+    }
+    (ty, name)
 }
 
 fn read_type_spec(lexer: &mut Lexer) -> Type {
@@ -234,11 +305,6 @@ fn read_type_spec(lexer: &mut Lexer) -> Type {
             .get()
             .or_else(|| error::error_exit(lexer.cur_line, "expect types but reach EOF"))
             .unwrap();
-
-        if tok.kind != TokenKind::Identifier {
-            lexer.unget(tok);
-            break;
-        }
 
         // TODO: check whether typedef
 
@@ -280,7 +346,10 @@ fn read_type_spec(lexer: &mut Lexer) -> Type {
                     size = Size::LLong;
                 }
             }
-            _ => {}
+            _ => {
+                lexer.unget(tok);
+                break;
+            }
         }
     }
 
@@ -322,10 +391,18 @@ pub fn read_expr(lexer: &mut Lexer) -> AST {
 }
 ////////// operators start from here
 fn read_comma(lexer: &mut Lexer) -> AST {
-    let mut lhs = read_logor(lexer);
+    let mut lhs = read_assign(lexer);
     while lexer.skip(",") {
-        let rhs = read_logor(lexer);
+        let rhs = read_assign(lexer);
         lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Comma);
+    }
+    lhs
+}
+fn read_assign(lexer: &mut Lexer) -> AST {
+    let mut lhs = read_logor(lexer);
+    while lexer.skip("=") {
+        let rhs = read_logor(lexer);
+        lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Assign);
     }
     lhs
 }

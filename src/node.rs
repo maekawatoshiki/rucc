@@ -1,9 +1,11 @@
 use std::rc::Rc;
+use types::Type;
 
 pub enum AST {
     Int(i32),
     Float(f64),
     Variable(String),
+    VariableDecl(Type, String, Option<Rc<AST>>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
 }
@@ -29,6 +31,7 @@ pub enum CBinOps {
     Shl,
     Shr,
     Comma,
+    Assign,
 }
 
 #[derive(Debug)]
@@ -84,6 +87,7 @@ impl AST {
                     &CBinOps::Shl => lhs << rhs,
                     &CBinOps::Shr => lhs >> rhs,
                     &CBinOps::Comma => rhs,
+                    _ => 0,
                 }
             }
             _ => 0,
@@ -94,6 +98,9 @@ impl AST {
             &AST::Int(n) => print!("{} ", n),
             &AST::Float(n) => print!("{} ", n),
             &AST::Variable(ref name) => print!("{} ", name),
+            &AST::VariableDecl(ref ty, ref name, _) => {
+                print!("(var-decl {:?} {})", ty, name);
+            }
             &AST::UnaryOp(ref expr, ref op) => {
                 print!("({:?} ", op);
                 expr.show();

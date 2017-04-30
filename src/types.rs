@@ -18,5 +18,5 @@ pub enum Type {
     Double,
     Ptr(Rc<Type>),
     Array(Rc<Type>, i32), // ary type, size
-    Func(Rc<Type>, Vec<Type>), // return type, param types
+    Func(Rc<Type>, Vec<Type>, bool), // return type, param types, vararg
 }
