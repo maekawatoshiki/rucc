@@ -105,7 +105,7 @@ fn skip_brackets(lexer: &mut Lexer, buf: &mut Vec<Token>) {
         buf.push(tok.clone());
 
         match tok.val.as_str() {
-            "(*" => skip_brackets(lexer, buf),
+            "(" => skip_brackets(lexer, buf),
             ")" => break,
             _ => {}
         }
