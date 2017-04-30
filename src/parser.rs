@@ -124,6 +124,9 @@ fn is_type(token: &Token) -> bool {
     }
 }
 
+fn skip_type_qualifiers(lexer: &mut Lexer) {
+    while lexer.skip("const") || lexer.skip("volatile") || lexer.skip("restrict") {}
+}
 fn read_decl(lexer: &mut Lexer) -> Option<AST> {
     let basety = read_type_spec(lexer);
     println!("read_decl: baesty: {:?}", basety);
@@ -133,7 +136,7 @@ fn read_decl(lexer: &mut Lexer) -> Option<AST> {
 
     loop {
         let mut name = String::new();
-        let ty = read_declarator(lexer, &mut name, basety.clone(), None);
+        let (ty, name, params) = read_declarator(lexer, basety.clone());
 
         if lexer.next_token_is(";") {
             // TODO: returns VariableDeclAST
@@ -143,11 +146,8 @@ fn read_decl(lexer: &mut Lexer) -> Option<AST> {
     }
 }
 
-fn read_declarator(lexer: &mut Lexer,
-                   name: &mut String,
-                   basety: Type,
-                   params: Option<Vec<(Type, String)>>)
-                   -> Type {
+// returns (declarator type, name, params{for function})
+fn read_declarator(lexer: &mut Lexer, basety: Type) -> (Type, String, Option<Vec<(Type, String)>>) {
     if lexer.skip("(") {
         if is_type(&lexer.peek().unwrap()) {
             // return read_declarator_func(basety, params);
@@ -159,26 +159,46 @@ fn read_declarator(lexer: &mut Lexer,
             buf.push(lexer.get().unwrap());
         }
         lexer.expect_skip(")");
-        let t = read_declarator_tail(lexer, basety, params);
+        let t = read_declarator_tail(lexer, basety);
         lexer.unget_all(buf);
-        return read_declarator(lexer, name, t, None);
+        return read_declarator(lexer, t.0);
     }
 
-    Type::Void
+    if lexer.skip("*") {
+        skip_type_qualifiers(lexer);
+        return read_declarator(lexer, Type::Ptr(Rc::new(basety)));
+    }
+
+    let tok = lexer.get().unwrap();
+
+    if tok.kind == TokenKind::Identifier {
+        let name = tok.val;
+        let (ty, params) = read_declarator_tail(lexer, basety);
+        return (ty, name, params);
+    }
+
+    lexer.unget(tok);
+    let (ty, params) = read_declarator_tail(lexer, basety);
+    (ty, "".to_string(), params)
 }
 
-fn read_declarator_tail(lexer: &mut Lexer,
-                        basety: Type,
-                        params: Option<Vec<(Type, String)>>)
-                        -> Type {
-    // if lexer.next_token_is("[") {
-    //     return read_declarator_array(lexer, basety);
-    // } else
-    basety
+fn read_declarator_tail(lexer: &mut Lexer, basety: Type) -> (Type, Option<Vec<(Type, String)>>) {
+    if lexer.skip("[") {
+        return (read_declarator_array(lexer, basety), None);
+    }
+    (basety, None)
 }
 
 fn read_declarator_array(lexer: &mut Lexer, basety: Type) -> Type {
-    basety
+    let mut len = 0;
+    if lexer.skip("]") {
+        len = -1;
+    } else {
+        len = read_expr(lexer).eval_constexpr();
+        lexer.expect_skip("]");
+    }
+    let ty = read_declarator_tail(lexer, basety).0;
+    Type::Array(Rc::new(ty), len)
 }
 
 fn read_type_spec(lexer: &mut Lexer) -> Type {
