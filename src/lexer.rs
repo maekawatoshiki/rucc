@@ -110,6 +110,15 @@ impl<'a> Lexer<'a> {
         *peekc == ch
     }
 
+    pub fn next_token_is(&mut self, expect: &str) -> bool {
+        let next = self.peek();
+        if next.is_some() {
+            let n = next.unwrap();
+            n.val == expect && n.kind != TokenKind::String && n.kind != TokenKind::Char
+        } else {
+            error::error_exit(self.cur_line, "expected a token but reach EOF")
+        }
+    }
     pub fn skip(&mut self, s: &str) -> bool {
         let next = self.do_read_token();
         match next {

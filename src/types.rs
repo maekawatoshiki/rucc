@@ -17,6 +17,6 @@ pub enum Type {
     Float,
     Double,
     Ptr(Rc<Type>),
-    Array(Rc<Type>, usize), // ary type, size
+    Array(Rc<Type>, i32), // ary type, size
     Func(Rc<Type>, Vec<Type>), // return type, param types
 }

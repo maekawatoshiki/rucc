@@ -59,7 +59,7 @@ fn read_toplevel(lexer: &mut Lexer) -> AST {
 }
 
 fn read_func_def(lexer: &mut Lexer) -> AST {
-    read_decl(lexer);
+    let retty = read_type_spec(lexer);
     AST::Int(0)
 }
 
@@ -84,10 +84,11 @@ fn is_function_def(lexer: &mut Lexer) -> bool {
             continue;
         }
 
-        if tok.val == "(" {
+        if lexer.peek().unwrap().val != "(" {
             continue;
         }
 
+        buf.push(lexer.get().unwrap());
         skip_brackets(lexer, &mut buf);
 
         tok = lexer.peek().unwrap();
@@ -114,18 +115,70 @@ fn skip_brackets(lexer: &mut Lexer, buf: &mut Vec<Token>) {
 
 fn is_type(token: &Token) -> bool {
     if token.kind != TokenKind::Identifier {
-        return true;
+        return false;
     }
     match token.val.as_str() {
-        "int" => true,
+        "void" | "signed" | "unsigned" | "char" | "int" | "short" | "long" | "float" |
+        "double" | "struct" | "union" | "extern" | "const" | "volatile" => true,
         _ => false,
     }
 }
 
-fn read_decl(lexer: &mut Lexer) -> AST {
+fn read_decl(lexer: &mut Lexer) -> Option<AST> {
     let basety = read_type_spec(lexer);
     println!("read_decl: baesty: {:?}", basety);
-    AST::Int(0)
+    if lexer.next_token_is(";") {
+        return None;
+    }
+
+    loop {
+        let mut name = String::new();
+        let ty = read_declarator(lexer, &mut name, basety.clone(), None);
+
+        if lexer.next_token_is(";") {
+            // TODO: returns VariableDeclAST
+            return None;
+        }
+        lexer.expect_skip(",");
+    }
+}
+
+fn read_declarator(lexer: &mut Lexer,
+                   name: &mut String,
+                   basety: Type,
+                   params: Option<Vec<(Type, String)>>)
+                   -> Type {
+    if lexer.skip("(") {
+        if is_type(&lexer.peek().unwrap()) {
+            // return read_declarator_func(basety, params);
+        }
+
+        // TODO: HUH? MAKES NO SENSE!!
+        let mut buf: Vec<Token> = Vec::new();
+        while !lexer.next_token_is(")") {
+            buf.push(lexer.get().unwrap());
+        }
+        lexer.expect_skip(")");
+        let t = read_declarator_tail(lexer, basety, params);
+        lexer.unget_all(buf);
+        return read_declarator(lexer, name, t, None);
+    }
+
+    Type::Void
+}
+
+fn read_declarator_tail(lexer: &mut Lexer,
+                        basety: Type,
+                        params: Option<Vec<(Type, String)>>)
+                        -> Type {
+    // if lexer.next_token_is("[") {
+    //     return read_declarator_array(lexer, basety);
+    // } else
+    basety
+}
+
+fn read_declarator_array(lexer: &mut Lexer, basety: Type) -> Type {
+    basety
 }
 
 fn read_type_spec(lexer: &mut Lexer) -> Type {
@@ -211,13 +264,14 @@ fn read_type_spec(lexer: &mut Lexer) -> Type {
         }
     }
 
-    // if sign is not expected
+    // if sign is not expected,
+    //  default is Signed
     if sign.is_none() {
         sign = Some(Sign::Signed);
     }
 
     let mut ty: Option<Type> = None;
-    // kind is None => 'signed' or 'unsigned'
+    // e.g. kind is None => 'signed var;' or 'unsigned var;'
     if kind.is_some() {
         match kind.unwrap() {
             PrimitiveType::Void => ty = Some(Type::Void),
