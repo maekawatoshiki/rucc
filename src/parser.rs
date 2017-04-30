@@ -3,7 +3,7 @@ use lexer::{Lexer, Token, TokenKind};
 use node::AST;
 use node;
 use error;
-use types::Type;
+use types::{Type, Sign};
 
 use std::fs::OpenOptions;
 use std::io::prelude::*;
@@ -59,6 +59,7 @@ fn read_toplevel(lexer: &mut Lexer) -> AST {
 }
 
 fn read_func_def(lexer: &mut Lexer) -> AST {
+    read_decl(lexer);
     AST::Int(0)
 }
 
@@ -123,22 +124,37 @@ fn is_type(token: &Token) -> bool {
 
 fn read_decl(lexer: &mut Lexer) -> AST {
     let basety = read_type_spec(lexer);
+    println!("read_decl: baesty: {:?}", basety);
     AST::Int(0)
 }
 
 fn read_type_spec(lexer: &mut Lexer) -> Type {
-    enum Sign {
-        Signed,
-        Unsigned,
-    };
+    #[derive(PartialEq, Debug, Clone)]
     enum Size {
         Short,
         Normal,
         Long,
         LLong,
     };
-    let sign: Sign = Sign::Signed;
-    let size: Size = Size::Normal;
+    #[derive(PartialEq, Debug, Clone)]
+    enum PrimitiveType {
+        Void,
+        Char,
+        Int,
+        Float,
+        Double,
+    };
+
+    let mut kind: Option<PrimitiveType> = None;
+    let mut sign: Option<Sign> = None;
+    let mut size = Size::Normal;
+
+    let err_kind = |lexer: &Lexer, kind: Option<PrimitiveType>| if kind.is_some() {
+        error::error_exit(lexer.cur_line, "type mismatch");
+    };
+    let err_sign = |lexer: &Lexer, sign: Option<Sign>| if sign.is_some() {
+        error::error_exit(lexer.cur_line, "type mismatch");
+    };
 
     loop {
         let tok = lexer
@@ -146,11 +162,84 @@ fn read_type_spec(lexer: &mut Lexer) -> Type {
             .or_else(|| error::error_exit(lexer.cur_line, "expect types but reach EOF"))
             .unwrap();
 
+        if tok.kind != TokenKind::Identifier {
+            lexer.unget(tok);
+            break;
+        }
+
+        // TODO: check whether typedef
+
         match tok.val.as_str() {
-            "void" => {}
+            "const" | "volatile" | "inline" | "noreturn" => {}
+            "void" => {
+                err_kind(&lexer, kind);
+                kind = Some(PrimitiveType::Void);
+            }
+            "char" => {
+                err_kind(&lexer, kind);
+                kind = Some(PrimitiveType::Char);
+            }
+            "int" => {
+                err_kind(&lexer, kind);
+                kind = Some(PrimitiveType::Int);
+            }
+            "float" => {
+                err_kind(&lexer, kind);
+                kind = Some(PrimitiveType::Float);
+            }
+            "double" => {
+                err_kind(&lexer, kind);
+                kind = Some(PrimitiveType::Double);
+            }
+            "signed" => {
+                err_sign(&lexer, sign);
+                sign = Some(Sign::Signed);
+            }
+            "unsigned" => {
+                err_sign(&lexer, sign);
+                sign = Some(Sign::Unsigned);
+            }
+            "short" => size = Size::Short,
+            "long" => {
+                if size == Size::Normal {
+                    size = Size::Long;
+                } else if size == Size::Long {
+                    size = Size::LLong;
+                }
+            }
             _ => {}
         }
     }
+
+    // if sign is not expected
+    if sign.is_none() {
+        sign = Some(Sign::Signed);
+    }
+
+    let mut ty: Option<Type> = None;
+    // kind is None => 'signed' or 'unsigned'
+    if kind.is_some() {
+        match kind.unwrap() {
+            PrimitiveType::Void => ty = Some(Type::Void),
+            PrimitiveType::Char => ty = Some(Type::Char(sign.clone().unwrap())),
+            PrimitiveType::Float => ty = Some(Type::Float),
+            PrimitiveType::Double => ty = Some(Type::Double),
+            _ => {}
+        }
+        if ty.is_some() {
+            return ty.unwrap();
+        }
+    }
+
+    match size {
+        Size::Short => ty = Some(Type::Short(sign.clone().unwrap())),
+        Size::Normal => ty = Some(Type::Int(sign.clone().unwrap())),
+        Size::Long => ty = Some(Type::Long(sign.clone().unwrap())),
+        Size::LLong => ty = Some(Type::LLong(sign.clone().unwrap())),
+    }
+
+    assert!(ty.is_some(), "ty is None!");
+    ty.unwrap()
 }
 
 pub fn read_expr(lexer: &mut Lexer) -> AST {
