@@ -19,3 +19,7 @@ $ apt-get install llvm-3.8
 ```sh
 $ cargo build --release
 ```
+
+# reference
+
+- I'm using [8cc](https://github.com/rui314/8cc) as reference.
