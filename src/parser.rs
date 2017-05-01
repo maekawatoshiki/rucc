@@ -44,8 +44,12 @@ pub fn run_file(filename: String) -> Vec<AST> {
 pub fn run(input: String) -> Vec<AST> {
     let mut lexer = Lexer::new("__input__".to_string(), input.as_str());
     let mut nodes: Vec<AST> = Vec::new();
-    read_toplevel(&mut lexer, &mut nodes);
-
+    loop {
+        if lexer.peek().is_none() {
+            break;
+        }
+        read_toplevel(&mut lexer, &mut nodes);
+    }
     nodes
 }
 
@@ -60,8 +64,19 @@ fn read_toplevel(lexer: &mut Lexer, ast: &mut Vec<AST>) {
 fn read_func_def(lexer: &mut Lexer) -> AST {
     // TODO: IMPLEMENT
     let retty = read_type_spec(lexer);
-    AST::Int(0)
+    let (functy, name, params) = read_declarator(lexer, retty);
+    println!("functy: {:?}", functy);
+
+    lexer.expect_skip("{");
+    let body = read_func_body(lexer, &functy);
+    AST::FuncDef(functy, name, Rc::new(body))
 }
+
+fn read_func_body(lexer: &mut Lexer, functy: &Type) -> AST {
+    lexer.expect_skip("}");
+    AST::Block(Vec::new())
+}
+
 
 fn is_function_def(lexer: &mut Lexer) -> bool {
     let mut buf: Vec<Token> = Vec::new();
@@ -138,7 +153,7 @@ fn skip_type_qualifiers(lexer: &mut Lexer) {
 }
 fn read_decl(lexer: &mut Lexer, ast: &mut Vec<AST>) {
     let basety = read_type_spec(lexer);
-    if lexer.next_token_is(";") {
+    if lexer.skip(";") {
         return;
     }
 
@@ -152,7 +167,7 @@ fn read_decl(lexer: &mut Lexer, ast: &mut Vec<AST>) {
         };
         ast.push(AST::VariableDecl(ty, name, init));
 
-        if lexer.next_token_is(";") {
+        if lexer.skip(";") {
             return;
         }
         lexer.expect_skip(",");
@@ -265,7 +280,7 @@ fn read_func_param(lexer: &mut Lexer) -> (Type, String) {
     let basety = read_type_spec(lexer);
     let (ty, name, _) = read_declarator(lexer, basety);
     match ty {
-        Type::Array(_, _) => return (Type::Ptr(Rc::new(ty)), name),
+        Type::Array(subst, _) => return (Type::Ptr(subst), name),
         Type::Func(_, _, _) => return (Type::Ptr(Rc::new(ty)), name),
         _ => {}
     }

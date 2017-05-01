@@ -13,7 +13,8 @@ fn main() {
         let input_file_name = args[1].to_string(); // is this correct?
         parser::run_file(input_file_name);
 
-        let parse_str = "int (*add)(int a, int b);".to_string();
+        let parse_str = "int (*add)(int a, int b), n = 12; int main(int argc, char *argv[]) { }"
+            .to_string();
         println!("parser test: {}", parse_str);
         let ast = parser::run(parse_str);
         for node in ast {

@@ -8,6 +8,8 @@ pub enum AST {
     VariableDecl(Type, String, Option<Rc<AST>>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
+    FuncDef(Type, String, Rc<AST>),
+    Block(Vec<AST>),
 }
 
 #[derive(Debug)]
@@ -98,8 +100,14 @@ impl AST {
             &AST::Int(n) => print!("{} ", n),
             &AST::Float(n) => print!("{} ", n),
             &AST::Variable(ref name) => print!("{} ", name),
-            &AST::VariableDecl(ref ty, ref name, _) => {
-                print!("(var-decl {:?} {})", ty, name);
+            &AST::VariableDecl(ref ty, ref name, ref init) => {
+                print!("(var-decl {:?} {}", ty, name);
+                if init.is_some() {
+                    print!(" (init ");
+                    init.clone().unwrap().show();
+                    print!(")");
+                }
+                print!(")");
             }
             &AST::UnaryOp(ref expr, ref op) => {
                 print!("({:?} ", op);
@@ -111,6 +119,16 @@ impl AST {
                 lhs.show();
                 rhs.show();
                 print!(")");
+            }
+            &AST::FuncDef(ref functy, ref name, ref body) => {
+                print!("(def-func {} {:?} ", name, functy);
+                body.show();
+                print!(")");
+            }
+            &AST::Block(ref body) => {
+                for stmt in body {
+                    stmt.show();
+                }
             }
         };
     }
