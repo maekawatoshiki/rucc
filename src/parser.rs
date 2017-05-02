@@ -1,4 +1,3 @@
-use lexer;
 use lexer::{Lexer, Token, TokenKind};
 use node::AST;
 use node;
@@ -73,10 +72,45 @@ fn read_func_def(lexer: &mut Lexer) -> AST {
 }
 
 fn read_func_body(lexer: &mut Lexer, functy: &Type) -> AST {
-    lexer.expect_skip("}");
-    AST::Block(Vec::new())
+    read_compound_stmt(lexer)
 }
 
+fn read_compound_stmt(lexer: &mut Lexer) -> AST {
+    let mut stmts: Vec<AST> = Vec::new();
+    loop {
+        if lexer.skip("}") {
+            break;
+        }
+
+        if is_type(&lexer.peek_e()) {
+            // variable declaration
+            read_decl(lexer, &mut stmts);
+        } else {
+            stmts.push(read_stmt(lexer));
+        }
+    }
+    AST::Block(stmts)
+}
+
+fn read_stmt(lexer: &mut Lexer) -> AST {
+    let tok = lexer.get_e();
+    match tok.val.as_str() {
+        "{" => return read_compound_stmt(lexer),
+        "return" => return read_return_stmt(lexer),
+        _ => {}
+    }
+    lexer.unget(tok);
+    let expr = read_expr(lexer);
+    lexer.expect_skip(";");
+    expr
+}
+
+fn read_return_stmt(lexer: &mut Lexer) -> AST {
+    let retval = read_expr(lexer);
+    let retast = AST::Return(Rc::new(retval));
+    lexer.expect_skip(";");
+    retast
+}
 
 fn is_function_def(lexer: &mut Lexer) -> bool {
     let mut buf: Vec<Token> = Vec::new();
@@ -186,10 +220,9 @@ fn read_declarator(lexer: &mut Lexer,
 
         // TODO: HUH? MAKES NO SENSE!!
         let mut buf: Vec<Token> = Vec::new();
-        while !lexer.next_token_is(")") {
+        while !lexer.skip(")") {
             buf.push(lexer.get().unwrap());
         }
-        lexer.expect_skip(")");
         let t = read_declarator_tail(lexer, basety);
         lexer.unget_all(buf);
         return read_declarator(lexer, t.0);
@@ -569,8 +602,31 @@ fn read_unary(lexer: &mut Lexer) -> AST {
     lexer.unget(tok);
     read_postfix(lexer)
 }
+
 fn read_postfix(lexer: &mut Lexer) -> AST {
-    read_primary(lexer)
+    let mut ast = read_primary(lexer);
+    loop {
+        if lexer.skip("(") {
+            ast = read_func_call(lexer, ast);
+            continue;
+        }
+        break;
+    }
+    ast
+}
+
+fn read_func_call(lexer: &mut Lexer, f: AST) -> AST {
+    let mut args: Vec<AST> = Vec::new();
+    loop {
+        let arg = read_expr(lexer);
+        args.push(arg);
+
+        if lexer.skip(")") {
+            break;
+        }
+        lexer.expect_skip(",");
+    }
+    AST::FuncCall(Rc::new(f), args)
 }
 
 fn read_primary(lexer: &mut Lexer) -> AST {
@@ -579,23 +635,16 @@ fn read_primary(lexer: &mut Lexer) -> AST {
         .or_else(|| error::error_exit(lexer.cur_line, "expected primary"))
         .unwrap();
     match tok.kind {
-        // TokenKind::Identifier => None,
         TokenKind::IntNumber => {
-            let a = tok.val.clone();
-            if a.len() > 2 && a.chars().nth(1).unwrap() == 'x' {
-                AST::Int(u32::from_str_radix(&a[2..], 16).unwrap() as i32)
+            let num_literal = tok.val.clone();
+            if num_literal.len() > 2 && num_literal.chars().nth(1).unwrap() == 'x' {
+                AST::Int(read_hex_num(&num_literal[2..]))
             } else {
-                let mut n = 0;
-                for c in a.chars() {
-                    match c {
-                        '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i32, 
-                        _ => {} // TODO: suffix
-                    }
-                }
-                AST::Int(n)
+                AST::Int(read_dec_num(num_literal.as_str()))
             }
         }
         // TokenKind::FloatNumber => None,
+        TokenKind::Identifier => AST::Variable(tok.val),
         // TokenKind::String => None,
         // TokenKind::Char => None,
         TokenKind::Symbol => {
@@ -618,5 +667,25 @@ fn read_primary(lexer: &mut Lexer) -> AST {
                               format!("read_primary unknown token {:?}", tok.kind).as_str())
         }
     }
+}
+fn read_dec_num(num_literal: &str) -> i32 {
+    let mut n = 0;
+    for c in num_literal.chars() {
+        match c {
+            '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i32, 
+            _ => {} // TODO: suffix
+        }
+    }
+    n
+}
+fn read_hex_num(num_literal: &str) -> i32 {
+    let mut n = 0;
+    for c in num_literal[2..].chars() {
+        match c {
+            '0'...'9' | 'A'...'F' | 'a'...'f' => n = n * 16 + c.to_digit(16).unwrap() as i32, 
+            _ => {} // TODO: suffix
+        }
+    }
+    n
 }
 ////////// operators end here

@@ -447,6 +447,14 @@ impl<'a> Lexer<'a> {
         self.expand(tok)
     }
 
+    pub fn get_e(&mut self) -> Token {
+        let tok = self.get();
+        if tok.is_none() {
+            error::error_exit(self.cur_line, "expected a token, but reach EOF");
+        }
+        tok.unwrap()
+    }
+
     pub fn peek(&mut self) -> Option<Token> {
         let tok = self.get();
         tok.clone()
@@ -455,6 +463,14 @@ impl<'a> Lexer<'a> {
                           Some(t)
                       });
         tok
+    }
+
+    pub fn peek_e(&mut self) -> Token {
+        let tok = self.peek();
+        if tok.is_none() {
+            error::error_exit(self.cur_line, "expected a token, but reach EOF");
+        }
+        tok.unwrap()
     }
 
     // for c preprocessor

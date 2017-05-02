@@ -10,6 +10,8 @@ pub enum AST {
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
     FuncDef(Type, String, Rc<AST>),
     Block(Vec<AST>),
+    FuncCall(Rc<AST>, Vec<AST>),
+    Return(Rc<AST>),
 }
 
 #[derive(Debug)]
@@ -129,6 +131,20 @@ impl AST {
                 for stmt in body {
                     stmt.show();
                 }
+            }
+            &AST::FuncCall(ref f, ref args) => {
+                print!("(func-call ");
+                f.show();
+                print!(" ");
+                for arg in args {
+                    arg.show();
+                }
+                print!(")");
+            }
+            &AST::Return(ref retval) => {
+                print!("(return ");
+                retval.show();
+                print!(")");
             }
         };
     }
