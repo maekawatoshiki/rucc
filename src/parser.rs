@@ -620,6 +620,7 @@ fn read_postfix(lexer: &mut Lexer) -> AST {
         if lexer.skip("->") {
             ast = read_field(lexer, AST::UnaryOp(Rc::new(ast), node::CUnaryOps::Deref));
         }
+        // TODO: impelment inc and dec
         break;
     }
     ast

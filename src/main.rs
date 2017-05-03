@@ -2,6 +2,7 @@ extern crate rucc;
 
 use rucc::version_info;
 use rucc::parser;
+use rucc::codegen;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -17,8 +18,14 @@ fn main() {
             .to_string();
         println!("parser test: {}", parse_str);
         let ast = parser::run(parse_str);
-        for node in ast {
+        for node in &ast {
             node.show();
+        }
+
+        println!("\nllvm-ir test output:");
+        unsafe {
+            let mut codegen = codegen::Codegen::new("rucc");
+            codegen.gen(ast);
         }
     }
 }
