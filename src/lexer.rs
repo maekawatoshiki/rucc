@@ -205,7 +205,8 @@ impl<'a> Lexer<'a> {
         sym.push(c);
         match c {
             '+' | '-' => {
-                if self.peek_char_is('=') || self.peek_char_is('+') || self.peek_char_is('-') {
+                if self.peek_char_is('=') || self.peek_char_is('>') || self.peek_char_is('+') ||
+                   self.peek_char_is('-') {
                     sym.push(self.peek_next());
                 }
             }

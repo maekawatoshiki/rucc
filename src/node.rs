@@ -11,6 +11,7 @@ pub enum AST {
     FuncDef(Type, String, Rc<AST>),
     Block(Vec<AST>),
     FuncCall(Rc<AST>, Vec<AST>),
+    StructRef(Rc<AST>, String), // String is name of struct field
     Return(Rc<AST>),
 }
 
@@ -46,7 +47,7 @@ pub enum CUnaryOps {
     Minus,
     Inc,
     Dec,
-    Indir,
+    Deref,
     Addr,
     // TODO: add Cast, Sizeof
 }
@@ -64,7 +65,7 @@ impl AST {
                     &CUnaryOps::Minus => -expr,
                     &CUnaryOps::Inc => 1 + expr,
                     &CUnaryOps::Dec => expr - 1,
-                    &CUnaryOps::Indir => expr,
+                    &CUnaryOps::Deref => expr,
                     &CUnaryOps::Addr => expr,
                 }
             }
@@ -140,6 +141,11 @@ impl AST {
                     arg.show();
                 }
                 print!(")");
+            }
+            &AST::StructRef(ref s, ref field) => {
+                print!("(struct-ref ");
+                s.show();
+                print!(" {})", field);
             }
             &AST::Return(ref retval) => {
                 print!("(return ");

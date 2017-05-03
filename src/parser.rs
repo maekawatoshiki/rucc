@@ -594,7 +594,7 @@ fn read_unary(lexer: &mut Lexer) -> AST {
             "-" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Minus),
             "++" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Inc),
             "--" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Dec),
-            "*" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Indir),
+            "*" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Deref),
             "&" => return AST::UnaryOp(Rc::new(read_cast(lexer)), node::CUnaryOps::Addr),
             _ => {}
         }
@@ -610,6 +610,16 @@ fn read_postfix(lexer: &mut Lexer) -> AST {
             ast = read_func_call(lexer, ast);
             continue;
         }
+        if lexer.skip("[") {
+            ast = read_index(lexer, ast);
+            continue;
+        }
+        if lexer.skip(".") {
+            ast = read_field(lexer, ast);
+        }
+        if lexer.skip("->") {
+            ast = read_field(lexer, AST::UnaryOp(Rc::new(ast), node::CUnaryOps::Deref));
+        }
         break;
     }
     ast
@@ -618,7 +628,7 @@ fn read_postfix(lexer: &mut Lexer) -> AST {
 fn read_func_call(lexer: &mut Lexer, f: AST) -> AST {
     let mut args: Vec<AST> = Vec::new();
     loop {
-        let arg = read_expr(lexer);
+        let arg = read_assign(lexer);
         args.push(arg);
 
         if lexer.skip(")") {
@@ -627,6 +637,23 @@ fn read_func_call(lexer: &mut Lexer, f: AST) -> AST {
         lexer.expect_skip(",");
     }
     AST::FuncCall(Rc::new(f), args)
+}
+
+fn read_index(lexer: &mut Lexer, ast: AST) -> AST {
+    let idx = read_expr(lexer);
+    lexer.expect_skip("]");
+    AST::UnaryOp(Rc::new(AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add)),
+                 node::CUnaryOps::Deref)
+}
+
+fn read_field(lexer: &mut Lexer, ast: AST) -> AST {
+    let field = lexer.get_e();
+    if field.kind != TokenKind::Identifier {
+        error::error_exit(lexer.cur_line, "expected field name");
+    }
+
+    let field_name = field.val;
+    AST::StructRef(Rc::new(ast), field_name)
 }
 
 fn read_primary(lexer: &mut Lexer) -> AST {
