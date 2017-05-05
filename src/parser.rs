@@ -63,15 +63,15 @@ fn read_toplevel(lexer: &mut Lexer, ast: &mut Vec<AST>) {
 fn read_func_def(lexer: &mut Lexer) -> AST {
     // TODO: IMPLEMENT
     let retty = read_type_spec(lexer);
-    let (functy, name, params) = read_declarator(lexer, retty);
+    let (functy, name, param_names) = read_declarator(lexer, retty);
     println!("functy: {:?}", functy);
 
     lexer.expect_skip("{");
     let body = read_func_body(lexer, &functy);
-    AST::FuncDef(functy, name, Rc::new(body))
+    AST::FuncDef(functy, param_names.unwrap(), name, Rc::new(body))
 }
 
-fn read_func_body(lexer: &mut Lexer, functy: &Type) -> AST {
+fn read_func_body(lexer: &mut Lexer, _functy: &Type) -> AST {
     read_compound_stmt(lexer)
 }
 
@@ -209,9 +209,7 @@ fn read_decl(lexer: &mut Lexer, ast: &mut Vec<AST>) {
 }
 
 // returns (declarator type, name, params{for function})
-fn read_declarator(lexer: &mut Lexer,
-                   basety: Type)
-                   -> (Type, String, Option<(Vec<Type>, Vec<String>)>) {
+fn read_declarator(lexer: &mut Lexer, basety: Type) -> (Type, String, Option<Vec<String>>) {
     if lexer.skip("(") {
         if is_type(&lexer.peek().unwrap()) {
             let (ty, params) = read_declarator_func(lexer, basety);
@@ -246,9 +244,7 @@ fn read_declarator(lexer: &mut Lexer,
     (ty, "".to_string(), params)
 }
 
-fn read_declarator_tail(lexer: &mut Lexer,
-                        basety: Type)
-                        -> (Type, Option<(Vec<Type>, Vec<String>)>) {
+fn read_declarator_tail(lexer: &mut Lexer, basety: Type) -> (Type, Option<Vec<String>>) {
     if lexer.skip("[") {
         return (read_declarator_array(lexer, basety), None);
     }
@@ -270,9 +266,7 @@ fn read_declarator_array(lexer: &mut Lexer, basety: Type) -> Type {
     Type::Array(Rc::new(ty), len)
 }
 
-fn read_declarator_func(lexer: &mut Lexer,
-                        retty: Type)
-                        -> (Type, Option<(Vec<Type>, Vec<String>)>) {
+fn read_declarator_func(lexer: &mut Lexer, retty: Type) -> (Type, Option<Vec<String>>) {
     if lexer.skip("void") {
         lexer.expect_skip(")");
         return (Type::Func(Rc::new(retty), Vec::new(), false), None);
@@ -282,7 +276,7 @@ fn read_declarator_func(lexer: &mut Lexer,
     }
 
     let (paramtypes, paramnames, vararg) = read_declarator_params(lexer);
-    (Type::Func(Rc::new(retty), paramtypes.clone(), vararg), Some((paramtypes, paramnames)))
+    (Type::Func(Rc::new(retty), paramtypes.clone(), vararg), Some(paramnames))
 }
 
 // returns (param types, param names, vararg?)

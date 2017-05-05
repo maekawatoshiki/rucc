@@ -1,6 +1,7 @@
 use std::rc::Rc;
 use types::Type;
 
+#[derive( Debug)]
 pub enum AST {
     Int(i32),
     Float(f64),
@@ -8,7 +9,7 @@ pub enum AST {
     VariableDecl(Type, String, Option<Rc<AST>>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
-    FuncDef(Type, String, Rc<AST>),
+    FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
     Block(Vec<AST>),
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
@@ -123,8 +124,8 @@ impl AST {
                 rhs.show();
                 print!(")");
             }
-            &AST::FuncDef(ref functy, ref name, ref body) => {
-                print!("(def-func {} {:?} ", name, functy);
+            &AST::FuncDef(ref functy, ref param_names, ref name, ref body) => {
+                print!("(def-func {} {:?} {:?}", name, functy, param_names);
                 body.show();
                 print!(")");
             }

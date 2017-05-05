@@ -9,7 +9,7 @@ pub enum Sign {
 #[derive(PartialEq, Debug, Clone)]
 pub enum Type {
     Void,
-    Char(Sign), // sign(false is signed)
+    Char(Sign), // sign
     Short(Sign), // sign
     Int(Sign), // sign
     Long(Sign), // sign
