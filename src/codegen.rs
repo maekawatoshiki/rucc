@@ -101,9 +101,7 @@ impl Codegen {
             &node::AST::Int(ref n) => self.make_int(*n as u64, false),
             _ => {
                 error::error_exit(0,
-                                  format!("codegen: toplevel mustn't contain except func-def (given {:?})",
-                                          ast)
-                                          .as_str())
+                                  format!("codegen: unknown ast (given {:?})", ast).as_str())
             }
         }
     }
