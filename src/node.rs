@@ -5,8 +5,9 @@ use types::Type;
 pub enum AST {
     Int(i32),
     Float(f64),
+    String(String),
     Variable(String),
-    VariableDecl(Type, String, Option<Rc<AST>>),
+    VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
     FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
@@ -103,6 +104,7 @@ impl AST {
         match self {
             &AST::Int(n) => print!("{} ", n),
             &AST::Float(n) => print!("{} ", n),
+            &AST::String(ref s) => print!("\"{}\" ", s),
             &AST::Variable(ref name) => print!("{} ", name),
             &AST::VariableDecl(ref ty, ref name, ref init) => {
                 print!("(var-decl {:?} {}", ty, name);

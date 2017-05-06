@@ -5,6 +5,7 @@ use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
 use std;
+use std::collections::HashMap;
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
@@ -19,6 +20,8 @@ pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
+    global_varmap: HashMap<String, (Type, LLVMValueRef)>,
+    cur_func: Option<LLVMValueRef>,
 }
 
 impl Codegen {
@@ -28,6 +31,8 @@ impl Codegen {
             context: LLVMContextCreate(),
             module: LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), LLVMContextCreate()),
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
+            global_varmap: HashMap::new(),
+            cur_func: None,
         }
     }
 
@@ -107,16 +112,21 @@ impl Codegen {
             &node::AST::FuncDef(ref functy, ref param_names, ref name, ref body) => {
                 self.gen_func_def(functy, param_names, name, body)
             }
-            // &node::AST::VariableDecl(_, _, _) => {}
+            &node::AST::VariableDecl(ref ty, ref name, ref init) => {
+                self.gen_var_decl(ty, name, init)
+            }
             &node::AST::Block(ref block) => self.gen_block(block),
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
+            // &node::AST::Variable(ref name) => self.gen_
+            &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, &*args),
             &node::AST::Return(ref ret) => {
                 let (retval, _) = self.gen(ret);
                 self.gen_return(retval)
             }
             &node::AST::Int(ref n) => self.make_int(*n as u64, false),
+            &node::AST::String(ref s) => self.make_const_str(s),
             _ => {
                 error::error_exit(0,
                                   format!("codegen: unknown ast (given {:?})", ast).as_str())
@@ -134,13 +144,44 @@ impl Codegen {
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
                                    func_t);
+        self.global_varmap
+            .insert(name.to_string(), (functy.clone(), func));
+        self.cur_func = Some(func);
 
         let bb_entry = LLVMAppendBasicBlock(func, CString::new("entry").unwrap().as_ptr());
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
 
         self.gen(&**body);
 
+        self.cur_func = None;
+
         (func, None)
+    }
+
+    // TODO: only global var decl supported
+    unsafe fn gen_var_decl(&mut self,
+                           ty: &Type,
+                           name: &String,
+                           init: &Option<Rc<node::AST>>)
+                           -> (LLVMValueRef, Option<Type>) {
+        // if self.cur_func.is_none() { // is global
+        // }
+
+        let gvar = match *ty {
+            Type::Func(_, _, _) => {
+                LLVMAddFunction(self.module,
+                                CString::new(name.as_str()).unwrap().as_ptr(),
+                                self.type_to_llvmty(ty))
+            } 
+            _ => {
+                LLVMAddGlobal(self.module,
+                              self.type_to_llvmty(ty),
+                              CString::new(name.as_str()).unwrap().as_ptr())
+            }
+        };
+        self.global_varmap
+            .insert(name.to_string(), (ty.clone(), gvar));
+        (gvar, None)
     }
 
     unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> (LLVMValueRef, Option<Type>) {
@@ -164,7 +205,7 @@ impl Codegen {
 
         // normal binary operators
         let (lhs, lhsty) = self.gen(lhsast);
-        let (rhs, rhsty) = self.gen(rhsast);
+        let (rhs, _rhsty) = self.gen(rhsast);
         match lhsty.unwrap() {
             Type::Int(_) => {
                 return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
@@ -214,6 +255,34 @@ impl Codegen {
         }
     }
 
+    unsafe fn gen_func_call(&mut self,
+                            fast: &node::AST,
+                            args: &Vec<node::AST>)
+                            -> (LLVMValueRef, Option<Type>) {
+        let mut args_val: Vec<LLVMValueRef> = Vec::new();
+        for arg in &*args {
+            args_val.push(self.gen(arg).0);
+        }
+        let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
+
+        let maybe_func = match *fast {
+            node::AST::Variable(ref name) => self.global_varmap.get(name),
+            _ => None,
+        };
+        if maybe_func.is_none() {
+            error::error_exit(0, "gen_func_call: not found func");
+        }
+
+        let func_retty = maybe_func.unwrap().0.clone();
+        let func = maybe_func.unwrap().1;
+        (LLVMBuildCall(self.builder,
+                       func,
+                       args_val_ptr,
+                       args.len() as u32,
+                       CString::new("funccall").unwrap().as_ptr()),
+         Some(func_retty))
+    }
+
     unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> (LLVMValueRef, Option<Type>) {
         (LLVMBuildRet(self.builder, retval), None)
     }
@@ -229,5 +298,11 @@ impl Codegen {
     }
     pub unsafe fn make_double(&mut self, f: f64) -> (LLVMValueRef, Option<Type>) {
         (LLVMConstReal(LLVMDoubleTypeInContext(self.context), f), Some(Type::Double))
+    }
+    pub unsafe fn make_const_str(&mut self, s: &String) -> (LLVMValueRef, Option<Type>) {
+        (LLVMBuildGlobalStringPtr(self.builder,
+                                  CString::new(s.as_str()).unwrap().as_ptr(),
+                                  CString::new("string").unwrap().as_ptr()),
+         Some(Type::Ptr(Rc::new(Type::Char(Sign::Signed)))))
     }
 }

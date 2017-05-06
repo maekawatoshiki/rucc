@@ -120,7 +120,7 @@ impl<'a> Lexer<'a> {
         }
     }
     pub fn skip(&mut self, s: &str) -> bool {
-        let mut next = self.get();
+        let next = self.get();
         match next {
             Some(n) => {
                 if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {

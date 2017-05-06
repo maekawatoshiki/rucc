@@ -30,7 +30,12 @@ pub fn run_file(filename: String) -> Vec<AST> {
 
     // Debug: (parsing again is big cost?)
     lexer = Lexer::new(filename.to_string(), s.as_str());
-    read_toplevel(&mut lexer, &mut nodes);
+    loop {
+        if lexer.peek().is_none() {
+            break;
+        }
+        read_toplevel(&mut lexer, &mut nodes);
+    }
     nodes
 }
 
@@ -668,7 +673,7 @@ fn read_primary(lexer: &mut Lexer) -> AST {
         }
         // TokenKind::FloatNumber => None,
         TokenKind::Identifier => AST::Variable(tok.val),
-        // TokenKind::String => None,
+        TokenKind::String => AST::String(tok.val),
         // TokenKind::Char => None,
         TokenKind::Symbol => {
             match tok.val.as_str() {
