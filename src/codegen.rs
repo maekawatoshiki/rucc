@@ -3,10 +3,11 @@ extern crate llvm_sys as llvm;
 // use std::mem;
 use std::ffi::CString;
 use std::ptr;
+use std::rc::Rc;
+use std;
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
-use std::rc::Rc;
 
 // use parser;
 // use lexer;
@@ -85,6 +86,20 @@ impl Codegen {
         // LLVMBuildRet(self.builder, self.make_int(0, false));
 
         LLVMDumpModule(self.module);
+    }
+
+    pub unsafe fn write_llvmir_to_file(&mut self, filename: &str) {
+        let mut errmsg = ptr::null_mut();
+        if LLVMPrintModuleToFile(self.module,
+                                 CString::new(filename).unwrap().as_ptr(),
+                                 &mut errmsg) != 0 {
+            let err = CString::from_raw(errmsg)
+                .to_owned()
+                .into_string()
+                .unwrap();
+            println!("write_to_file failed: {}", err);
+            std::process::exit(-1);
+        }
     }
 
     pub unsafe fn gen(&mut self, ast: &node::AST) -> (LLVMValueRef, Option<Type>) {
@@ -170,6 +185,30 @@ impl Codegen {
                              lhs,
                              rhs,
                              CString::new("add").unwrap().as_ptr())
+            }
+            node::CBinOps::Sub => {
+                LLVMBuildAdd(self.builder,
+                             lhs,
+                             rhs,
+                             CString::new("sub").unwrap().as_ptr())
+            }
+            node::CBinOps::Mul => {
+                LLVMBuildMul(self.builder,
+                             lhs,
+                             rhs,
+                             CString::new("mul").unwrap().as_ptr())
+            }
+            node::CBinOps::Div => {
+                LLVMBuildSDiv(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("div").unwrap().as_ptr())
+            }
+            node::CBinOps::Rem => {
+                LLVMBuildSRem(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("rem").unwrap().as_ptr())
             }
             _ => ptr::null_mut(),
         }
