@@ -11,7 +11,7 @@ use std::rc::Rc;
 // use parser;
 // use lexer;
 use node;
-use types::Type;
+use types::{Type, Sign};
 use error;
 
 pub struct Codegen {
@@ -87,15 +87,18 @@ impl Codegen {
         LLVMDumpModule(self.module);
     }
 
-    pub unsafe fn gen(&mut self, ast: &node::AST) -> LLVMValueRef {
+    pub unsafe fn gen(&mut self, ast: &node::AST) -> (LLVMValueRef, Option<Type>) {
         match ast {
             &node::AST::FuncDef(ref functy, ref param_names, ref name, ref body) => {
                 self.gen_func_def(functy, param_names, name, body)
             }
             // &node::AST::VariableDecl(_, _, _) => {}
             &node::AST::Block(ref block) => self.gen_block(block),
+            &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
+                self.gen_binary_op(&**lhs, &**rhs, &*op)
+            }
             &node::AST::Return(ref ret) => {
-                let retval = self.gen(ret);
+                let (retval, _) = self.gen(ret);
                 self.gen_return(retval)
             }
             &node::AST::Int(ref n) => self.make_int(*n as u64, false),
@@ -111,7 +114,7 @@ impl Codegen {
                                param_names: &Vec<String>,
                                name: &String,
                                body: &Rc<node::AST>)
-                               -> LLVMValueRef {
+                               -> (LLVMValueRef, Option<Type>) {
         let func_t = self.type_to_llvmty(functy);
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
@@ -122,26 +125,70 @@ impl Codegen {
 
         self.gen(&**body);
 
-        func
+        (func, None)
     }
 
-    unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> LLVMValueRef {
+    unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> (LLVMValueRef, Option<Type>) {
         for stmt in block {
             self.gen(stmt);
         }
-        ptr::null_mut()
+        (ptr::null_mut(), None)
     }
 
-    unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> LLVMValueRef {
-        LLVMBuildRet(self.builder, retval)
+    unsafe fn gen_binary_op(&mut self,
+                            lhsast: &node::AST,
+                            rhsast: &node::AST,
+                            op: &node::CBinOps)
+                            -> (LLVMValueRef, Option<Type>) {
+        // logical operators
+        match *op {
+            node::CBinOps::LAnd => {}
+            node::CBinOps::LOr => {}
+            _ => {}
+        }
+
+        // normal binary operators
+        let (lhs, lhsty) = self.gen(lhsast);
+        let (rhs, rhsty) = self.gen(rhsast);
+        match lhsty.unwrap() {
+            Type::Int(_) => {
+                return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
+            }
+            _ => {}
+        }
+        (ptr::null_mut(), Some(Type::Void))
     }
 
-    pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> LLVMValueRef {
-        LLVMConstInt(LLVMInt32TypeInContext(self.context),
-                     n,
-                     if is_unsigned { 1 } else { 0 })
+    unsafe fn gen_int_binary_op(&mut self,
+                                lhs: LLVMValueRef,
+                                rhs: LLVMValueRef,
+                                op: &node::CBinOps)
+                                -> LLVMValueRef {
+        match *op {
+            node::CBinOps::Add => {
+                LLVMBuildAdd(self.builder,
+                             lhs,
+                             rhs,
+                             CString::new("add").unwrap().as_ptr())
+            }
+            _ => ptr::null_mut(),
+        }
     }
-    pub unsafe fn make_float(&mut self, f: f64) -> LLVMValueRef {
-        LLVMConstReal(LLVMDoubleTypeInContext(self.context), f)
+
+    unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> (LLVMValueRef, Option<Type>) {
+        (LLVMBuildRet(self.builder, retval), None)
+    }
+
+    pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> (LLVMValueRef, Option<Type>) {
+        (LLVMConstInt(LLVMInt32TypeInContext(self.context),
+                      n,
+                      if is_unsigned { 1 } else { 0 }),
+         Some(Type::Int(Sign::Signed)))
+    }
+    pub unsafe fn make_float(&mut self, f: f64) -> (LLVMValueRef, Option<Type>) {
+        (LLVMConstReal(LLVMFloatTypeInContext(self.context), f), Some(Type::Float))
+    }
+    pub unsafe fn make_double(&mut self, f: f64) -> (LLVMValueRef, Option<Type>) {
+        (LLVMConstReal(LLVMDoubleTypeInContext(self.context), f), Some(Type::Double))
     }
 }
