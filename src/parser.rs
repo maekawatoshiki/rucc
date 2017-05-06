@@ -22,21 +22,15 @@ pub fn run_file(filename: String) -> Vec<AST> {
         let tok = lexer.get();
         match tok {
             Some(t) => {
-                // if t.kind == TokenKind::Newline {
-                //     println!();
-                // } else {
                 println!("t:{}{}", if t.space { " " } else { "" }, t.val);
-                // }
             }
             None => break,
         }
     }
 
-    // Debug:
-    // lexer = Lexer::new(filename.to_string(), s.as_str());
-    // nodes.push(read_toplevel(&mut lexer));
-    // nodes.pop().unwrap().show();
-
+    // Debug: (parsing again is big cost?)
+    lexer = Lexer::new(filename.to_string(), s.as_str());
+    read_toplevel(&mut lexer, &mut nodes);
     nodes
 }
 
@@ -68,7 +62,14 @@ fn read_func_def(lexer: &mut Lexer) -> AST {
 
     lexer.expect_skip("{");
     let body = read_func_body(lexer, &functy);
-    AST::FuncDef(functy, param_names.unwrap(), name, Rc::new(body))
+    AST::FuncDef(functy,
+                 if param_names.is_none() {
+                     Vec::new()
+                 } else {
+                     param_names.unwrap()
+                 },
+                 name,
+                 Rc::new(body))
 }
 
 fn read_func_body(lexer: &mut Lexer, _functy: &Type) -> AST {

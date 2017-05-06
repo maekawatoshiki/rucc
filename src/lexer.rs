@@ -120,7 +120,7 @@ impl<'a> Lexer<'a> {
         }
     }
     pub fn skip(&mut self, s: &str) -> bool {
-        let next = self.do_read_token();
+        let mut next = self.get();
         match next {
             Some(n) => {
                 if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {
@@ -363,10 +363,25 @@ impl<'a> Lexer<'a> {
         Token::new(TokenKind::String, string.as_str(), 0, self.cur_line)
     }
     fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) {
-        // read macro arguments
-        self.expect_skip("(");
+        // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
+        let expect_bracket = self.read_token()
+            .or_else(|| error::error_exit(self.cur_line, "expected '(' but reach EOF"))
+            .unwrap();
+        if expect_bracket.val != "(" {
+            error::error_exit(self.cur_line, "expected '('");
+        }
+
         let mut args: Vec<Vec<Token>> = Vec::new();
-        while !self.skip(")") {
+        // read macro arguments
+        loop {
+            let maybe_bracket = self.read_token()
+                .or_else(|| error::error_exit(self.cur_line, "expected ')' but reach EOF"))
+                .unwrap();
+            if maybe_bracket.val == ")" {
+                break;
+            } else {
+                self.unget(maybe_bracket);
+            }
             args.push(self.read_one_arg());
         }
 
@@ -436,7 +451,6 @@ impl<'a> Lexer<'a> {
         let tok = match t {
             Some(tok) => {
                 if tok.val == "#" {
-                    // preprocessor directive
                     self.read_cpp_directive();
                     self.get()
                 } else {
@@ -678,10 +692,6 @@ impl<'a> Lexer<'a> {
 
         self.unget(Token::new(TokenKind::Symbol, ";", 0, 0));
         self.unget_all(expr_line);
-        println!("P:");
-        for i in self.buf.back_mut().unwrap().clone() {
-            println!(">{}", i.val);
-        }
         let node = parser::read_expr(self);
 
         self.buf.pop_back();

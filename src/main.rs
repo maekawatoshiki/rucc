@@ -12,11 +12,8 @@ fn main() {
         version_info::show_usage();
     } else {
         let input_file_name = args[1].to_string(); // is this correct?
-        parser::run_file(input_file_name);
+        let ast = parser::run_file(input_file_name);
 
-        let parse_str = "int main(int argc, char *argv[]) { return 0; }".to_string();
-        println!("parser test: {}", parse_str);
-        let ast = parser::run(parse_str);
         for node in &ast {
             node.show();
         }
