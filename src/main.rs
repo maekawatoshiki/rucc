@@ -14,8 +14,8 @@ fn main() {
         version_info::show_version();
         version_info::show_usage();
     } else {
-        let input_file_name = args[1].to_string();
-        let ast = parser::run_file(input_file_name.clone());
+        let ref input_file_name = args[1];
+        let ast = parser::run_file(input_file_name.to_string());
 
         for node in &ast {
             node.show();
@@ -28,7 +28,7 @@ fn main() {
 
             let output_file_name = Regex::new(r"\..*")
                 .unwrap()
-                .replace_all(input_file_name.as_str(), ".ll");
+                .replace_all(input_file_name, ".ll");
             codegen.write_llvmir_to_file(output_file_name.to_string().as_str());
         }
     }
