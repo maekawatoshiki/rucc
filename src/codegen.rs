@@ -120,7 +120,7 @@ impl Codegen {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
             // &node::AST::Variable(ref name) => self.gen_
-            &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, &*args),
+            &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             &node::AST::Return(ref ret) => {
                 let (retval, _) = self.gen(ret);
                 self.gen_return(retval)
@@ -259,7 +259,7 @@ impl Codegen {
                             fast: &node::AST,
                             args: &Vec<node::AST>)
                             -> (LLVMValueRef, Option<Type>) {
-        let mut args_val: Vec<LLVMValueRef> = Vec::new();
+        let args_val = &mut Vec::new();
         for arg in &*args {
             args_val.push(self.gen(arg).0);
         }
@@ -278,7 +278,7 @@ impl Codegen {
         (LLVMBuildCall(self.builder,
                        func,
                        args_val_ptr,
-                       args.len() as u32,
+                       args_val.len() as u32,
                        CString::new("funccall").unwrap().as_ptr()),
          Some(func_retty))
     }
@@ -288,21 +288,20 @@ impl Codegen {
     }
 
     pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> (LLVMValueRef, Option<Type>) {
-        (LLVMConstInt(LLVMInt32TypeInContext(self.context),
-                      n,
-                      if is_unsigned { 1 } else { 0 }),
+        (LLVMConstInt(LLVMInt32Type(), n, if is_unsigned { 1 } else { 0 }),
          Some(Type::Int(Sign::Signed)))
     }
     pub unsafe fn make_float(&mut self, f: f64) -> (LLVMValueRef, Option<Type>) {
-        (LLVMConstReal(LLVMFloatTypeInContext(self.context), f), Some(Type::Float))
+        (LLVMConstReal(LLVMFloatType(), f), Some(Type::Float))
     }
     pub unsafe fn make_double(&mut self, f: f64) -> (LLVMValueRef, Option<Type>) {
-        (LLVMConstReal(LLVMDoubleTypeInContext(self.context), f), Some(Type::Double))
+        (LLVMConstReal(LLVMDoubleType(), f), Some(Type::Double))
     }
     pub unsafe fn make_const_str(&mut self, s: &String) -> (LLVMValueRef, Option<Type>) {
-        (LLVMBuildGlobalStringPtr(self.builder,
-                                  CString::new(s.as_str()).unwrap().as_ptr(),
-                                  CString::new("string").unwrap().as_ptr()),
+        (LLVMConstBitCast(LLVMBuildGlobalStringPtr(self.builder,
+                                                   CString::new(s.as_str()).unwrap().as_ptr(),
+                                                   CString::new("str").unwrap().as_ptr()),
+                          self.type_to_llvmty(&Type::Ptr(Rc::new(Type::Char(Sign::Signed))))),
          Some(Type::Ptr(Rc::new(Type::Char(Sign::Signed)))))
     }
 }

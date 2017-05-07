@@ -628,14 +628,16 @@ fn read_postfix(lexer: &mut Lexer) -> AST {
 
 fn read_func_call(lexer: &mut Lexer, f: AST) -> AST {
     let mut args: Vec<AST> = Vec::new();
-    loop {
-        let arg = read_assign(lexer);
-        args.push(arg);
+    if !lexer.skip(")") {
+      loop {
+          let arg = read_assign(lexer);
+          args.push(arg);
 
-        if lexer.skip(")") {
-            break;
-        }
-        lexer.expect_skip(",");
+          if lexer.skip(")") {
+              break;
+          }
+          lexer.expect_skip(",");
+      }
     }
     AST::FuncCall(Rc::new(f), args)
 }
