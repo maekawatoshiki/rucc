@@ -629,15 +629,15 @@ fn read_postfix(lexer: &mut Lexer) -> AST {
 fn read_func_call(lexer: &mut Lexer, f: AST) -> AST {
     let mut args: Vec<AST> = Vec::new();
     if !lexer.skip(")") {
-      loop {
-          let arg = read_assign(lexer);
-          args.push(arg);
+        loop {
+            let arg = read_assign(lexer);
+            args.push(arg);
 
-          if lexer.skip(")") {
-              break;
-          }
-          lexer.expect_skip(",");
-      }
+            if lexer.skip(")") {
+                break;
+            }
+            lexer.expect_skip(",");
+        }
     }
     AST::FuncCall(Rc::new(f), args)
 }
@@ -673,10 +673,17 @@ fn read_primary(lexer: &mut Lexer) -> AST {
                 AST::Int(read_dec_num(num_literal.as_str()))
             }
         }
-        // TokenKind::FloatNumber => None,
+        TokenKind::FloatNumber => {
+            let num_literal = &tok.val;
+            let f: f64 = num_literal.parse().unwrap();
+            AST::Float(f)
+        }
         TokenKind::Identifier => AST::Variable(tok.val),
         TokenKind::String => AST::String(tok.val),
-        // TokenKind::Char => None,
+        TokenKind::Char => {
+            let ch = tok.val.bytes().nth(0);
+            AST::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32)
+        }
         TokenKind::Symbol => {
             match tok.val.as_str() {
                 "(" => {

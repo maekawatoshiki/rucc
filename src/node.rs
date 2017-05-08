@@ -5,6 +5,7 @@ use types::Type;
 pub enum AST {
     Int(i32),
     Float(f64),
+    Char(i32),
     String(String),
     Variable(String),
     VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
@@ -104,6 +105,7 @@ impl AST {
         match self {
             &AST::Int(n) => print!("{} ", n),
             &AST::Float(n) => print!("{} ", n),
+            &AST::Char(c) => print!("'{}' ", c),
             &AST::String(ref s) => print!("\"{}\" ", s),
             &AST::Variable(ref name) => print!("{} ", name),
             &AST::VariableDecl(ref ty, ref name, ref init) => {

@@ -126,6 +126,7 @@ impl Codegen {
                 self.gen_return(retval)
             }
             &node::AST::Int(ref n) => self.make_int(*n as u64, false),
+            &node::AST::Char(ref c) => self.make_char(*c),
             &node::AST::String(ref s) => self.make_const_str(s),
             _ => {
                 error::error_exit(0,
@@ -290,6 +291,9 @@ impl Codegen {
     pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> (LLVMValueRef, Option<Type>) {
         (LLVMConstInt(LLVMInt32Type(), n, if is_unsigned { 1 } else { 0 }),
          Some(Type::Int(Sign::Signed)))
+    }
+    pub unsafe fn make_char(&mut self, n: i32) -> (LLVMValueRef, Option<Type>) {
+        (LLVMConstInt(LLVMInt8Type(), n as u64, 0), Some(Type::Char(Sign::Signed)))
     }
     pub unsafe fn make_float(&mut self, f: f64) -> (LLVMValueRef, Option<Type>) {
         (LLVMConstReal(LLVMFloatType(), f), Some(Type::Float))
