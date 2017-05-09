@@ -21,6 +21,7 @@ pub struct Codegen {
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, (Type, LLVMValueRef)>,
+    local_varmap: HashMap<String, (Type, LLVMValueRef)>,
     cur_func: Option<LLVMValueRef>,
 }
 
@@ -32,6 +33,7 @@ impl Codegen {
             module: LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), LLVMContextCreate()),
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
             global_varmap: HashMap::new(),
+            local_varmap: HashMap::new(),
             cur_func: None,
         }
     }
@@ -119,13 +121,14 @@ impl Codegen {
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
-            // &node::AST::Variable(ref name) => self.gen_
+            &node::AST::Variable(ref name) => self.gen_var(name),
             &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             &node::AST::Return(ref ret) => {
                 let (retval, _) = self.gen(ret);
                 self.gen_return(retval)
             }
             &node::AST::Int(ref n) => self.make_int(*n as u64, false),
+            &node::AST::Float(ref f) => self.make_double(*f),
             &node::AST::Char(ref c) => self.make_char(*c),
             &node::AST::String(ref s) => self.make_const_str(s),
             _ => {
@@ -165,9 +168,26 @@ impl Codegen {
                            name: &String,
                            init: &Option<Rc<node::AST>>)
                            -> (LLVMValueRef, Option<Type>) {
-        // if self.cur_func.is_none() { // is global
-        // }
+        // is global
+        if self.cur_func.is_none() {
+            return self.gen_global_var_decl(ty, name, init);
+        } else {
+            let m = LLVMBuildAlloca(self.builder,
+                                    self.type_to_llvmty(ty),
+                                    CString::new(name.as_str()).unwrap().as_ptr());
+            self.local_varmap
+                .insert(name.to_string(), (ty.clone(), m));
 
+            if init.is_some() {}
+        }
+        (ptr::null_mut(), None)
+    }
+
+    unsafe fn gen_global_var_decl(&mut self,
+                                  ty: &Type,
+                                  name: &String,
+                                  init: &Option<Rc<node::AST>>)
+                                  -> (LLVMValueRef, Option<Type>) {
         let gvar = match *ty {
             Type::Func(_, _, _) => {
                 LLVMAddFunction(self.module,
@@ -182,7 +202,13 @@ impl Codegen {
         };
         self.global_varmap
             .insert(name.to_string(), (ty.clone(), gvar));
+
+        if init.is_some() {
+            LLVMSetInitializer(gvar, self.gen(&*init.clone().unwrap()).0);
+        }
+
         (gvar, None)
+
     }
 
     unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> (LLVMValueRef, Option<Type>) {
@@ -256,6 +282,15 @@ impl Codegen {
         }
     }
 
+    unsafe fn gen_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
+        if !self.global_varmap.contains_key(name.as_str()) {
+            error::error_exit(0,
+                              format!("gen_var: not found variable '{}'", name).as_str());
+        }
+        let gvar = self.global_varmap.get(name.as_str()).unwrap().1;
+        (LLVMBuildLoad(self.builder, gvar, CString::new("var").unwrap().as_ptr()), None)
+    }
+
     unsafe fn gen_func_call(&mut self,
                             fast: &node::AST,
                             args: &Vec<node::AST>)
@@ -268,7 +303,7 @@ impl Codegen {
 
         let maybe_func = match *fast {
             node::AST::Variable(ref name) => self.global_varmap.get(name),
-            _ => None,
+            _ => None, // for func ptr
         };
         if maybe_func.is_none() {
             error::error_exit(0, "gen_func_call: not found func");
