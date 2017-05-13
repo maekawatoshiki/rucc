@@ -339,7 +339,7 @@ impl Codegen {
         // do implicit type casting to args
         let mut args_val = Vec::new();
         for i in 0..args_len {
-            args_val.push(if func_args_types.len() >= i {
+            args_val.push(if func_args_types.len() <= i {
                               maybe_incorrect_args_val[i]
                           } else {
                               self.typecast(maybe_incorrect_args_val[i],
