@@ -124,8 +124,12 @@ impl Codegen {
             &node::AST::Variable(ref name) => self.gen_var(name),
             &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             &node::AST::Return(ref ret) => {
-                let (retval, _) = self.gen(ret);
-                self.gen_return(retval)
+                if ret.is_none() {
+                    (LLVMBuildRetVoid(self.builder), None)
+                } else {
+                    let (retval, _) = self.gen(&*ret.clone().unwrap());
+                    self.gen_return(retval)
+                }
             }
             &node::AST::Int(ref n) => self.make_int(*n as u64, false),
             &node::AST::Float(ref f) => self.make_double(*f),
@@ -144,10 +148,10 @@ impl Codegen {
                                name: &String,
                                body: &Rc<node::AST>)
                                -> (LLVMValueRef, Option<Type>) {
-        let func_t = type_to_llvmty(functy);
+        let func_ty = type_to_llvmty(functy);
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
-                                   func_t);
+                                   func_ty);
         self.global_varmap
             .insert(name.to_string(), (functy.clone(), func));
         self.cur_func = Some(func);

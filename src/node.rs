@@ -15,7 +15,7 @@ pub enum AST {
     Block(Vec<AST>),
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
-    Return(Rc<AST>),
+    Return(Option<Rc<AST>>),
 }
 
 #[derive(Debug)]
@@ -154,7 +154,9 @@ impl AST {
             }
             &AST::Return(ref retval) => {
                 print!("(return ");
-                retval.show();
+                if retval.is_some() {
+                    retval.clone().unwrap().show();
+                }
                 print!(")");
             }
         };

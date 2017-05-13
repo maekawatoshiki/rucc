@@ -112,10 +112,13 @@ fn read_stmt(lexer: &mut Lexer) -> AST {
 }
 
 fn read_return_stmt(lexer: &mut Lexer) -> AST {
-    let retval = read_expr(lexer);
-    let retast = AST::Return(Rc::new(retval));
-    lexer.expect_skip(";");
-    retast
+    if lexer.skip(";") {
+        AST::Return(None)
+    } else {
+        let retval = Some(Rc::new(read_expr(lexer)));
+        lexer.expect_skip(";");
+        AST::Return(retval)
+    }
 }
 
 fn is_function_def(lexer: &mut Lexer) -> bool {
