@@ -720,9 +720,11 @@ fn read_dec_num(num_literal: &str) -> i32 {
 }
 fn read_hex_num(num_literal: &str) -> i32 {
     let mut n = 0;
-    for c in num_literal[2..].chars() {
+    for c in num_literal.chars() {
         match c {
-            '0'...'9' | 'A'...'F' | 'a'...'f' => n = n * 16 + c.to_digit(16).unwrap() as i32, 
+            '0'...'9' | 'A'...'F' | 'a'...'f' => {
+                n = n * 16 + c.to_digit(16).unwrap() as i32;
+            }
             _ => {} // TODO: suffix
         }
     }

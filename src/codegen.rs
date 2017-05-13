@@ -149,6 +149,10 @@ impl Codegen {
                                body: &Rc<node::AST>)
                                -> (LLVMValueRef, Option<Type>) {
         let func_ty = type_to_llvmty(functy);
+        let (func_retty, func_args_types, _func_is_vararg) = match functy {
+            &Type::Func(ref retty, ref args_types, ref is_vararg) => (retty, args_types, is_vararg),
+            _ => error::error_exit(0, "gen_func_call: never reach!"),
+        };
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
                                    func_ty);
@@ -159,6 +163,18 @@ impl Codegen {
         let bb_entry = LLVMAppendBasicBlock(func, CString::new("entry").unwrap().as_ptr());
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
 
+        for (i, (arg_ty, arg_name)) in
+            func_args_types
+                .iter()
+                .zip(param_names.iter())
+                .enumerate() {
+            println!("here");
+            let arg_val = LLVMGetParam(func, i as u32);
+            let var = self.gen_local_var_decl(arg_ty, arg_name, &None);
+            LLVMBuildStore(self.builder, arg_val, var);
+        }
+
+
         self.gen(&**body);
 
         self.cur_func = None;
@@ -166,7 +182,6 @@ impl Codegen {
         (func, None)
     }
 
-    // TODO: only global var decl supported
     unsafe fn gen_var_decl(&mut self,
                            ty: &Type,
                            name: &String,
@@ -207,7 +222,8 @@ impl Codegen {
     unsafe fn gen_local_var_decl(&mut self,
                                  ty: &Type,
                                  name: &String,
-                                 init: &Option<Rc<node::AST>>) {
+                                 init: &Option<Rc<node::AST>>)
+                                 -> LLVMValueRef {
         let m = LLVMBuildAlloca(self.builder,
                                 type_to_llvmty(ty),
                                 CString::new(name.as_str()).unwrap().as_ptr());
@@ -217,6 +233,7 @@ impl Codegen {
         if init.is_some() {
             self.set_local_var_initializer(m, ty, &*init.clone().unwrap());
         }
+        m
     }
     unsafe fn set_local_var_initializer(&mut self,
                                         var: LLVMValueRef,
@@ -299,12 +316,14 @@ impl Codegen {
 
     unsafe fn gen_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
         if self.local_varmap.contains_key(name.as_str()) {
-            let lvar = self.local_varmap.get(name.as_str()).unwrap().1;
-            return (LLVMBuildLoad(self.builder, lvar, CString::new("var").unwrap().as_ptr()), None);
+            let &(ref ty, val) = self.local_varmap.get(name.as_str()).unwrap();
+            return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
+                    Some(ty.clone()));
         }
         if self.global_varmap.contains_key(name.as_str()) {
-            let gvar = self.global_varmap.get(name.as_str()).unwrap().1;
-            return (LLVMBuildLoad(self.builder, gvar, CString::new("var").unwrap().as_ptr()), None);
+            let &(ref ty, val) = self.global_varmap.get(name.as_str()).unwrap();
+            return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
+                    Some(ty.clone()));
         }
         error::error_exit(0,
                           format!("gen_var: not found variable '{}'", name).as_str());
