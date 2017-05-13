@@ -170,15 +170,9 @@ impl Codegen {
                            -> (LLVMValueRef, Option<Type>) {
         // is global
         if self.cur_func.is_none() {
-            return self.gen_global_var_decl(ty, name, init);
+            self.gen_global_var_decl(ty, name, init);
         } else {
-            let m = LLVMBuildAlloca(self.builder,
-                                    self.type_to_llvmty(ty),
-                                    CString::new(name.as_str()).unwrap().as_ptr());
-            self.local_varmap
-                .insert(name.to_string(), (ty.clone(), m));
-
-            if init.is_some() {}
+            self.gen_local_var_decl(ty, name, init);
         }
         (ptr::null_mut(), None)
     }
@@ -186,8 +180,7 @@ impl Codegen {
     unsafe fn gen_global_var_decl(&mut self,
                                   ty: &Type,
                                   name: &String,
-                                  init: &Option<Rc<node::AST>>)
-                                  -> (LLVMValueRef, Option<Type>) {
+                                  init: &Option<Rc<node::AST>>) {
         let gvar = match *ty {
             Type::Func(_, _, _) => {
                 LLVMAddFunction(self.module,
@@ -206,9 +199,27 @@ impl Codegen {
         if init.is_some() {
             LLVMSetInitializer(gvar, self.gen(&*init.clone().unwrap()).0);
         }
+    }
+    unsafe fn gen_local_var_decl(&mut self,
+                                 ty: &Type,
+                                 name: &String,
+                                 init: &Option<Rc<node::AST>>) {
+        let m = LLVMBuildAlloca(self.builder,
+                                self.type_to_llvmty(ty),
+                                CString::new(name.as_str()).unwrap().as_ptr());
+        self.local_varmap
+            .insert(name.to_string(), (ty.clone(), m));
 
-        (gvar, None)
-
+        if init.is_some() {
+            self.set_local_var_initializer(m, ty, &*init.clone().unwrap());
+        }
+    }
+    unsafe fn set_local_var_initializer(&mut self,
+                                        var: LLVMValueRef,
+                                        varty: &Type,
+                                        init: &node::AST) {
+        let init_val = self.gen(init).0;
+        LLVMBuildStore(self.builder, init_val, var);
     }
 
     unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> (LLVMValueRef, Option<Type>) {
@@ -283,25 +294,30 @@ impl Codegen {
     }
 
     unsafe fn gen_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
-        if !self.global_varmap.contains_key(name.as_str()) {
-            error::error_exit(0,
-                              format!("gen_var: not found variable '{}'", name).as_str());
+        if self.local_varmap.contains_key(name.as_str()) {
+            let lvar = self.local_varmap.get(name.as_str()).unwrap().1;
+            return (LLVMBuildLoad(self.builder, lvar, CString::new("var").unwrap().as_ptr()), None);
         }
-        let gvar = self.global_varmap.get(name.as_str()).unwrap().1;
-        (LLVMBuildLoad(self.builder, gvar, CString::new("var").unwrap().as_ptr()), None)
+        if self.global_varmap.contains_key(name.as_str()) {
+            let gvar = self.global_varmap.get(name.as_str()).unwrap().1;
+            return (LLVMBuildLoad(self.builder, gvar, CString::new("var").unwrap().as_ptr()), None);
+        }
+        error::error_exit(0,
+                          format!("gen_var: not found variable '{}'", name).as_str());
     }
 
     unsafe fn gen_func_call(&mut self,
                             fast: &node::AST,
                             args: &Vec<node::AST>)
                             -> (LLVMValueRef, Option<Type>) {
-        let args_val = &mut Vec::new();
+        let mut args_val = Vec::new();
         for arg in &*args {
             args_val.push(self.gen(arg).0);
         }
+        let args_len = args.len();
         let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
 
-        let maybe_func = match *fast {
+        let mut maybe_func = match *fast {
             node::AST::Variable(ref name) => self.global_varmap.get(name),
             _ => None, // for func ptr
         };
@@ -309,14 +325,19 @@ impl Codegen {
             error::error_exit(0, "gen_func_call: not found func");
         }
 
-        let func_retty = maybe_func.unwrap().0.clone();
+        let functy = maybe_func.unwrap().0.clone();
+        let (func_retty, _func_args_types, _func_is_vararg) = match functy {
+            Type::Func(retty, args_types, is_vararg) => (retty, args_types, is_vararg),
+            _ => error::error_exit(0, "gen_func_call: never reach!"),
+        };
         let func = maybe_func.unwrap().1;
+
         (LLVMBuildCall(self.builder,
                        func,
                        args_val_ptr,
-                       args_val.len() as u32,
+                       args_len as u32,
                        CString::new("funccall").unwrap().as_ptr()),
-         Some(func_retty))
+         Some((*func_retty).clone()))
     }
 
     unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> (LLVMValueRef, Option<Type>) {
@@ -342,5 +363,34 @@ impl Codegen {
                                                    CString::new("str").unwrap().as_ptr()),
                           self.type_to_llvmty(&Type::Ptr(Rc::new(Type::Char(Sign::Signed))))),
          Some(Type::Ptr(Rc::new(Type::Char(Sign::Signed)))))
+    }
+
+    pub unsafe fn typecast(&mut self, v: LLVMValueRef, t: LLVMTypeRef) -> LLVMValueRef {
+        let v_ty = LLVMTypeOf(v);
+        let inst_name = CString::new("cast").unwrap().as_ptr();
+        match LLVMGetTypeKind(v_ty) {
+            llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                match LLVMGetTypeKind(t) {
+                    llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                        let v_bw = LLVMGetIntTypeWidth(v_ty);
+                        let t_bw = LLVMGetIntTypeWidth(t);
+                        if v_bw < t_bw {
+                            return LLVMBuildZExtOrBitCast(self.builder, v, t, inst_name);
+                        }
+                    }
+                    llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
+                        return LLVMBuildSIToFP(self.builder, v, t, inst_name);
+                    }
+                    _ => {}
+                }
+            }
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                return LLVMBuildFPToSI(self.builder, v, t, inst_name);
+            }
+            llvm::LLVMTypeKind::LLVMVoidTypeKind => return v,
+            _ => {}
+        }
+        LLVMBuildTruncOrBitCast(self.builder, v, t, inst_name)
     }
 }

@@ -26,7 +26,7 @@ fn main() {
             let mut codegen = codegen::Codegen::new("rucc");
             codegen.run(ast);
 
-            let output_file_name = Regex::new(r"\..*")
+            let output_file_name = Regex::new(r"\..*$")
                 .unwrap()
                 .replace_all(input_file_name, ".ll");
             codegen.write_llvmir_to_file(output_file_name.to_string().as_str());
