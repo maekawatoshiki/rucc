@@ -151,7 +151,7 @@ impl Codegen {
         let func_ty = type_to_llvmty(functy);
         let (func_retty, func_args_types, _func_is_vararg) = match functy {
             &Type::Func(ref retty, ref args_types, ref is_vararg) => (retty, args_types, is_vararg),
-            _ => error::error_exit(0, "gen_func_call: never reach!"),
+            _ => error::error_exit(0, "gen_func_def: never reach!"),
         };
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
@@ -168,7 +168,6 @@ impl Codegen {
                 .iter()
                 .zip(param_names.iter())
                 .enumerate() {
-            println!("here");
             let arg_val = LLVMGetParam(func, i as u32);
             let var = self.gen_local_var_decl(arg_ty, arg_name, &None);
             LLVMBuildStore(self.builder, arg_val, var);
