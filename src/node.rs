@@ -56,48 +56,39 @@ pub enum CUnaryOps {
 }
 
 impl AST {
-    pub fn eval_constexpr(&self) -> i32 {
+    pub fn eval_constexpr(&self) -> i32 { self.eval() }
+
+    fn eval(&self) -> i32 {
         match self {
             &AST::Int(n) => n,
-            &AST::UnaryOp(ref aexpr, ref op) => {
-                let expr = aexpr.eval_constexpr();
-                match op {
-                    &CUnaryOps::LNot => (expr == 0) as i32,
-                    &CUnaryOps::BNot => !expr,
-                    &CUnaryOps::Plus => expr,
-                    &CUnaryOps::Minus => -expr,
-                    &CUnaryOps::Inc => 1 + expr,
-                    &CUnaryOps::Dec => expr - 1,
-                    &CUnaryOps::Deref => expr,
-                    &CUnaryOps::Addr => expr,
-                }
-            }
-            &AST::BinaryOp(ref alhs, ref arhs, ref op) => {
-                let lhs = alhs.eval_constexpr();
-                let rhs = arhs.eval_constexpr();
-                match op {
-                    &CBinOps::Add => lhs + rhs,
-                    &CBinOps::Sub => lhs - rhs,
-                    &CBinOps::Mul => lhs * rhs,
-                    &CBinOps::Div => lhs / rhs,
-                    &CBinOps::Rem => lhs % rhs,
-                    &CBinOps::And => lhs & rhs,
-                    &CBinOps::Or => lhs | rhs,
-                    &CBinOps::Xor => lhs ^ rhs,
-                    &CBinOps::LAnd => lhs & rhs,
-                    &CBinOps::LOr => lhs | rhs,
-                    &CBinOps::Eq => (lhs == rhs) as i32,
-                    &CBinOps::Ne => (lhs != rhs) as i32,
-                    &CBinOps::Lt => (lhs < rhs) as i32,
-                    &CBinOps::Gt => (lhs > rhs) as i32,
-                    &CBinOps::Le => (lhs <= rhs) as i32,
-                    &CBinOps::Ge => (lhs >= rhs) as i32,
-                    &CBinOps::Shl => lhs << rhs,
-                    &CBinOps::Shr => lhs >> rhs,
-                    &CBinOps::Comma => rhs,
-                    _ => 0,
-                }
-            }
+            &AST::UnaryOp(ref e, CUnaryOps::LNot) => (e.eval() == 0) as i32,
+            &AST::UnaryOp(ref e, CUnaryOps::BNot) => !e.eval(),
+            &AST::UnaryOp(ref e, CUnaryOps::Plus) => e.eval(),
+            &AST::UnaryOp(ref e, CUnaryOps::Minus) => -e.eval(),
+            &AST::UnaryOp(ref e, CUnaryOps::Inc) => e.eval() + 1,
+            &AST::UnaryOp(ref e, CUnaryOps::Dec) => e.eval() - 1,
+            &AST::UnaryOp(ref e, CUnaryOps::Deref) => e.eval(),
+            &AST::UnaryOp(ref e, CUnaryOps::Addr) => e.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Add) => l.eval() + r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Sub) => l.eval() - r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Mul) => l.eval() * r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Div) => l.eval() / r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Rem) => l.eval() % r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::And) => l.eval() & r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Or) => l.eval() | r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Xor) => l.eval() ^ r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::LAnd) => l.eval() & r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::LOr) => l.eval() | r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Eq) => (l.eval() == r.eval()) as i32,
+            &AST::BinaryOp(ref l, ref r, CBinOps::Ne) => (l.eval() != r.eval()) as i32,
+            &AST::BinaryOp(ref l, ref r, CBinOps::Lt) => (l.eval() < r.eval()) as i32,
+            &AST::BinaryOp(ref l, ref r, CBinOps::Gt) => (l.eval() > r.eval()) as i32,
+            &AST::BinaryOp(ref l, ref r, CBinOps::Le) => (l.eval() <= r.eval()) as i32,
+            &AST::BinaryOp(ref l, ref r, CBinOps::Ge) => (l.eval() >= r.eval()) as i32,
+            &AST::BinaryOp(ref l, ref r, CBinOps::Shl) => l.eval() << r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Shr) => l.eval() >> r.eval(),
+            &AST::BinaryOp(ref l, ref r, CBinOps::Comma) => {l.eval(); r.eval()},
+            &AST::BinaryOp(ref l, ref r, _) => {l.eval(); r.eval(); 0},
             _ => 0,
         }
     }
