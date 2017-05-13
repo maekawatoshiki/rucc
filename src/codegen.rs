@@ -16,6 +16,35 @@ use node;
 use types::{Type, Sign};
 use error;
 
+pub unsafe fn type_to_llvmty(ty: &Type) -> LLVMTypeRef {
+    match ty {
+        &Type::Void => LLVMVoidType(),
+        &Type::Char(_) => LLVMInt8Type(),
+        &Type::Short(_) => LLVMInt16Type(),
+        &Type::Int(_) => LLVMInt32Type(),
+        &Type::Long(_) => LLVMInt32Type(),
+        &Type::LLong(_) => LLVMInt64Type(),
+        &Type::Float => LLVMFloatType(),
+        &Type::Double => LLVMDoubleType(),
+        &Type::Ptr(ref elemty) => LLVMPointerType(type_to_llvmty(&**elemty), 0),
+        &Type::Array(ref elemty, ref size) => {
+            LLVMArrayType(type_to_llvmty(&**elemty), *size as u32)
+        }
+        &Type::Func(ref ret_type, ref param_types, ref is_vararg) => {
+            LLVMFunctionType(type_to_llvmty(&**ret_type),
+                             || -> *mut LLVMTypeRef {
+                                 let mut param_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+                                 for param_type in &*param_types {
+                                     param_llvm_types.push(type_to_llvmty(&param_type));
+                                 }
+                                 param_llvm_types.as_mut_slice().as_mut_ptr()
+                             }(),
+                             (*param_types).len() as u32,
+                             if *is_vararg { 1 } else { 0 })
+        }
+    }
+}
+
 pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
@@ -35,35 +64,6 @@ impl Codegen {
             global_varmap: HashMap::new(),
             local_varmap: HashMap::new(),
             cur_func: None,
-        }
-    }
-
-    pub unsafe fn type_to_llvmty(&mut self, ty: &Type) -> LLVMTypeRef {
-        match ty {
-            &Type::Void => LLVMVoidType(),
-            &Type::Char(_) => LLVMInt8Type(),
-            &Type::Short(_) => LLVMInt16Type(),
-            &Type::Int(_) => LLVMInt32Type(),
-            &Type::Long(_) => LLVMInt32Type(),
-            &Type::LLong(_) => LLVMInt64Type(),
-            &Type::Float => LLVMFloatType(),
-            &Type::Double => LLVMDoubleType(),
-            &Type::Ptr(ref elemty) => LLVMPointerType(self.type_to_llvmty(&**elemty), 0),
-            &Type::Array(ref elemty, ref size) => {
-                LLVMArrayType(self.type_to_llvmty(&**elemty), *size as u32)
-            }
-            &Type::Func(ref ret_type, ref param_types, ref is_vararg) => {
-                LLVMFunctionType(self.type_to_llvmty(&**ret_type),
-                                 || -> *mut LLVMTypeRef {
-                                     let mut param_llvm_types: Vec<LLVMTypeRef> = Vec::new();
-                                     for param_type in &*param_types {
-                                         param_llvm_types.push(self.type_to_llvmty(&param_type));
-                                     }
-                                     param_llvm_types.as_mut_slice().as_mut_ptr()
-                                 }(),
-                                 (*param_types).len() as u32,
-                                 if *is_vararg { 1 } else { 0 })
-            }
         }
     }
 
@@ -144,7 +144,7 @@ impl Codegen {
                                name: &String,
                                body: &Rc<node::AST>)
                                -> (LLVMValueRef, Option<Type>) {
-        let func_t = self.type_to_llvmty(functy);
+        let func_t = type_to_llvmty(functy);
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
                                    func_t);
@@ -185,11 +185,11 @@ impl Codegen {
             Type::Func(_, _, _) => {
                 LLVMAddFunction(self.module,
                                 CString::new(name.as_str()).unwrap().as_ptr(),
-                                self.type_to_llvmty(ty))
+                                type_to_llvmty(ty))
             } 
             _ => {
                 LLVMAddGlobal(self.module,
-                              self.type_to_llvmty(ty),
+                              type_to_llvmty(ty),
                               CString::new(name.as_str()).unwrap().as_ptr())
             }
         };
@@ -205,7 +205,7 @@ impl Codegen {
                                  name: &String,
                                  init: &Option<Rc<node::AST>>) {
         let m = LLVMBuildAlloca(self.builder,
-                                self.type_to_llvmty(ty),
+                                type_to_llvmty(ty),
                                 CString::new(name.as_str()).unwrap().as_ptr());
         self.local_varmap
             .insert(name.to_string(), (ty.clone(), m));
@@ -310,14 +310,14 @@ impl Codegen {
                             fast: &node::AST,
                             args: &Vec<node::AST>)
                             -> (LLVMValueRef, Option<Type>) {
-        let mut args_val = Vec::new();
+        // before implicit type casting. so 'maybe incorrect'
+        let mut maybe_incorrect_args_val = Vec::new();
         for arg in &*args {
-            args_val.push(self.gen(arg).0);
+            maybe_incorrect_args_val.push(self.gen(arg).0);
         }
         let args_len = args.len();
-        let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
 
-        let mut maybe_func = match *fast {
+        let maybe_func = match *fast {
             node::AST::Variable(ref name) => self.global_varmap.get(name),
             _ => None, // for func ptr
         };
@@ -326,11 +326,23 @@ impl Codegen {
         }
 
         let functy = maybe_func.unwrap().0.clone();
-        let (func_retty, _func_args_types, _func_is_vararg) = match functy {
+        let (func_retty, func_args_types, _func_is_vararg) = match functy {
             Type::Func(retty, args_types, is_vararg) => (retty, args_types, is_vararg),
             _ => error::error_exit(0, "gen_func_call: never reach!"),
         };
         let func = maybe_func.unwrap().1;
+
+        // do implicit type casting to args
+        let mut args_val = Vec::new();
+        for i in 0..args_len {
+            args_val.push(if func_args_types.len() >= i {
+                              maybe_incorrect_args_val[i]
+                          } else {
+                              self.typecast(maybe_incorrect_args_val[i],
+                                            type_to_llvmty(&func_args_types[i]))
+                          })
+        }
+        let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
 
         (LLVMBuildCall(self.builder,
                        func,
@@ -358,14 +370,13 @@ impl Codegen {
         (LLVMConstReal(LLVMDoubleType(), f), Some(Type::Double))
     }
     pub unsafe fn make_const_str(&mut self, s: &String) -> (LLVMValueRef, Option<Type>) {
-        (LLVMConstBitCast(LLVMBuildGlobalStringPtr(self.builder,
-                                                   CString::new(s.as_str()).unwrap().as_ptr(),
-                                                   CString::new("str").unwrap().as_ptr()),
-                          self.type_to_llvmty(&Type::Ptr(Rc::new(Type::Char(Sign::Signed))))),
+        (LLVMBuildGlobalStringPtr(self.builder,
+                                  CString::new(s.as_str()).unwrap().as_ptr(),
+                                  CString::new("str").unwrap().as_ptr()),
          Some(Type::Ptr(Rc::new(Type::Char(Sign::Signed)))))
     }
 
-    pub unsafe fn typecast(&mut self, v: LLVMValueRef, t: LLVMTypeRef) -> LLVMValueRef {
+    pub unsafe fn typecast(&self, v: LLVMValueRef, t: LLVMTypeRef) -> LLVMValueRef {
         let v_ty = LLVMTypeOf(v);
         let inst_name = CString::new("cast").unwrap().as_ptr();
         match LLVMGetTypeKind(v_ty) {
