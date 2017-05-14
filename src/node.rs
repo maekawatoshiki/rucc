@@ -56,7 +56,9 @@ pub enum CUnaryOps {
 }
 
 impl AST {
-    pub fn eval_constexpr(&self) -> i32 { self.eval() }
+    pub fn eval_constexpr(&self) -> i32 {
+        self.eval()
+    }
 
     fn eval(&self) -> i32 {
         match self {
@@ -87,8 +89,15 @@ impl AST {
             &AST::BinaryOp(ref l, ref r, CBinOps::Ge) => (l.eval() >= r.eval()) as i32,
             &AST::BinaryOp(ref l, ref r, CBinOps::Shl) => l.eval() << r.eval(),
             &AST::BinaryOp(ref l, ref r, CBinOps::Shr) => l.eval() >> r.eval(),
-            &AST::BinaryOp(ref l, ref r, CBinOps::Comma) => {l.eval(); r.eval()},
-            &AST::BinaryOp(ref l, ref r, _) => {l.eval(); r.eval(); 0},
+            &AST::BinaryOp(ref l, ref r, CBinOps::Comma) => {
+                l.eval();
+                r.eval()
+            }
+            &AST::BinaryOp(ref l, ref r, _) => {
+                l.eval();
+                r.eval();
+                0
+            }
             _ => 0,
         }
     }

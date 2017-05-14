@@ -121,7 +121,7 @@ impl Codegen {
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
-            &node::AST::Variable(ref name) => self.gen_var(name),
+            &node::AST::Variable(ref name) => self.gen_var_load(name),
             &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             &node::AST::Return(ref ret) => {
                 if ret.is_none() {
@@ -258,6 +258,9 @@ impl Codegen {
         match *op {
             node::CBinOps::LAnd => {}
             node::CBinOps::LOr => {}
+            node::CBinOps::Assign => {
+                return self.gen_assign(lhsast, rhsast);
+            }
             _ => {}
         }
 
@@ -271,6 +274,27 @@ impl Codegen {
             _ => {}
         }
         (ptr::null_mut(), Some(Type::Void))
+    }
+
+    unsafe fn gen_assign(&mut self,
+                         lhsast: &node::AST,
+                         rhsast: &node::AST)
+                         -> (LLVMValueRef, Option<Type>) {
+        let (dst, dst_ty) = self.get_val(lhsast);
+        let (src, _src_ty) = self.gen(rhsast);
+        assert!(dst_ty.is_some());
+        let casted_src = self.typecast(src, type_to_llvmty(&dst_ty.clone().unwrap()));
+        (LLVMBuildStore(self.builder, casted_src, dst), dst_ty)
+    }
+
+    unsafe fn get_val(&mut self, ast: &node::AST) -> (LLVMValueRef, Option<Type>) {
+        match ast {
+            &node::AST::Variable(ref name) => self.get_var(name),
+            _ => {
+                error::error_exit(0,
+                                  format!("get_val: unknown ast (given {:?})", ast).as_str())
+            }
+        }
     }
 
     unsafe fn gen_int_binary_op(&mut self,
@@ -313,19 +337,22 @@ impl Codegen {
         }
     }
 
-    unsafe fn gen_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
+    unsafe fn get_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
         if self.local_varmap.contains_key(name.as_str()) {
             let &(ref ty, val) = self.local_varmap.get(name.as_str()).unwrap();
-            return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
-                    Some(ty.clone()));
+            return (val, Some(ty.clone()));
         }
         if self.global_varmap.contains_key(name.as_str()) {
             let &(ref ty, val) = self.global_varmap.get(name.as_str()).unwrap();
-            return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
-                    Some(ty.clone()));
+            return (val, Some(ty.clone()));
         }
         error::error_exit(0,
-                          format!("gen_var: not found variable '{}'", name).as_str());
+                          format!("get_var: not found variable '{}'", name).as_str());
+    }
+
+    unsafe fn gen_var_load(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
+        let (val, ty) = self.get_var(name);
+        (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()), ty)
     }
 
     unsafe fn gen_func_call(&mut self,
