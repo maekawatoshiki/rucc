@@ -9,6 +9,7 @@ pub enum AST {
     String(String),
     Variable(String),
     VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
+    ConstArray(Vec<AST>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
     FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
@@ -114,6 +115,13 @@ impl AST {
                     print!(" (init ");
                     init.clone().unwrap().show();
                     print!(")");
+                }
+                print!(")");
+            }
+            &AST::ConstArray(ref elems) => {
+                print!("(const-array ");
+                for elem in elems {
+                    elem.show();
                 }
                 print!(")");
             }

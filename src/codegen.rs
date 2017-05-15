@@ -122,6 +122,7 @@ impl Codegen {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
             &node::AST::Variable(ref name) => self.gen_var_load(name),
+            &node::AST::ConstArray(ref elems) => (self.gen_const_array(elems), None),
             &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             &node::AST::Return(ref ret) => {
                 if ret.is_none() {
@@ -215,8 +216,31 @@ impl Codegen {
             .insert(name.to_string(), (ty.clone(), gvar));
 
         if init.is_some() {
-            LLVMSetInitializer(gvar, self.gen(&*init.clone().unwrap()).0);
+            self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
         }
+    }
+    unsafe fn const_init_global_var(&mut self,
+                                    ty: &Type,
+                                    gvar: LLVMValueRef,
+                                    init_ast: &node::AST) {
+        match *ty {
+            // TODO: support only if const array size is the same as var's array size
+            Type::Array(ref ary_ty, ref len) => {
+                LLVMSetInitializer(gvar, self.gen(init_ast).0);
+            }
+            _ => {
+                LLVMSetInitializer(gvar, self.gen(init_ast).0);
+            }
+        }
+    }
+    unsafe fn gen_const_array(&mut self, elems_ast: &Vec<node::AST>) -> LLVMValueRef {
+        let mut elems = Vec::new();
+        for e in elems_ast {
+            elems.push(self.gen(e).0);
+        }
+        LLVMConstArray(LLVMTypeOf(elems[0]),
+                       elems.as_mut_slice().as_mut_ptr(),
+                       elems.len() as u32)
     }
     unsafe fn gen_local_var_decl(&mut self,
                                  ty: &Type,

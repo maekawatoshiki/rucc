@@ -662,6 +662,18 @@ fn read_field(lexer: &mut Lexer, ast: AST) -> AST {
     AST::StructRef(Rc::new(ast), field_name)
 }
 
+fn read_const_array(lexer: &mut Lexer) -> AST {
+    let mut elems = Vec::new();
+    loop {
+        elems.push(read_assign(lexer));
+        if lexer.skip("}") {
+            break;
+        }
+        lexer.expect_skip(",");
+    }
+    node::AST::ConstArray(elems)
+}
+
 fn read_primary(lexer: &mut Lexer) -> AST {
     let tok = lexer
         .get()
@@ -694,6 +706,7 @@ fn read_primary(lexer: &mut Lexer) -> AST {
                     lexer.skip(")");
                     expr
                 }
+                "{" => read_const_array(lexer),
                 _ => {
                     error::error_exit(lexer.cur_line,
                                       format!("read_primary unknown symbol '{}'", tok.val.as_str())
