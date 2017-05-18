@@ -2,7 +2,7 @@ int printf(char *, ...);
 int puts(char *);
 int atoi(const char *);
 
-int a[3] = {1, 2, 3};
+
 
 int fact(int n) {
   if(n == 1)
