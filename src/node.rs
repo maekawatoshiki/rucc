@@ -22,6 +22,8 @@ pub enum AST {
 
 #[derive(Debug)]
 pub enum CBinOps {
+    // AddrAdd does (lhs + rhs). it is the same as lhs[rhs]
+    AddrAdd,
     Add,
     Sub,
     Mul,
@@ -150,7 +152,11 @@ impl AST {
             &AST::If(ref cond, ref then_b, ref else_b) => {
                 print!("(if ");
                 cond.show();
-                print!(" )");
+                print!("(");
+                then_b.clone().show();
+                print!(")(");
+                else_b.clone().show();
+                print!("))");
             }
             &AST::FuncCall(ref f, ref args) => {
                 print!("(func-call ");

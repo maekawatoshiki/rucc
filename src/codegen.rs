@@ -243,7 +243,7 @@ impl Codegen {
                                     init_ast: &node::AST) {
         match *ty {
             // TODO: support only if const array size is the same as var's array size
-            Type::Array(ref ary_ty, ref len) => {
+            Type::Array(ref _ary_ty, ref _len) => {
                 LLVMSetInitializer(gvar, self.gen(init_ast).0);
             }
             _ => {
@@ -360,6 +360,21 @@ impl Codegen {
         match *op {
             node::CBinOps::LAnd => {}
             node::CBinOps::LOr => {}
+            node::CBinOps::AddrAdd => {
+                // TODO: refine this code
+                let (lhs, lhsty) = self.get_val(lhsast);
+                let rhs = self.gen(rhsast).0;
+                let exprty = lhsty.clone();
+                match lhsty.unwrap() {
+                    Type::Ptr(_) => {
+                        return (self.gen_ptr_binary_op(lhs, rhs, op), exprty);
+                    }
+                    Type::Array(_, _) => {
+                        return (self.gen_ary_binary_op(lhs, rhs, op), exprty);
+                    }
+                    _ => error::error_exit(0, "gen_binary_op: never reach"),
+                }
+            }
             node::CBinOps::Assign => {
                 return self.gen_assign(lhsast, rhsast);
             }
@@ -373,16 +388,9 @@ impl Codegen {
             Type::Int(_) => {
                 return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
             }
-            Type::Ptr(ptr_ty) => {
-                return (self.gen_ptr_binary_op(lhs, rhs, op), lhsty);
-            }
-            Type::Array(ary_ty, _) => {
-                let val = self.get_val(lhsast).0;
-                return (self.gen_ary_binary_op(val, rhs, op), lhsty);
-            }
             _ => {}
         }
-        (ptr::null_mut(), Some(Type::Void))
+        (ptr::null_mut(), None)
     }
 
     unsafe fn gen_assign(&mut self,
@@ -467,9 +475,11 @@ impl Codegen {
                                 -> LLVMValueRef {
         let mut numidx = vec![rhs]; // TODO: FIX
         match *op {
-            node::CBinOps::Add => {
+            node::CBinOps::AddrAdd => {
                 LLVMBuildGEP(self.builder,
-                             lhs,
+                             LLVMBuildLoad(self.builder,
+                                           lhs,
+                                           CString::new("load").unwrap().as_ptr()),
                              numidx.as_mut_slice().as_mut_ptr(),
                              1,
                              CString::new("add").unwrap().as_ptr())
@@ -485,7 +495,7 @@ impl Codegen {
                                 -> LLVMValueRef {
         let mut numidx = vec![self.make_int(0, false).0, rhs]; // TODO: FIX
         match *op {
-            node::CBinOps::Add => {
+            node::CBinOps::AddrAdd => {
                 LLVMBuildGEP(self.builder,
                              lhs,
                              numidx.as_mut_slice().as_mut_ptr(),

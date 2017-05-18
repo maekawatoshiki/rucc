@@ -662,7 +662,7 @@ fn read_func_call(lexer: &mut Lexer, f: AST) -> AST {
 fn read_index(lexer: &mut Lexer, ast: AST) -> AST {
     let idx = read_expr(lexer);
     lexer.expect_skip("]");
-    AST::UnaryOp(Rc::new(AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add)),
+    AST::UnaryOp(Rc::new(AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::AddrAdd)),
                  node::CUnaryOps::Deref)
 }
 
