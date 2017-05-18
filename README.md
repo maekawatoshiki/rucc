@@ -14,10 +14,12 @@
 $ apt-get install llvm-3.8
 ```
 
-# build
+# build and run
 
 ```sh
 $ cargo build --release
+# or you can try like below 
+$ ./rucc.sh [filename] 
 ```
 
 # fork and pull request lifecycle
