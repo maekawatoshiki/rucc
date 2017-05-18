@@ -51,18 +51,21 @@ pub struct Codegen {
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, (Type, LLVMValueRef)>,
     local_varmap: HashMap<String, (Type, LLVMValueRef)>,
+    data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
 
 impl Codegen {
     pub unsafe fn new(mod_name: &str) -> Codegen {
         let c_mod_name = CString::new(mod_name).unwrap();
+        let module = LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), LLVMContextCreate());
         Codegen {
             context: LLVMContextCreate(),
-            module: LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), LLVMContextCreate()),
+            module: module,
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
             global_varmap: HashMap::new(),
             local_varmap: HashMap::new(),
+            data_layout: LLVMGetDataLayout(module),
             cur_func: None,
         }
     }
@@ -121,6 +124,7 @@ impl Codegen {
             &node::AST::If(ref cond, ref then_stmt, ref else_stmt) => {
                 self.gen_if(&*cond, &*then_stmt, &*else_stmt)
             }
+            &node::AST::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
@@ -179,6 +183,17 @@ impl Codegen {
 
 
         self.gen(&**body);
+
+        let mut iter_bb = LLVMGetFirstBasicBlock(func);
+        while iter_bb != ptr::null_mut() {
+            if LLVMGetBasicBlockTerminator(iter_bb) == ptr::null_mut() {
+                let terminator_builder = LLVMCreateBuilderInContext(self.context);
+                LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
+                LLVMBuildRet(terminator_builder,
+                             LLVMConstNull(type_to_llvmty(func_retty)));
+            }
+            iter_bb = LLVMGetNextBasicBlock(iter_bb);
+        }
 
         self.cur_func = None;
 
@@ -286,7 +301,7 @@ impl Codegen {
             LLVMBuildICmp(self.builder,
                           llvm::LLVMIntPredicate::LLVMIntNE,
                           val,
-                          self.make_int(0, false).0,
+                          LLVMConstNull(LLVMTypeOf(val)),
                           CString::new("eql").unwrap().as_ptr())
         }();
 
@@ -314,6 +329,28 @@ impl Codegen {
         (ptr::null_mut(), None)
     }
 
+    unsafe fn gen_unary_op(&mut self,
+                           expr: &node::AST,
+                           op: &node::CUnaryOps)
+                           -> (LLVMValueRef, Option<Type>) {
+        match *op {
+            node::CUnaryOps::Deref => {
+                let (expr_val, val_ty) = self.gen(expr);
+                println!("{:?}", val_ty.clone().unwrap());
+                let ty = match val_ty.unwrap() {
+                    Type::Array(t, _) |
+                    Type::Ptr(t) => (*t).clone(),
+                    _ => error::error_exit(0, "gen_unary_op: never reach"),
+                };
+                (LLVMBuildLoad(self.builder,
+                               expr_val,
+                               CString::new("deref").unwrap().as_ptr()),
+                 Some(ty))
+            }
+            _ => (ptr::null_mut(), None),
+        }
+    }
+
     unsafe fn gen_binary_op(&mut self,
                             lhsast: &node::AST,
                             rhsast: &node::AST,
@@ -332,9 +369,16 @@ impl Codegen {
         // normal binary operators
         let (lhs, lhsty) = self.gen(lhsast);
         let (rhs, _rhsty) = self.gen(rhsast);
-        match lhsty.unwrap() {
+        match lhsty.clone().unwrap() {
             Type::Int(_) => {
                 return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
+            }
+            Type::Ptr(ptr_ty) => {
+                return (self.gen_ptr_binary_op(lhs, rhs, op), lhsty);
+            }
+            Type::Array(ary_ty, _) => {
+                let val = self.get_val(lhsast).0;
+                return (self.gen_ary_binary_op(val, rhs, op), lhsty);
             }
             _ => {}
         }
@@ -375,7 +419,7 @@ impl Codegen {
                              CString::new("add").unwrap().as_ptr())
             }
             node::CBinOps::Sub => {
-                LLVMBuildAdd(self.builder,
+                LLVMBuildSub(self.builder,
                              lhs,
                              rhs,
                              CString::new("sub").unwrap().as_ptr())
@@ -404,6 +448,49 @@ impl Codegen {
                               lhs,
                               rhs,
                               CString::new("eql").unwrap().as_ptr())
+            }
+            node::CBinOps::Lt => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntSLT,
+                              lhs,
+                              rhs,
+                              CString::new("eql").unwrap().as_ptr())
+            }
+            _ => ptr::null_mut(),
+        }
+    }
+
+    unsafe fn gen_ptr_binary_op(&mut self,
+                                lhs: LLVMValueRef,
+                                rhs: LLVMValueRef,
+                                op: &node::CBinOps)
+                                -> LLVMValueRef {
+        let mut numidx = vec![rhs]; // TODO: FIX
+        match *op {
+            node::CBinOps::Add => {
+                LLVMBuildGEP(self.builder,
+                             lhs,
+                             numidx.as_mut_slice().as_mut_ptr(),
+                             1,
+                             CString::new("add").unwrap().as_ptr())
+            }
+            _ => ptr::null_mut(),
+        }
+    }
+
+    unsafe fn gen_ary_binary_op(&mut self,
+                                lhs: LLVMValueRef,
+                                rhs: LLVMValueRef,
+                                op: &node::CBinOps)
+                                -> LLVMValueRef {
+        let mut numidx = vec![self.make_int(0, false).0, rhs]; // TODO: FIX
+        match *op {
+            node::CBinOps::Add => {
+                LLVMBuildGEP(self.builder,
+                             lhs,
+                             numidx.as_mut_slice().as_mut_ptr(),
+                             2,
+                             CString::new("add").unwrap().as_ptr())
             }
             _ => ptr::null_mut(),
         }
