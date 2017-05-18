@@ -14,6 +14,7 @@ pub enum AST {
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
     FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
     Block(Vec<AST>),
+    If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
     Return(Option<Rc<AST>>),
@@ -145,6 +146,11 @@ impl AST {
                 for stmt in body {
                     stmt.show();
                 }
+            }
+            &AST::If(ref cond, ref then_b, ref else_b) => {
+                print!("(if ");
+                cond.show();
+                print!(" )");
             }
             &AST::FuncCall(ref f, ref args) => {
                 print!("(func-call ");

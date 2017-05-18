@@ -102,6 +102,7 @@ fn read_stmt(lexer: &mut Lexer) -> AST {
     let tok = lexer.get_e();
     match tok.val.as_str() {
         "{" => return read_compound_stmt(lexer),
+        "if" => return read_if_stmt(lexer),
         "return" => return read_return_stmt(lexer),
         _ => {}
     }
@@ -109,6 +110,19 @@ fn read_stmt(lexer: &mut Lexer) -> AST {
     let expr = read_expr(lexer);
     lexer.expect_skip(";");
     expr
+}
+
+fn read_if_stmt(lexer: &mut Lexer) -> AST {
+    lexer.expect_skip("(");
+    let cond = read_expr(lexer);
+    lexer.expect_skip(")");
+    let then_stmt = Rc::new(read_stmt(lexer));
+    let else_stmt = if lexer.skip("else") {
+        Rc::new(read_stmt(lexer))
+    } else {
+        Rc::new(AST::Block(Vec::new()))
+    };
+    AST::If(Rc::new(cond), then_stmt, else_stmt)
 }
 
 fn read_return_stmt(lexer: &mut Lexer) -> AST {
@@ -707,6 +721,10 @@ fn read_primary(lexer: &mut Lexer) -> AST {
                     expr
                 }
                 "{" => read_const_array(lexer),
+                ";" => {
+                    lexer.unget(tok);
+                    AST::Block(Vec::new())
+                }
                 _ => {
                     error::error_exit(lexer.cur_line,
                                       format!("read_primary unknown symbol '{}'", tok.val.as_str())

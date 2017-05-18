@@ -118,6 +118,9 @@ impl Codegen {
                 self.gen_var_decl(ty, name, init)
             }
             &node::AST::Block(ref block) => self.gen_block(block),
+            &node::AST::If(ref cond, ref then_stmt, ref else_stmt) => {
+                self.gen_if(&*cond, &*then_stmt, &*else_stmt)
+            }
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
@@ -273,6 +276,44 @@ impl Codegen {
         (ptr::null_mut(), None)
     }
 
+    unsafe fn gen_if(&mut self,
+                     cond: &node::AST,
+                     then_stmt: &node::AST,
+                     else_stmt: &node::AST)
+                     -> (LLVMValueRef, Option<Type>) {
+        let cond_val = || -> LLVMValueRef {
+            let val = self.gen(cond).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          self.make_int(0, false).0,
+                          CString::new("eql").unwrap().as_ptr())
+        }();
+
+
+        let func = self.cur_func.unwrap();
+
+        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
+        let bb_else = LLVMAppendBasicBlock(func, CString::new("else").unwrap().as_ptr());
+        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+
+        LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_then);
+        // then block
+        self.gen(then_stmt);
+        LLVMBuildBr(self.builder, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_else);
+        // else block
+        self.gen(else_stmt);
+        LLVMBuildBr(self.builder, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_merge);
+
+        (ptr::null_mut(), None)
+    }
+
     unsafe fn gen_binary_op(&mut self,
                             lhsast: &node::AST,
                             rhsast: &node::AST,
@@ -356,6 +397,13 @@ impl Codegen {
                               lhs,
                               rhs,
                               CString::new("rem").unwrap().as_ptr())
+            }
+            node::CBinOps::Eq => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntEQ,
+                              lhs,
+                              rhs,
+                              CString::new("eql").unwrap().as_ptr())
             }
             _ => ptr::null_mut(),
         }
