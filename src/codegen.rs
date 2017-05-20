@@ -50,7 +50,7 @@ pub struct Codegen {
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, (Type, LLVMValueRef)>,
-    local_varmap: HashMap<String, (Type, LLVMValueRef)>,
+    local_varmap: Vec<HashMap<String, (Type, LLVMValueRef)>>,
     data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
@@ -64,7 +64,7 @@ impl Codegen {
             module: module,
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
             global_varmap: HashMap::new(),
-            local_varmap: HashMap::new(),
+            local_varmap: Vec::new(),
             data_layout: LLVMGetDataLayout(module),
             cur_func: None,
         }
@@ -167,6 +167,7 @@ impl Codegen {
         self.global_varmap
             .insert(name.to_string(), (functy.clone(), func));
         self.cur_func = Some(func);
+        self.local_varmap.push(HashMap::new());
 
         let bb_entry = LLVMAppendBasicBlock(func, CString::new("entry").unwrap().as_ptr());
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
@@ -265,16 +266,30 @@ impl Codegen {
                                  name: &String,
                                  init: &Option<Rc<node::AST>>)
                                  -> LLVMValueRef {
-        let m = LLVMBuildAlloca(self.builder,
-                                type_to_llvmty(ty),
-                                CString::new(name.as_str()).unwrap().as_ptr());
+
+        // Allocate a varaible, always at the first of the entry block
+        let func = self.cur_func.unwrap();
+        let builder = LLVMCreateBuilderInContext(self.context);
+        let entry_bb = LLVMGetEntryBasicBlock(func);
+        let first_inst = LLVMGetFirstInstruction(entry_bb);
+        if first_inst == ptr::null_mut() {
+            LLVMPositionBuilderAtEnd(builder, entry_bb);
+        } else {
+            LLVMPositionBuilderBefore(builder, first_inst);
+        }
+        let var = LLVMBuildAlloca(builder,
+                                  type_to_llvmty(ty),
+                                  CString::new(name.as_str()).unwrap().as_ptr());
+
         self.local_varmap
-            .insert(name.to_string(), (ty.clone(), m));
+            .last_mut()
+            .unwrap()
+            .insert(name.to_string(), (ty.clone(), var));
 
         if init.is_some() {
-            self.set_local_var_initializer(m, ty, &*init.clone().unwrap());
+            self.set_local_var_initializer(var, ty, &*init.clone().unwrap());
         }
-        m
+        var
     }
     unsafe fn set_local_var_initializer(&mut self,
                                         var: LLVMValueRef,
@@ -285,9 +300,11 @@ impl Codegen {
     }
 
     unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> (LLVMValueRef, Option<Type>) {
+        self.local_varmap.push(HashMap::new());
         for stmt in block {
             self.gen(stmt);
         }
+        self.local_varmap.pop();
         (ptr::null_mut(), None)
     }
 
@@ -506,9 +523,20 @@ impl Codegen {
         }
     }
 
+    unsafe fn lookup_local_var(&mut self, name: &str) -> Option<(LLVMValueRef, &Type)> {
+        let mut n = (self.local_varmap.len() - 1) as i32;
+        while n >= 0 {
+            if self.local_varmap[n as usize].contains_key(name) {
+                let &(ref ty, val) = self.local_varmap[n as usize].get(name).unwrap();
+                return Some((val, ty));
+            }
+            n -= 1;
+        }
+        None
+    }
+
     unsafe fn get_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
-        if self.local_varmap.contains_key(name.as_str()) {
-            let &(ref ty, val) = self.local_varmap.get(name.as_str()).unwrap();
+        if let Some((val, ty)) = self.lookup_local_var(name.as_str()) {
             return (val, Some(ty.clone()));
         }
         if self.global_varmap.contains_key(name.as_str()) {
