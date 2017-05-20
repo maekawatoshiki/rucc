@@ -474,11 +474,20 @@ fn read_comma(lexer: &mut Lexer) -> AST {
 }
 fn read_assign(lexer: &mut Lexer) -> AST {
     let mut lhs = read_logor(lexer);
+    if lexer.skip("?") {
+        return read_ternary(lexer, lhs);
+    }
     while lexer.skip("=") {
         let rhs = read_logor(lexer);
         lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Assign);
     }
     lhs
+}
+fn read_ternary(lexer: &mut Lexer, cond: AST) -> AST {
+    let then_expr = read_expr(lexer);
+    lexer.expect_skip(":");
+    let else_expr = read_assign(lexer);
+    AST::TernaryOp(Rc::new(cond), Rc::new(then_expr), Rc::new(else_expr))
 }
 fn read_logor(lexer: &mut Lexer) -> AST {
     let mut lhs = read_logand(lexer);

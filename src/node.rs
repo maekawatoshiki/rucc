@@ -12,6 +12,7 @@ pub enum AST {
     ConstArray(Vec<AST>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
+    TernaryOp(Rc<AST>, Rc<AST>, Rc<AST>), // cond then else
     FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
     Block(Vec<AST>),
     If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
@@ -103,6 +104,9 @@ impl AST {
                 r.eval();
                 0
             }
+            &AST::TernaryOp(ref cond, ref l, ref r) => {
+                if cond.eval() != 0 { l.eval() } else { r.eval() }
+            }
             _ => 0,
         }
     }
@@ -137,6 +141,13 @@ impl AST {
             &AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 print!("({:?} ", op);
                 lhs.show();
+                rhs.show();
+                print!(")");
+            }
+            &AST::TernaryOp(ref cond, ref lhs, ref rhs) => {
+                print!("(?: ");
+                lhs.show();
+                print!(" ");
                 rhs.show();
                 print!(")");
             }

@@ -129,6 +129,9 @@ impl Codegen {
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
+            &node::AST::TernaryOp(ref cond, ref lhs, ref rhs) => {
+                self.gen_ternary_op(&*cond, &*lhs, &*rhs)
+            }
             &node::AST::Variable(ref name) => self.gen_var_load(name),
             &node::AST::ConstArray(ref elems) => (self.gen_const_array(elems), None),
             &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
@@ -586,6 +589,56 @@ impl Codegen {
             }
             _ => ptr::null_mut(),
         }
+    }
+
+    unsafe fn gen_ternary_op(&mut self,
+                             cond: &node::AST,
+                             then_expr: &node::AST,
+                             else_expr: &node::AST)
+                             -> (LLVMValueRef, Option<Type>) {
+        let cond_val = || -> LLVMValueRef {
+            let val = self.gen(cond).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        }();
+
+
+        let func = self.cur_func.unwrap();
+
+        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
+        let bb_else = LLVMAppendBasicBlock(func, CString::new("else").unwrap().as_ptr());
+        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+
+        LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_then);
+        // then block
+        let (then_val, ty) = self.gen(then_expr);
+        LLVMBuildBr(self.builder, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_else);
+        // else block
+        let (else_val, _) = self.gen(else_expr);
+        LLVMBuildBr(self.builder, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_merge);
+
+        let phi = LLVMBuildPhi(self.builder,
+                               LLVMTypeOf(then_val),
+                               CString::new("ternary_phi").unwrap().as_ptr());
+        LLVMAddIncoming(phi,
+                        vec![then_val].as_mut_slice().as_mut_ptr(),
+                        vec![bb_then].as_mut_slice().as_mut_ptr(),
+                        1);
+        LLVMAddIncoming(phi,
+                        vec![else_val].as_mut_slice().as_mut_ptr(),
+                        vec![bb_else].as_mut_slice().as_mut_ptr(),
+                        1);
+
+        (phi, ty)
     }
 
     unsafe fn lookup_local_var(&mut self, name: &str) -> Option<(LLVMValueRef, &Type)> {
