@@ -103,6 +103,7 @@ fn read_stmt(lexer: &mut Lexer) -> AST {
     match tok.val.as_str() {
         "{" => return read_compound_stmt(lexer),
         "if" => return read_if_stmt(lexer),
+        "while" => return read_while_stmt(lexer),
         "return" => return read_return_stmt(lexer),
         _ => {}
     }
@@ -123,6 +124,14 @@ fn read_if_stmt(lexer: &mut Lexer) -> AST {
         Rc::new(AST::Block(Vec::new()))
     };
     AST::If(Rc::new(cond), then_stmt, else_stmt)
+}
+
+fn read_while_stmt(lexer: &mut Lexer) -> AST {
+    lexer.expect_skip("(");
+    let cond = read_expr(lexer);
+    lexer.expect_skip(")");
+    let body = read_stmt(lexer);
+    AST::While(Rc::new(cond), Rc::new(body))
 }
 
 fn read_return_stmt(lexer: &mut Lexer) -> AST {

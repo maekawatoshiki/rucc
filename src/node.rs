@@ -15,6 +15,7 @@ pub enum AST {
     FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
     Block(Vec<AST>),
     If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
+    While(Rc<AST>, Rc<AST>), // cond, body
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
     Return(Option<Rc<AST>>),
@@ -156,6 +157,13 @@ impl AST {
                 then_b.clone().show();
                 print!(")(");
                 else_b.clone().show();
+                print!("))");
+            }
+            &AST::While(ref cond, ref body) => {
+                print!("(while ");
+                cond.show();
+                print!("(");
+                body.clone().show();
                 print!("))");
             }
             &AST::FuncCall(ref f, ref args) => {

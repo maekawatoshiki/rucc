@@ -124,6 +124,7 @@ impl Codegen {
             &node::AST::If(ref cond, ref then_stmt, ref else_stmt) => {
                 self.gen_if(&*cond, &*then_stmt, &*else_stmt)
             }
+            &node::AST::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
             &node::AST::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
             &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
@@ -346,6 +347,42 @@ impl Codegen {
         (ptr::null_mut(), None)
     }
 
+    unsafe fn gen_while(&mut self,
+                        cond: &node::AST,
+                        body: &node::AST)
+                        -> (LLVMValueRef, Option<Type>) {
+        let func = self.cur_func.unwrap();
+
+        let bb_before_loop = LLVMAppendBasicBlock(func,
+                                                  CString::new("before_loop").unwrap().as_ptr());
+        let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
+        let bb_after_loop = LLVMAppendBasicBlock(func,
+                                                 CString::new("after_loop").unwrap().as_ptr());
+
+        LLVMBuildBr(self.builder, bb_before_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_before_loop);
+        // before_loop block
+        let cond_val = || -> LLVMValueRef {
+            let val = self.gen(cond).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        }();
+        LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_loop);
+        // loop block
+        self.gen(body);
+        LLVMBuildBr(self.builder, bb_before_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
+
+        (ptr::null_mut(), None)
+    }
+
     unsafe fn gen_unary_op(&mut self,
                            expr: &node::AST,
                            op: &node::CUnaryOps)
@@ -474,12 +511,40 @@ impl Codegen {
                               rhs,
                               CString::new("eql").unwrap().as_ptr())
             }
+            node::CBinOps::Ne => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntNE,
+                              lhs,
+                              rhs,
+                              CString::new("ne").unwrap().as_ptr())
+            }
             node::CBinOps::Lt => {
                 LLVMBuildICmp(self.builder,
                               llvm::LLVMIntPredicate::LLVMIntSLT,
                               lhs,
                               rhs,
-                              CString::new("eql").unwrap().as_ptr())
+                              CString::new("lt").unwrap().as_ptr())
+            }
+            node::CBinOps::Gt => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntSGT,
+                              lhs,
+                              rhs,
+                              CString::new("gt").unwrap().as_ptr())
+            }
+            node::CBinOps::Le => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntSLE,
+                              lhs,
+                              rhs,
+                              CString::new("le").unwrap().as_ptr())
+            }
+            node::CBinOps::Ge => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntSGE,
+                              lhs,
+                              rhs,
+                              CString::new("ge").unwrap().as_ptr())
             }
             _ => ptr::null_mut(),
         }
