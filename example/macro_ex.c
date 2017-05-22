@@ -1,4 +1,9 @@
-// #include <stdio.h>
+/***** WARNING *****
+ * this code can't be compiled.
+ * because in line.20 'macro' will be replaced with 'macro + 1'.
+ * there is not such declared variable.
+ */
+
 #define macro macro + 1
 #define func(x) x+1
 

@@ -2,8 +2,6 @@ int printf(char *, ...);
 int puts(char *);
 int atoi(const char *);
 
-
-
 int fact(int n) {
   if(n == 1)
     return 1;

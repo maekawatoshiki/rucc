@@ -558,7 +558,7 @@ impl Codegen {
                                 rhs: LLVMValueRef,
                                 op: &node::CBinOps)
                                 -> LLVMValueRef {
-        let mut numidx = vec![rhs]; // TODO: FIX
+        let mut numidx = vec![rhs];
         match *op {
             node::CBinOps::AddrAdd => {
                 LLVMBuildGEP(self.builder,
@@ -578,7 +578,7 @@ impl Codegen {
                                 rhs: LLVMValueRef,
                                 op: &node::CBinOps)
                                 -> LLVMValueRef {
-        let mut numidx = vec![self.make_int(0, false).0, rhs]; // TODO: FIX
+        let mut numidx = vec![self.make_int(0, false).0, rhs];
         match *op {
             node::CBinOps::AddrAdd => {
                 LLVMBuildGEP(self.builder,
