@@ -131,6 +131,7 @@ fn read_for_stmt(lexer: &mut Lexer) -> AST {
     lexer.expect_skip("(");
     // let init = read_expr(lexer);
     lexer.expect_skip(")");
+    AST::Block(Vec::new())
 }
 
 fn read_while_stmt(lexer: &mut Lexer) -> AST {
