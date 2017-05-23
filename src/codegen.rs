@@ -121,8 +121,12 @@ impl Codegen {
                 self.gen_var_decl(ty, name, init)
             }
             &node::AST::Block(ref block) => self.gen_block(block),
+            &node::AST::Compound(ref block) => self.gen_compound(block),
             &node::AST::If(ref cond, ref then_stmt, ref else_stmt) => {
                 self.gen_if(&*cond, &*then_stmt, &*else_stmt)
+            }
+            &node::AST::For(ref init, ref cond, ref step, ref body) => {
+                self.gen_for(&*init, &*cond, &*step, &*body)
             }
             &node::AST::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
             &node::AST::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
@@ -312,6 +316,13 @@ impl Codegen {
         (ptr::null_mut(), None)
     }
 
+    unsafe fn gen_compound(&mut self, block: &Vec<node::AST>) -> (LLVMValueRef, Option<Type>) {
+        for stmt in block {
+            self.gen(stmt);
+        }
+        (ptr::null_mut(), None)
+    }
+
     unsafe fn gen_if(&mut self,
                      cond: &node::AST,
                      then_stmt: &node::AST,
@@ -379,6 +390,53 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
         // loop block
         self.gen(body);
+        LLVMBuildBr(self.builder, bb_before_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
+
+        (ptr::null_mut(), None)
+    }
+
+    unsafe fn gen_for(&mut self,
+                      init: &node::AST,
+                      cond: &node::AST,
+                      step: &node::AST,
+                      body: &node::AST)
+                      -> (LLVMValueRef, Option<Type>) {
+        let func = self.cur_func.unwrap();
+
+        let bb_before_loop = LLVMAppendBasicBlock(func,
+                                                  CString::new("before_loop").unwrap().as_ptr());
+        let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
+        let bb_after_loop = LLVMAppendBasicBlock(func,
+                                                 CString::new("after_loop").unwrap().as_ptr());
+        self.gen(init);
+
+        LLVMBuildBr(self.builder, bb_before_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_before_loop);
+        // before_loop block
+        let cond_val = || -> LLVMValueRef {
+            let val = || -> LLVMValueRef {
+                let v = self.gen(cond).0;
+                if v == ptr::null_mut() {
+                    self.make_int(1, false).0
+                } else {
+                    v
+                }
+            }();
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        }();
+        LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_loop);
+        // loop block
+        self.gen(body);
+        self.gen(step);
         LLVMBuildBr(self.builder, bb_before_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);

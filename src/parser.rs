@@ -129,9 +129,15 @@ fn read_if_stmt(lexer: &mut Lexer) -> AST {
 
 fn read_for_stmt(lexer: &mut Lexer) -> AST {
     lexer.expect_skip("(");
-    // let init = read_expr(lexer);
+    let init = read_opt_decl_or_stmt(lexer);
+    // TODO: make read_expr returns Option<AST>.
+    //       when cur tok is ';', returns None.
+    let cond = read_opt_expr(lexer);
+    lexer.expect_skip(";");
+    let step = read_opt_expr(lexer);
     lexer.expect_skip(")");
-    AST::Block(Vec::new())
+    let body = read_stmt(lexer);
+    AST::For(Rc::new(init), Rc::new(cond), Rc::new(step), Rc::new(body))
 }
 
 fn read_while_stmt(lexer: &mut Lexer) -> AST {
@@ -246,6 +252,22 @@ fn read_decl(lexer: &mut Lexer, ast: &mut Vec<AST>) {
         }
         lexer.expect_skip(",");
     }
+}
+
+fn read_opt_decl_or_stmt(lexer: &mut Lexer) -> AST {
+    if lexer.skip(";") {
+        return AST::Compound(Vec::new());
+    }
+
+    if is_type(&lexer.peek_e()) {
+        // variable declaration
+        let mut stmts = Vec::new();
+        read_decl(lexer, &mut stmts);
+        AST::Compound(stmts)
+    } else {
+        read_stmt(lexer)
+    }
+
 }
 
 // returns (declarator type, name, params{for function})
@@ -470,6 +492,9 @@ fn read_type_spec(lexer: &mut Lexer) -> Type {
 pub fn read_expr(lexer: &mut Lexer) -> AST {
     let lhs = read_comma(lexer);
     lhs
+}
+pub fn read_opt_expr(lexer: &mut Lexer) -> AST {
+    read_expr(lexer)
 }
 ////////// operators start from here
 fn read_comma(lexer: &mut Lexer) -> AST {
@@ -747,14 +772,9 @@ fn read_primary(lexer: &mut Lexer) -> AST {
                     expr
                 }
                 "{" => read_const_array(lexer),
-                ";" => {
-                    lexer.unget(tok);
-                    AST::Block(Vec::new())
-                }
                 _ => {
-                    error::error_exit(lexer.cur_line,
-                                      format!("read_primary unknown symbol '{}'", tok.val.as_str())
-                                          .as_str())
+                    lexer.unget(tok);
+                    AST::Compound(Vec::new())
                 }
             }
         }

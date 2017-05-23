@@ -15,7 +15,9 @@ pub enum AST {
     TernaryOp(Rc<AST>, Rc<AST>, Rc<AST>), // cond then else
     FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
     Block(Vec<AST>),
+    Compound(Vec<AST>),
     If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
+    For(Rc<AST>, Rc<AST>, Rc<AST>, Rc<AST>), // init, cond, step, body
     While(Rc<AST>, Rc<AST>), // cond, body
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
@@ -161,6 +163,11 @@ impl AST {
                     stmt.show();
                 }
             }
+            &AST::Compound(ref body) => {
+                for stmt in body {
+                    stmt.show();
+                }
+            }
             &AST::If(ref cond, ref then_b, ref else_b) => {
                 print!("(if ");
                 cond.show();
@@ -169,6 +176,14 @@ impl AST {
                 print!(")(");
                 else_b.clone().show();
                 print!("))");
+            }
+            &AST::For(ref init, ref cond, ref step, ref body) => {
+                print!("(for ");
+                // cond.show();
+                // print!("(");
+                // body.clone().show();
+                body.show();
+                print!(")");
             }
             &AST::While(ref cond, ref body) => {
                 print!("(while ");
