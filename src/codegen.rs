@@ -51,7 +51,7 @@ pub struct Codegen {
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, (Type, LLVMValueRef)>,
     local_varmap: Vec<HashMap<String, (Type, LLVMValueRef)>>,
-    data_layout: *const i8,
+    _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
 
@@ -65,7 +65,7 @@ impl Codegen {
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
             global_varmap: HashMap::new(),
             local_varmap: Vec::new(),
-            data_layout: LLVMGetDataLayout(module),
+            _data_layout: LLVMGetDataLayout(module),
             cur_func: None,
         }
     }
@@ -301,7 +301,7 @@ impl Codegen {
     }
     unsafe fn set_local_var_initializer(&mut self,
                                         var: LLVMValueRef,
-                                        varty: &Type,
+                                        _varty: &Type,
                                         init: &node::AST) {
         let init_val = self.gen(init).0;
         LLVMBuildStore(self.builder, init_val, var);

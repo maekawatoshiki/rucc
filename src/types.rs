@@ -1,5 +1,4 @@
 use std::rc::Rc;
-use std;
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub enum Sign {

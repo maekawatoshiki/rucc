@@ -8,9 +8,7 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::{str, u32};
 use std::rc::Rc;
-use std::sync::Mutex;
-use std::collections::HashMap;
-use ENV_MAP;
+use std::collections::{HashMap, VecDeque};
 
 #[derive(PartialEq, Debug, Clone)]
 enum StorageClass {
@@ -23,9 +21,18 @@ enum StorageClass {
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
+    env: VecDeque<HashMap<String, AST>>,
 }
 
 impl<'a> Parser<'a> {
+    pub fn new(lexer: Lexer<'a>) -> Parser<'a> {
+        let mut env = VecDeque::new();
+        env.push_back(HashMap::new());
+        Parser {
+            lexer: lexer,
+            env: env,
+        }
+    }
     pub fn run_file(filename: String) -> Vec<AST> {
         let mut nodes: Vec<AST> = Vec::new();
         let mut file = OpenOptions::new()
@@ -51,14 +58,11 @@ impl<'a> Parser<'a> {
         nodes
     }
     pub fn run_string(input: String) -> Vec<AST> {
-        let mut lexer = Lexer::new("__input__".to_string(), input.as_str());
-        let mut nodes: Vec<AST> = Vec::new();
+        let lexer = Lexer::new("__input__".to_string(), input.as_str());
         let mut parser = Parser::new(lexer);
+        let mut nodes: Vec<AST> = Vec::new();
         parser.run(&mut nodes);
         nodes
-    }
-    pub fn new(lexer: Lexer<'a>) -> Parser<'a> {
-        Parser { lexer: lexer }
     }
     pub fn run(&mut self, node: &mut Vec<AST>) {
         loop {
@@ -84,6 +88,8 @@ impl<'a> Parser<'a> {
         // let mut env = ENV_MAP.lock().unwrap();
         // let mut genv = (*env.back_mut().unwrap()).clone();
         // env.push_back(genv);
+        let localenv = (*self.env.back().unwrap()).clone();
+        self.env.push_back(localenv);
 
         let retty = self.read_type_spec().0;
         let (functy, name, param_names) = self.read_declarator(retty);
@@ -91,7 +97,7 @@ impl<'a> Parser<'a> {
 
         self.lexer.expect_skip("{");
         let body = self.read_func_body(&functy);
-        // env.pop_back();
+        self.env.pop_back();
         AST::FuncDef(functy,
                      if param_names.is_none() {
                          Vec::new()
@@ -229,14 +235,36 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn get_typedef(&mut self, name: &str) -> Option<Type> {
+        let env = self.env.back_mut().unwrap();
+        if env.contains_key(name) {
+            let maybe_ast = env.get(name);
+
+            match maybe_ast {
+                Some(ast) => {
+                    Some(match ast {
+                             &AST::Typedef(ref from, ref _to) => (*from).clone(),
+                             _ => {
+                                 error::error_exit(self.lexer.cur_line,
+                                                   format!("not found type '{}'", name).as_str())
+                             }
+                         })
+                } 
+                None => None,
+            }
+        } else {
+            None
+        }
+    }
     fn is_type(&mut self, token: &Token) -> bool {
         if token.kind != TokenKind::Identifier {
             return false;
         }
-        match token.val.as_str() {
+        let name = token.val.as_str();
+        match name {
             "void" | "signed" | "unsigned" | "char" | "int" | "short" | "long" | "float" |
             "double" | "struct" | "union" | "extern" | "const" | "volatile" => true,
-            _ => false,
+            _ => self.env.back_mut().unwrap().contains_key(name),
         }
     }
     fn read_decl_init(&mut self) -> AST {
@@ -259,12 +287,7 @@ impl<'a> Parser<'a> {
 
             if is_typedef {
                 let typedef = AST::Typedef(basety, name.clone());
-                ENV_MAP
-                    .lock()
-                    .unwrap()
-                    .back_mut()
-                    .unwrap()
-                    .insert(name, typedef);
+                self.env.back_mut().unwrap().insert(name, typedef);
                 return;
             }
 
@@ -436,16 +459,11 @@ impl<'a> Parser<'a> {
                 .unwrap();
 
             if kind.is_none() && tok.kind == TokenKind::Identifier {
-                // let maybe_userty = env.back_mut().unwrap().get(tok.val.as_str());
-                // if maybe_userty.is_some() {
-                //     match maybe_userty.unwrap() {
-                //         &AST::Typedef(ref a, ref b) => (*a).clone(),
-                //         _ => {
-                //             error::error_exit(lexer.cur_line,
-                //                               format!("not found '{}'", tok.val.as_str()).as_str())
-                //         }
-                //     };
-                // }
+                let maybe_userty_name = tok.val.as_str();
+                let maybe_userty = self.get_typedef(maybe_userty_name);
+                if maybe_userty.is_some() {
+                    return (maybe_userty.unwrap(), sclass);
+                }
             }
 
             match tok.val.as_str() {

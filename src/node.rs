@@ -8,7 +8,7 @@ pub enum AST {
     Float(f64),
     Char(i32),
     String(String),
-    Typedef(Type, String),
+    Typedef(Type, String), // from, to ( typedef from to; )
     Variable(String),
     VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
@@ -153,6 +153,8 @@ impl AST {
             }
             &AST::TernaryOp(ref cond, ref lhs, ref rhs) => {
                 print!("(?: ");
+                cond.show();
+                print!(" ");
                 lhs.show();
                 print!(" ");
                 rhs.show();
@@ -184,9 +186,12 @@ impl AST {
             }
             &AST::For(ref init, ref cond, ref step, ref body) => {
                 print!("(for ");
-                // cond.show();
-                // print!("(");
-                // body.clone().show();
+                init.show();
+                print!("; ");
+                cond.show();
+                print!("; ");
+                step.show();
+                print!(" (");
                 body.show();
                 print!(")");
             }
