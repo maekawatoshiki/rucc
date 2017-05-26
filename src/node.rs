@@ -1,12 +1,14 @@
 use std::rc::Rc;
 use types::Type;
+use std::marker::Send;
 
-#[derive( Debug)]
+#[derive(Debug, Clone)]
 pub enum AST {
     Int(i32),
     Float(f64),
     Char(i32),
     String(String),
+    Typedef(Type, String),
     Variable(String),
     VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
@@ -24,7 +26,9 @@ pub enum AST {
     Return(Option<Rc<AST>>),
 }
 
-#[derive(Debug)]
+unsafe impl Send for AST {}
+
+#[derive(Debug, Clone)]
 pub enum CBinOps {
     // AddrAdd does (lhs + rhs). it is the same as lhs[rhs]
     AddrAdd,
@@ -50,7 +54,7 @@ pub enum CBinOps {
     Assign,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CUnaryOps {
     LNot,
     BNot,
@@ -118,6 +122,7 @@ impl AST {
             &AST::Float(n) => print!("{} ", n),
             &AST::Char(c) => print!("'{}' ", c),
             &AST::String(ref s) => print!("\"{}\" ", s),
+            &AST::Typedef(ref a, ref b) => print!("(typedef {:?} {})", a, b),
             &AST::Variable(ref name) => print!("{} ", name),
             &AST::VariableDecl(ref ty, ref name, ref init) => {
                 print!("(var-decl {:?} {}", ty, name);

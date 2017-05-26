@@ -15,7 +15,7 @@ fn main() {
         version_info::show_usage();
     } else {
         let ref input_file_name = args[1];
-        let ast = parser::run_file(input_file_name.to_string());
+        let ast = parser::Parser::run_file(input_file_name.to_string());
 
         for node in &ast {
             node.show();

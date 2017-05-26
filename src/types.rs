@@ -1,12 +1,13 @@
 use std::rc::Rc;
+use std;
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub enum Sign {
     Signed,
     Unsigned,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash)]
 pub enum Type {
     Void,
     Char(Sign), // sign

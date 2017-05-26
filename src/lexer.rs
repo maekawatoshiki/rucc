@@ -52,6 +52,7 @@ impl Token {
     }
 }
 
+#[derive(Clone)]
 pub struct Lexer<'a> {
     pub cur_line: i32,
     filename: String,
@@ -692,7 +693,8 @@ impl<'a> Lexer<'a> {
 
         self.unget(Token::new(TokenKind::Symbol, ";", 0, 0));
         self.unget_all(expr_line);
-        let node = parser::read_expr(self);
+
+        let node = parser::Parser::new((*self).clone()).run_as_expr();
 
         self.buf.pop_back();
 
