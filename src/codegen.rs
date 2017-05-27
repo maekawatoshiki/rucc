@@ -16,14 +16,13 @@ use node;
 use types::{Type, Sign};
 use error;
 
-
 pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, (Type, LLVMTypeRef, LLVMValueRef)>,
     local_varmap: Vec<HashMap<String, (Type, LLVMTypeRef, LLVMValueRef)>>,
-    llvm_struct_map: HashMap<String, LLVMTypeRef>,
+    llvm_struct_map: HashMap<String, (HashMap<String, u32>, Vec<Type>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
     _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
@@ -109,6 +108,9 @@ impl Codegen {
             }
             &node::AST::TernaryOp(ref cond, ref lhs, ref rhs) => {
                 self.gen_ternary_op(&*cond, &*lhs, &*rhs)
+            }
+            &node::AST::StructRef(ref expr, ref field_name) => {
+                self.gen_load_struct_field(&*expr, field_name.to_string())
             }
             &node::AST::Variable(ref name) => self.gen_var_load(name),
             &node::AST::ConstArray(ref elems) => (self.gen_const_array(elems), None),
@@ -223,6 +225,8 @@ impl Codegen {
 
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
+        } else {
+            // LLVMSetInitializer(gvar,
         }
     }
     unsafe fn const_init_global_var(&mut self,
@@ -680,11 +684,32 @@ impl Codegen {
         (phi, ty)
     }
 
+    unsafe fn gen_load_struct_field(&mut self,
+                                    expr: &node::AST,
+                                    field_name: String)
+                                    -> (LLVMValueRef, Option<Type>) {
+        let (strct, llvmty) = self.get_val(expr);
+        let strct_name = self.get_struct_name(llvmty.unwrap());
+        assert!(strct_name.is_some());
+        // llvm_struct_map: HashMap<String, (HashMap<String, u32>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
+        let &(ref fieldmap, ref fieldtypes, llvm_struct_ty) = self.llvm_struct_map
+            .get(strct_name.unwrap().as_str())
+            .unwrap();
+        let idx = *fieldmap.get(field_name.as_str()).unwrap();
+        (LLVMBuildLoad(self.builder,
+                       LLVMBuildStructGEP(self.builder,
+                                          strct,
+                                          idx,
+                                          CString::new("structref").unwrap().as_ptr()),
+                       CString::new("load").unwrap().as_ptr()),
+         Some(fieldtypes[idx as usize].clone()))
+    }
+
     unsafe fn lookup_local_var(&mut self, name: &str) -> Option<(LLVMValueRef, &Type)> {
         let mut n = (self.local_varmap.len() - 1) as i32;
         while n >= 0 {
             if self.local_varmap[n as usize].contains_key(name) {
-                let &(ref ty, llvm_val_ty, val) = self.local_varmap[n as usize].get(name).unwrap();
+                let &(ref ty, _llvm_val_ty, val) = self.local_varmap[n as usize].get(name).unwrap();
                 return Some((val, ty));
             }
             n -= 1;
@@ -843,19 +868,21 @@ impl Codegen {
                 {
                     let ty = self.llvm_struct_map.get(name);
                     if ty.is_some() {
-                        return ty.unwrap().clone();
+                        return ty.unwrap().clone().2;
                     }
                 }
 
                 // if not declared, create a new struct
-                let mut fields_names: Vec<String> = Vec::new();
-                let mut fields_types: Vec<LLVMTypeRef> = Vec::new();
+                let mut fields_names_map: HashMap<String, u32> = HashMap::new();
+                let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+                let mut fields_types: Vec<Type> = Vec::new();
                 // 'fields' is Vec<AST>, field is AST
-                for field in fields {
+                for (i, field) in fields.iter().enumerate() {
                     match field {
                         &node::AST::VariableDecl(ref ty, ref name, ref _init) => {
-                            fields_types.push(self.type_to_llvmty(ty));
-                            fields_names.push(name.to_string());
+                            fields_llvm_types.push(self.type_to_llvmty(ty));
+                            fields_types.push(ty.clone());
+                            fields_names_map.insert(name.to_string(), i as u32);
                         }
                         _ => error::error_exit(0, "impossible"),
                     }
@@ -864,12 +891,20 @@ impl Codegen {
                     LLVMStructCreateNamed(self.context,
                                           CString::new(name.as_str()).unwrap().as_ptr());
                 LLVMStructSetBody(new_struct,
-                                  fields_types.as_mut_slice().as_mut_ptr(),
-                                  fields_types.len() as u32,
+                                  fields_llvm_types.as_mut_slice().as_mut_ptr(),
+                                  fields_llvm_types.len() as u32,
                                   0);
-                self.llvm_struct_map.insert(name.to_string(), new_struct);
+                self.llvm_struct_map
+                    .insert(name.to_string(),
+                            (fields_names_map, fields_types, new_struct));
                 new_struct
             }
+        }
+    }
+    unsafe fn get_struct_name(&mut self, ty: Type) -> Option<String> {
+        match ty {
+            Type::Struct(ref name, _) => Some(name.to_string()),
+            _ => None,
         }
     }
 }
