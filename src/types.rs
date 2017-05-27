@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use node::AST;
 
 #[derive(PartialEq, Debug, Clone, Hash)]
 pub enum Sign {
@@ -6,7 +7,7 @@ pub enum Sign {
     Unsigned,
 }
 
-#[derive(PartialEq, Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Void,
     Char(Sign), // sign
@@ -19,4 +20,5 @@ pub enum Type {
     Ptr(Rc<Type>),
     Array(Rc<Type>, i32), // ary type, size
     Func(Rc<Type>, Vec<Type>, bool), // return type, param types, vararg
+    Struct(String, Vec<AST>),
 }

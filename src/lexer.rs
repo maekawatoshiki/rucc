@@ -321,16 +321,16 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn expand_obj_macro(&mut self, name: String, body: &Vec<Token>) {
-        let mut bdy: Vec<Token> = Vec::new();
-        for t in body {
-            bdy.push(|| -> Token {
-                         let mut a = t.clone();
-                         a.hideset.insert(name.to_string());
-                         a
-                     }());
+    fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) {
+        let mut body: Vec<Token> = Vec::new();
+        for tok in macro_body {
+            body.push(|| -> Token {
+                          let mut t = (*tok).clone();
+                          t.hideset.insert(name.to_string());
+                          t
+                      }());
         }
-        self.unget_all(bdy);
+        self.unget_all(body);
     }
     fn read_one_arg(&mut self) -> Vec<Token> {
         let mut n = 0;
@@ -431,7 +431,7 @@ impl<'a> Lexer<'a> {
     }
     fn expand(&mut self, token: Option<Token>) -> Option<Token> {
         token.and_then(|tok| {
-            let name = tok.val.clone();
+            let name = tok.val.to_string();
 
             if tok.hideset.contains(name.as_str()) ||
                !MACRO_MAP.lock().unwrap().contains_key(name.as_str()) {
@@ -473,11 +473,9 @@ impl<'a> Lexer<'a> {
 
     pub fn peek(&mut self) -> Option<Token> {
         let tok = self.get();
-        tok.clone()
-            .and_then(|t| {
-                          self.unget(t.clone());
-                          Some(t)
-                      });
+        if tok.is_some() {
+            self.unget(tok.clone().unwrap());
+        }
         tok
     }
 
@@ -577,7 +575,6 @@ impl<'a> Lexer<'a> {
         self.register_obj_macro(name, body);
     }
     fn read_define_func_macro(&mut self, name: String) {
-        print!("\tmacro: {}(", name);
         // read macro arguments
         let mut args: HashMap<String, usize> = HashMap::new();
         let mut count = 0usize;
@@ -593,34 +590,27 @@ impl<'a> Lexer<'a> {
             self.expect_skip(",");
             count += 1;
         }
-        for (key, val) in args.clone() {
-            print!("{}({}),", key, val);
-        }
-        println!(")");
 
         let mut body: Vec<Token> = Vec::new();
-        print!("\tmacro body: ");
         loop {
             let tok = self.do_read_token().unwrap();
             if tok.kind == TokenKind::Newline {
                 break;
             }
-            print!("{}{}", if tok.space { " " } else { "" }, tok.val);
 
             // if tok is a parameter of funclike macro,
-            //  the kind of tok is changed to MacroParam
+            //  the kind of tok will be changed to MacroParam
             //  and set macro_position
             let maybe_macro_name = tok.val.as_str();
             if args.contains_key(maybe_macro_name) {
                 let mut macro_param = tok.clone();
                 macro_param.kind = TokenKind::MacroParam;
-                macro_param.macro_position = args.get(maybe_macro_name).unwrap().clone();
+                macro_param.macro_position = *args.get(maybe_macro_name).unwrap();
                 body.push(macro_param);
             } else {
                 body.push(tok.clone());
             }
         }
-        println!();
         self.register_funclike_macro(name, body);
     }
     fn read_define(&mut self) {

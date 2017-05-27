@@ -10,6 +10,8 @@ use std::{str, u32};
 use std::rc::Rc;
 use std::collections::{HashMap, VecDeque};
 
+extern crate llvm_sys as llvm;
+
 #[derive(PartialEq, Debug, Clone)]
 enum StorageClass {
     Typedef,
@@ -84,10 +86,6 @@ impl<'a> Parser<'a> {
         }
     }
     fn read_func_def(&mut self) -> AST {
-        // TODO: IMPLEMENT
-        // let mut env = ENV_MAP.lock().unwrap();
-        // let mut genv = (*env.back_mut().unwrap()).clone();
-        // env.push_back(genv);
         let localenv = (*self.env.back().unwrap()).clone();
         self.env.push_back(localenv);
 
@@ -286,7 +284,7 @@ impl<'a> Parser<'a> {
             let (ty, name, _) = self.read_declarator(basety.clone());
 
             if is_typedef {
-                let typedef = AST::Typedef(basety, name.clone());
+                let typedef = AST::Typedef(basety, name.to_string());
                 self.env.back_mut().unwrap().insert(name, typedef);
                 return;
             }
@@ -442,6 +440,7 @@ impl<'a> Parser<'a> {
         let mut sign: Option<Sign> = None;
         let mut size = Size::Normal;
         let mut sclass: Option<StorageClass> = None;
+        let mut userty: Option<Type> = None;
 
         let err_kind = |lexer: &Lexer, kind: Option<PrimitiveType>| if kind.is_some() {
             error::error_exit(lexer.cur_line, "type mismatch");
@@ -509,6 +508,7 @@ impl<'a> Parser<'a> {
                         size = Size::LLong;
                     }
                 }
+                "struct" => userty = Some(self.read_struct_def()),
                 _ => {
                     self.lexer.unget(tok);
                     break;
@@ -520,6 +520,11 @@ impl<'a> Parser<'a> {
         //  default is Signed
         if sign.is_none() {
             sign = Some(Sign::Signed);
+        }
+
+        // TODO: add err handler
+        if userty.is_some() {
+            return (userty.unwrap(), sclass);
         }
 
         let mut ty: Option<Type> = None;
@@ -547,6 +552,44 @@ impl<'a> Parser<'a> {
         assert!(ty.is_some(), "ty is None!");
         (ty.unwrap(), sclass)
     }
+
+    fn read_struct_def(&mut self) -> Type {
+        self.read_rectype_def(true)
+    }
+    // rectype is abbreviation of 'record type'
+    fn read_rectype_tag(&mut self) -> Option<String> {
+        let maybe_tag = self.lexer.get_e();
+        if maybe_tag.kind == TokenKind::Identifier {
+            Some(maybe_tag.val)
+        } else {
+            self.lexer.unget(maybe_tag);
+            None
+        }
+    }
+    fn read_rectype_def(&mut self, is_struct: bool) -> Type {
+        let tag = || -> String {
+            let opt_tag = self.read_rectype_tag();
+            if opt_tag.is_some() {
+                opt_tag.unwrap()
+            } else {
+                "".to_string()
+            }
+        }();
+        let fields = self.read_rectype_fields();
+        Type::Struct(tag, fields)
+    }
+    fn read_rectype_fields(&mut self) -> Vec<AST> {
+        if !self.lexer.skip("{") {
+            return Vec::new();
+        }
+
+        let mut decls: Vec<AST> = Vec::new();
+        while !self.lexer.skip("}") {
+            self.read_decl(&mut decls);
+        }
+        decls
+    }
+
 
     pub fn read_expr(&mut self) -> AST {
         let lhs = self.read_comma();
@@ -801,7 +844,7 @@ impl<'a> Parser<'a> {
             .unwrap();
         match tok.kind {
             TokenKind::IntNumber => {
-                let num_literal = tok.val.clone();
+                let num_literal = tok.val;
                 if num_literal.len() > 2 && num_literal.chars().nth(1).unwrap() == 'x' {
                     AST::Int(self.read_hex_num(&num_literal[2..]))
                 } else {
