@@ -148,7 +148,6 @@ impl Codegen {
         let func = LLVMAddFunction(self.module,
                                    CString::new(name.as_str()).unwrap().as_ptr(),
                                    func_ty);
-        LLVMDumpType(func_ty);
         self.global_varmap
             .insert(name.to_string(), (functy.clone(), func_ty, func));
         self.cur_func = Some(func);
@@ -180,6 +179,8 @@ impl Codegen {
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
         }
+
+        self.local_varmap.pop();
 
         self.cur_func = None;
 
@@ -226,7 +227,6 @@ impl Codegen {
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
         } else {
-            // LLVMSetInitializer(gvar,
         }
     }
     unsafe fn const_init_global_var(&mut self,
@@ -272,11 +272,11 @@ impl Codegen {
         let var = LLVMBuildAlloca(builder,
                                   llvm_var_ty,
                                   CString::new(name.as_str()).unwrap().as_ptr());
-
         self.local_varmap
             .last_mut()
             .unwrap()
-            .insert(name.to_string(), (ty.clone(), llvm_var_ty, var));
+            .insert(name.as_str().to_string(), (ty.clone(), llvm_var_ty, var));
+        println!("{:?}", self.local_varmap.last_mut().unwrap());
 
         if init.is_some() {
             self.set_local_var_initializer(var, ty, &*init.clone().unwrap());
@@ -725,6 +725,7 @@ impl Codegen {
             let &(ref ty, llvm_ty, val) = self.global_varmap.get(name.as_str()).unwrap();
             return (val, Some(ty.clone()));
         }
+        LLVMDumpModule(self.module);
         error::error_exit(0,
                           format!("get_var: not found variable '{}'", name).as_str());
     }
@@ -738,6 +739,7 @@ impl Codegen {
                             fast: &node::AST,
                             args: &Vec<node::AST>)
                             -> (LLVMValueRef, Option<Type>) {
+        println!("{:?}", self.local_varmap.last_mut().unwrap());
         // before implicit type casting. so 'maybe incorrect'
         let mut maybe_incorrect_args_val = Vec::new();
         for arg in &*args {
@@ -777,6 +779,7 @@ impl Codegen {
         }
 
         let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
+        println!("{:?}", self.local_varmap.last_mut().unwrap());
         (LLVMBuildCall(self.builder,
                        func,
                        args_val_ptr,

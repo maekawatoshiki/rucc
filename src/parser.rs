@@ -265,9 +265,43 @@ impl<'a> Parser<'a> {
             _ => self.env.back_mut().unwrap().contains_key(name),
         }
     }
-    fn read_decl_init(&mut self) -> AST {
+    fn read_decl_init(&mut self, ty: &mut Type) -> AST {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
-        self.read_assign()
+        if self.lexer.skip("{") || self.lexer.peek_e().kind == TokenKind::String {
+            // self.read_
+            self.read_initializer_list(ty)
+        } else {
+            self.read_assign()
+        }
+    }
+    fn read_initializer_list(&mut self, ty: &mut Type) -> AST {
+        match ty {
+            &mut Type::Array(_, _) => self.read_array_initializer(ty),
+            _ => self.read_assign(),
+        }
+    }
+    fn read_array_initializer(&mut self, ty: &mut Type) -> AST {
+        if let &mut Type::Array(ref mut elem_ty, ref mut len) = ty {
+            let is_flexible = *len < 0;
+            let mut elems = Vec::new();
+            let mut count = 0;
+            loop {
+                if self.lexer.skip("}") {
+                    break;
+                }
+                let elem = self.read_assign();
+                elems.push(elem);
+                self.lexer.skip(",");
+                count += 1;
+            }
+            if is_flexible {
+                *len = count;
+            }
+            AST::ConstArray(elems)
+        } else {
+            error::error_exit(self.lexer.cur_line, "impossible");
+        }
+        // self.read_assign()
     }
     fn skip_type_qualifiers(&mut self) {
         while self.lexer.skip("const") || self.lexer.skip("volatile") ||
@@ -281,7 +315,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let (ty, name, _) = self.read_declarator(basety.clone());
+            let (mut ty, name, _) = self.read_declarator(basety.clone());
 
             if is_typedef {
                 let typedef = AST::Typedef(basety, name.to_string());
@@ -290,7 +324,7 @@ impl<'a> Parser<'a> {
             }
 
             let init = if self.lexer.skip("=") {
-                Some(Rc::new(self.read_decl_init()))
+                Some(Rc::new(self.read_decl_init(&mut ty)))
             } else {
                 None
             };
