@@ -244,6 +244,7 @@ impl Codegen {
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
         } else {
+            // LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0));
         }
     }
     unsafe fn const_init_global_var(&mut self,
@@ -476,28 +477,7 @@ impl Codegen {
             node::CBinOps::LAnd => {}
             node::CBinOps::LOr => {}
             // addr add
-            node::CBinOps::AddrAdd => {
-                // TODO: refine this code
-                let (lhs, lhsty) = self.get_val(lhsast);
-                let rhs = self.gen(rhsast).0;
-                // get_val returns Ptr(real_type):
-                let exprty: Type;
-                if let Some(Type::Ptr(ref elem_ty)) = lhsty {
-                    exprty = (**elem_ty).clone();
-                } else {
-                    error::error_exit(0, "gen_binary_op: addradd");
-                }
-
-                match exprty {
-                    Type::Ptr(elem_ty) => {
-                        return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
-                    }
-                    Type::Array(elem_ty, _) => {
-                        return (self.gen_ary_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
-                    }
-                    _ => error::error_exit(0, "gen_binary_op: never reach"),
-                }
-            }
+            node::CBinOps::AddrAdd => return self.gen_binary_addradd_op(lhsast, rhsast),
             node::CBinOps::Assign => {
                 return self.gen_assign(lhsast, rhsast);
             }
@@ -514,6 +494,33 @@ impl Codegen {
             _ => {}
         }
         (ptr::null_mut(), None)
+    }
+
+    unsafe fn gen_binary_addradd_op(&mut self,
+                                    lhsast: &node::AST,
+                                    rhsast: &node::AST)
+                                    -> (LLVMValueRef, Option<Type>) {
+        let (lhs, lhsty) = self.get_val(lhsast);
+        let rhs = self.gen(rhsast).0;
+        // get_val returns Ptr(real_type):
+        let exprty: Type;
+        if let Some(Type::Ptr(ref elem_ty)) = lhsty {
+            exprty = (**elem_ty).clone();
+        } else {
+            error::error_exit(0, "gen_binary_op: addradd");
+        }
+
+        match exprty {
+            Type::Ptr(elem_ty) => {
+                (self.gen_ptr_binary_op(lhs, rhs, &node::CBinOps::AddrAdd),
+                 Some(Type::Ptr(elem_ty)))
+            }
+            Type::Array(elem_ty, _) => {
+                (self.gen_ary_binary_op(lhs, rhs, &node::CBinOps::AddrAdd),
+                 Some(Type::Ptr(elem_ty)))
+            }
+            _ => error::error_exit(0, "gen_binary_op: never reach"),
+        }
     }
 
     unsafe fn gen_assign(&mut self,
@@ -542,6 +549,9 @@ impl Codegen {
         match ast {
             &node::AST::Variable(ref name) => self.get_var(name),
             &node::AST::UnaryOp(ref expr, node::CUnaryOps::Deref) => self.get_val(expr),
+            &node::AST::StructRef(ref expr, ref field_name) => {
+                self.get_struct_field_val(expr, field_name.to_string())
+            }
             _ => {
                 self.gen(ast)
                 // error::error_exit(0,
@@ -724,21 +734,37 @@ impl Codegen {
                                     expr: &node::AST,
                                     field_name: String)
                                     -> (LLVMValueRef, Option<Type>) {
-        let (strct, llvmty) = self.get_val(expr);
-        let strct_name = self.get_struct_name(llvmty.unwrap());
+        let (val, ptr_ty) = self.get_struct_field_val(expr, field_name);
+        let ty = if let Some(Type::Ptr(elem_ty)) = ptr_ty {
+            elem_ty
+        } else {
+            error::error_exit(0, "gen_load_struct_field");
+        };
+        (LLVMBuildLoad(self.builder, val, CString::new("load").unwrap().as_ptr()),
+         Some((*ty).clone()))
+    }
+    unsafe fn get_struct_field_val(&mut self,
+                                   expr: &node::AST,
+                                   field_name: String)
+                                   -> (LLVMValueRef, Option<Type>) {
+        let (strct, ptr_ty) = self.get_val(expr);
+        let ty = if let Some(Type::Ptr(elem_ty)) = ptr_ty {
+            elem_ty
+        } else {
+            error::error_exit(0, "get_struct_field_val");
+        };
+        let strct_name = self.get_struct_name(&*ty);
         assert!(strct_name.is_some());
         // llvm_struct_map: HashMap<String, (HashMap<String, u32>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
         let &(ref fieldmap, ref fieldtypes, llvm_struct_ty) = self.llvm_struct_map
             .get(strct_name.unwrap().as_str())
             .unwrap();
         let idx = *fieldmap.get(field_name.as_str()).unwrap();
-        (LLVMBuildLoad(self.builder,
-                       LLVMBuildStructGEP(self.builder,
-                                          strct,
-                                          idx,
-                                          CString::new("structref").unwrap().as_ptr()),
-                       CString::new("load").unwrap().as_ptr()),
-         Some(fieldtypes[idx as usize].clone()))
+        (LLVMBuildStructGEP(self.builder,
+                            strct,
+                            idx,
+                            CString::new("structref").unwrap().as_ptr()),
+         Some(Type::Ptr(Rc::new(fieldtypes[idx as usize].clone()))))
     }
 
     unsafe fn lookup_local_var(&mut self, name: &str) -> Option<(LLVMValueRef, &Type)> {
@@ -953,9 +979,9 @@ impl Codegen {
             }
         }
     }
-    unsafe fn get_struct_name(&mut self, ty: Type) -> Option<String> {
+    unsafe fn get_struct_name(&mut self, ty: &Type) -> Option<String> {
         match ty {
-            Type::Struct(ref name, _) => Some(name.to_string()),
+            &Type::Struct(ref name, _) => Some(name.to_string()),
             _ => None,
         }
     }
