@@ -767,7 +767,7 @@ impl Codegen {
         let mut args_val = Vec::new();
         let mut ptr_args_types = (&mut Vec::with_capacity(args_count)).as_mut_ptr();
         LLVMGetParamTypes(llvm_functy, ptr_args_types);
-        let llvm_args_types = Vec::from_raw_parts(ptr_args_types, args_count, args_count);
+        let llvm_args_types = Vec::from_raw_parts(ptr_args_types, args_count, 0);
 
         // do implicit type casting to args
         for i in 0..args_len {

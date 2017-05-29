@@ -1,8 +1,3 @@
-# **WARNING**
-
-NOW THE CODE IN THIS MASTER BRANCH DOES NOT RUN SUCCESSFULLY.
-I'M FIXING IT IN 'remake' BRANCH.
-
 # rucc
 
 [![](https://img.shields.io/travis/maekawatoshiki/rucc.svg?style=flat-square)](https://travis-ci.org/maekawatoshiki/rucc)
