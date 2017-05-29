@@ -281,7 +281,7 @@ impl<'a> Parser<'a> {
         }
     }
     fn read_array_initializer(&mut self, ty: &mut Type) -> AST {
-        if let &mut Type::Array(ref mut elem_ty, ref mut len) = ty {
+        if let &mut Type::Array(ref mut _elem_ty, ref mut len) = ty {
             let is_flexible = *len < 0;
             let mut elems = Vec::new();
             let mut count = 0;
@@ -600,7 +600,7 @@ impl<'a> Parser<'a> {
             None
         }
     }
-    fn read_rectype_def(&mut self, is_struct: bool) -> Type {
+    fn read_rectype_def(&mut self, _is_struct: bool) -> Type {
         let tag = || -> String {
             let opt_tag = self.read_rectype_tag();
             if opt_tag.is_some() {

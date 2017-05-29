@@ -16,12 +16,28 @@ use node;
 use types::{Type, Sign};
 use error;
 
+// used by global_varmap and local_varmap(not to use tuples)
+struct VarInfo {
+    ty: Type,
+    llvm_ty: LLVMTypeRef,
+    llvm_val: LLVMValueRef,
+}
+impl VarInfo {
+    fn new(ty: Type, llvm_ty: LLVMTypeRef, llvm_val: LLVMValueRef) -> VarInfo {
+        VarInfo {
+            ty: ty,
+            llvm_ty: llvm_ty,
+            llvm_val: llvm_val,
+        }
+    }
+}
+
 pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
-    global_varmap: HashMap<String, (Type, LLVMTypeRef, LLVMValueRef)>,
-    local_varmap: Vec<HashMap<String, (Type, LLVMTypeRef, LLVMValueRef)>>,
+    global_varmap: HashMap<String, VarInfo>,
+    local_varmap: Vec<HashMap<String, VarInfo>>,
     llvm_struct_map: HashMap<String, (HashMap<String, u32>, Vec<Type>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
     _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
@@ -76,11 +92,10 @@ impl Codegen {
         if LLVMPrintModuleToFile(self.module,
                                  CString::new(filename).unwrap().as_ptr(),
                                  &mut errmsg) != 0 {
-            let err = CString::from_raw(errmsg)
+            let _err = CString::from_raw(errmsg)
                 .to_owned()
                 .into_string()
                 .unwrap();
-            println!("write_to_file failed: {}", err);
             std::process::exit(-1);
         }
     }
@@ -149,7 +164,8 @@ impl Codegen {
                                    CString::new(name.as_str()).unwrap().as_ptr(),
                                    func_ty);
         self.global_varmap
-            .insert(name.to_string(), (functy.clone(), func_ty, func));
+            .insert(name.to_string(),
+                    VarInfo::new(functy.clone(), func_ty, func));
         self.cur_func = Some(func);
         self.local_varmap.push(HashMap::new());
 
@@ -222,7 +238,8 @@ impl Codegen {
             }
         };
         self.global_varmap
-            .insert(name.to_string(), (ty.clone(), llvm_gvar_ty, gvar));
+            .insert(name.to_string(),
+                    VarInfo::new(ty.clone(), llvm_gvar_ty, gvar));
 
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
@@ -275,8 +292,8 @@ impl Codegen {
         self.local_varmap
             .last_mut()
             .unwrap()
-            .insert(name.as_str().to_string(), (ty.clone(), llvm_var_ty, var));
-        println!("{:?}", self.local_varmap.last_mut().unwrap());
+            .insert(name.as_str().to_string(),
+                    VarInfo::new(ty.clone(), llvm_var_ty, var));
 
         if init.is_some() {
             self.set_local_var_initializer(var, ty, &*init.clone().unwrap());
@@ -435,7 +452,6 @@ impl Codegen {
         match *op {
             node::CUnaryOps::Deref => {
                 let (expr_val, val_ty) = self.gen(expr);
-                println!("{:?}", val_ty.clone().unwrap());
                 let ty = match val_ty.unwrap() {
                     Type::Array(t, _) |
                     Type::Ptr(t) => (*t).clone(),
@@ -455,21 +471,29 @@ impl Codegen {
                             rhsast: &node::AST,
                             op: &node::CBinOps)
                             -> (LLVMValueRef, Option<Type>) {
-        // logical operators
         match *op {
+            // logical operators
             node::CBinOps::LAnd => {}
             node::CBinOps::LOr => {}
+            // addr add
             node::CBinOps::AddrAdd => {
                 // TODO: refine this code
                 let (lhs, lhsty) = self.get_val(lhsast);
                 let rhs = self.gen(rhsast).0;
-                let exprty = lhsty.clone();
-                match lhsty.unwrap() {
-                    Type::Ptr(_) => {
-                        return (self.gen_ptr_binary_op(lhs, rhs, op), exprty);
+                // get_val returns Ptr(real_type):
+                let exprty: Type;
+                if let Some(Type::Ptr(ref elem_ty)) = lhsty {
+                    exprty = (**elem_ty).clone();
+                } else {
+                    error::error_exit(0, "gen_binary_op: addradd");
+                }
+
+                match exprty {
+                    Type::Ptr(elem_ty) => {
+                        return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
                     }
-                    Type::Array(_, _) => {
-                        return (self.gen_ary_binary_op(lhs, rhs, op), exprty);
+                    Type::Array(elem_ty, _) => {
+                        return (self.gen_ary_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
                     }
                     _ => error::error_exit(0, "gen_binary_op: never reach"),
                 }
@@ -496,20 +520,32 @@ impl Codegen {
                          lhsast: &node::AST,
                          rhsast: &node::AST)
                          -> (LLVMValueRef, Option<Type>) {
-        let (dst, dst_ty) = self.get_val(lhsast);
+        let (dst, ptr_dst_ty) = self.get_val(lhsast);
+        // get_val returns Ptr(real_type)
+        let dst_ty = if let Some(Type::Ptr(ref elem_ty)) = ptr_dst_ty {
+            elem_ty
+        } else {
+            error::error_exit(0,
+                              "gen_assign: ptr_dst_ty must be a pointer to the value's type");
+        };
+
         let (src, _src_ty) = self.gen(rhsast);
-        assert!(dst_ty.is_some());
-        let a = self.type_to_llvmty(&dst_ty.clone().unwrap());
+        let a = self.type_to_llvmty(&dst_ty);
+        LLVMDumpType(a);
         let casted_src = self.typecast(src, a);
-        (LLVMBuildStore(self.builder, casted_src, dst), dst_ty)
+        LLVMBuildStore(self.builder, casted_src, dst);
+        (LLVMBuildLoad(self.builder, dst, CString::new("load").unwrap().as_ptr()),
+         Some((**dst_ty).clone()))
     }
 
     unsafe fn get_val(&mut self, ast: &node::AST) -> (LLVMValueRef, Option<Type>) {
         match ast {
             &node::AST::Variable(ref name) => self.get_var(name),
+            &node::AST::UnaryOp(ref expr, node::CUnaryOps::Deref) => self.get_val(expr),
             _ => {
-                error::error_exit(0,
-                                  format!("get_val: unknown ast (given {:?})", ast).as_str())
+                self.gen(ast)
+                // error::error_exit(0,
+                //                   format!("get_val: unknown ast (given {:?})", ast).as_str())
             }
         }
     }
@@ -709,8 +745,8 @@ impl Codegen {
         let mut n = (self.local_varmap.len() - 1) as i32;
         while n >= 0 {
             if self.local_varmap[n as usize].contains_key(name) {
-                let &(ref ty, _llvm_val_ty, val) = self.local_varmap[n as usize].get(name).unwrap();
-                return Some((val, ty));
+                let varinfo = self.local_varmap[n as usize].get(name).unwrap();
+                return Some((varinfo.llvm_val, &varinfo.ty));
             }
             n -= 1;
         }
@@ -719,11 +755,12 @@ impl Codegen {
 
     unsafe fn get_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
         if let Some((val, ty)) = self.lookup_local_var(name.as_str()) {
-            return (val, Some(ty.clone()));
+            return (val, Some(Type::Ptr(Rc::new(ty.clone()))));
+            // return (val, Some(ty.clone()));
         }
         if self.global_varmap.contains_key(name.as_str()) {
-            let &(ref ty, llvm_ty, val) = self.global_varmap.get(name.as_str()).unwrap();
-            return (val, Some(ty.clone()));
+            let varinfo = self.global_varmap.get(name.as_str()).unwrap();
+            return (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty.clone()))));
         }
         LLVMDumpModule(self.module);
         error::error_exit(0,
@@ -732,14 +769,18 @@ impl Codegen {
 
     unsafe fn gen_var_load(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
         let (val, ty) = self.get_var(name);
-        (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()), ty)
+        if let Some(Type::Ptr(ref elem_ty)) = ty {
+            return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
+                    Some((**elem_ty).clone()));
+        } else {
+            error::error_exit(0, "gen_var_load");
+        }
     }
 
     unsafe fn gen_func_call(&mut self,
                             fast: &node::AST,
                             args: &Vec<node::AST>)
                             -> (LLVMValueRef, Option<Type>) {
-        println!("{:?}", self.local_varmap.last_mut().unwrap());
         // before implicit type casting. so 'maybe incorrect'
         let mut maybe_incorrect_args_val = Vec::new();
         for arg in &*args {
@@ -755,17 +796,18 @@ impl Codegen {
             error::error_exit(0, "gen_func_call: not found func");
         }
 
-        let functy = maybe_func.unwrap().0.clone();
+        let exist_func = maybe_func.unwrap();
+        let functy = exist_func.ty.clone();
         let (func_retty, func_args_types, _func_is_vararg) = match functy {
             Type::Func(retty, args_types, is_vararg) => (retty, args_types, is_vararg),
             _ => error::error_exit(0, "gen_func_call: never reach!"),
         };
-        let llvm_functy = maybe_func.unwrap().1;
-        let func = maybe_func.unwrap().2;
+        let llvm_functy = exist_func.llvm_ty;
+        let func = exist_func.llvm_val;
 
         let args_count = func_args_types.len();
         let mut args_val = Vec::new();
-        let mut ptr_args_types = (&mut Vec::with_capacity(args_count)).as_mut_ptr();
+        let ptr_args_types = (&mut Vec::with_capacity(args_count)).as_mut_ptr();
         LLVMGetParamTypes(llvm_functy, ptr_args_types);
         let llvm_args_types = Vec::from_raw_parts(ptr_args_types, args_count, 0);
 
@@ -779,7 +821,6 @@ impl Codegen {
         }
 
         let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
-        println!("{:?}", self.local_varmap.last_mut().unwrap());
         (LLVMBuildCall(self.builder,
                        func,
                        args_val_ptr,
@@ -868,10 +909,21 @@ impl Codegen {
                                  if *is_vararg { 1 } else { 0 })
             }
             &Type::Struct(ref name, ref fields) => {
+                let new_struct: LLVMTypeRef;
                 {
                     let ty = self.llvm_struct_map.get(name);
-                    if ty.is_some() {
-                        return ty.unwrap().clone().2;
+                    if let Some(&(_, _, llvm_struct_ty)) = ty {
+                        if fields.is_empty() {
+                            // declared struct
+                            return llvm_struct_ty;
+                        } else {
+                            // if the struct is declared and not set its body:
+                            new_struct = llvm_struct_ty;
+                        }
+                    } else {
+                        new_struct =
+                            LLVMStructCreateNamed(self.context,
+                                                  CString::new(name.as_str()).unwrap().as_ptr());
                     }
                 }
 
@@ -890,9 +942,6 @@ impl Codegen {
                         _ => error::error_exit(0, "impossible"),
                     }
                 }
-                let new_struct =
-                    LLVMStructCreateNamed(self.context,
-                                          CString::new(name.as_str()).unwrap().as_ptr());
                 LLVMStructSetBody(new_struct,
                                   fields_llvm_types.as_mut_slice().as_mut_ptr(),
                                   fields_llvm_types.len() as u32,
