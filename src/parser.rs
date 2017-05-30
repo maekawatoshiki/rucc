@@ -8,7 +8,7 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::{str, u32};
 use std::rc::Rc;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, hash_map};
 
 extern crate llvm_sys as llvm;
 
@@ -24,15 +24,20 @@ enum StorageClass {
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
     env: VecDeque<HashMap<String, AST>>,
+    tags: VecDeque<HashMap<String, Type>>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: Lexer<'a>) -> Parser<'a> {
         let mut env = VecDeque::new();
+        let mut tags = VecDeque::new();
         env.push_back(HashMap::new());
+        tags.push_back(HashMap::new());
+
         Parser {
             lexer: lexer,
             env: env,
+            tags: tags,
         }
     }
     pub fn run_file(filename: String) -> Vec<AST> {
@@ -87,7 +92,9 @@ impl<'a> Parser<'a> {
     }
     fn read_func_def(&mut self) -> AST {
         let localenv = (*self.env.back().unwrap()).clone();
+        let localtags = (*self.tags.back().unwrap()).clone();
         self.env.push_back(localenv);
+        self.tags.push_back(localtags);
 
         let retty = self.read_type_spec().0;
         let (functy, name, param_names) = self.read_declarator(retty);
@@ -96,6 +103,7 @@ impl<'a> Parser<'a> {
         self.lexer.expect_skip("{");
         let body = self.read_func_body(&functy);
         self.env.pop_back();
+        self.tags.pop_back();
         AST::FuncDef(functy,
                      if param_names.is_none() {
                          Vec::new()
@@ -235,23 +243,17 @@ impl<'a> Parser<'a> {
 
     fn get_typedef(&mut self, name: &str) -> Option<Type> {
         let env = self.env.back_mut().unwrap();
-        if env.contains_key(name) {
-            let maybe_ast = env.get(name);
-
-            match maybe_ast {
-                Some(ast) => {
-                    Some(match ast {
-                             &AST::Typedef(ref from, ref _to) => (*from).clone(),
-                             _ => {
-                                 error::error_exit(self.lexer.cur_line,
-                                                   format!("not found type '{}'", name).as_str())
-                             }
-                         })
-                } 
-                None => None,
-            }
-        } else {
-            None
+        match env.get(name) {
+            Some(ast) => {
+                Some(match ast {
+                         &AST::Typedef(ref from, ref _to) => (*from).clone(),
+                         _ => {
+                             error::error_exit(self.lexer.cur_line,
+                                               format!("not found type '{}'", name).as_str())
+                         }
+                     })
+            } 
+            None => None,
         }
     }
     fn is_type(&mut self, token: &Token) -> bool {
@@ -610,7 +612,15 @@ impl<'a> Parser<'a> {
             }
         }();
         let fields = self.read_rectype_fields();
-        Type::Struct(tag, fields)
+
+        let mut cur_tags = self.tags.back_mut().unwrap();
+        match cur_tags.entry(tag) {
+            hash_map::Entry::Occupied(o) => o.into_mut().clone(),
+            hash_map::Entry::Vacant(v) => {
+                let new_rectype = Type::Struct(v.key().to_string(), fields);
+                v.insert(new_rectype).clone()
+            }
+        }
     }
     fn read_rectype_fields(&mut self) -> Vec<AST> {
         if !self.lexer.skip("{") {
@@ -647,7 +657,7 @@ impl<'a> Parser<'a> {
             return self.read_ternary(lhs);
         }
         while self.lexer.skip("=") {
-            let rhs = self.read_logor();
+            let rhs = self.read_assign();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Assign);
         }
         lhs
