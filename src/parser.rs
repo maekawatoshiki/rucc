@@ -27,6 +27,13 @@ pub struct Parser<'a> {
     tags: VecDeque<HashMap<String, Type>>,
 }
 
+fn retrieve_from_load(ast: AST) -> AST {
+    match ast {
+        AST::Load(var) => (*var).clone(),
+        _ => ast,
+    }
+}
+
 impl<'a> Parser<'a> {
     pub fn new(lexer: Lexer<'a>) -> Parser<'a> {
         let mut env = VecDeque::new();
@@ -72,10 +79,7 @@ impl<'a> Parser<'a> {
         nodes
     }
     pub fn run(&mut self, node: &mut Vec<AST>) {
-        loop {
-            if self.lexer.peek().is_none() {
-                break;
-            }
+        while self.lexer.peek().is_some() {
             self.read_toplevel(node);
         }
     }
@@ -658,7 +662,9 @@ impl<'a> Parser<'a> {
         }
         while self.lexer.skip("=") {
             let rhs = self.read_assign();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Assign);
+            lhs = AST::BinaryOp(Rc::new(retrieve_from_load(lhs)),
+                                Rc::new(rhs),
+                                node::CBinOps::Assign);
         }
         lhs
     }
@@ -820,18 +826,19 @@ impl<'a> Parser<'a> {
         let mut ast = self.read_primary();
         loop {
             if self.lexer.skip("(") {
-                ast = self.read_func_call(ast);
+                ast = self.read_func_call(retrieve_from_load(ast));
                 continue;
             }
             if self.lexer.skip("[") {
-                ast = self.read_index(ast);
+                ast = AST::Load(Rc::new(self.read_index(retrieve_from_load(ast))));
                 continue;
             }
             if self.lexer.skip(".") {
-                ast = self.read_field(ast);
+                ast = AST::Load(Rc::new(self.read_field(retrieve_from_load(ast))));
             }
             if self.lexer.skip("->") {
-                ast = self.read_field(AST::UnaryOp(Rc::new(ast), node::CUnaryOps::Deref));
+                ast = AST::Load(Rc::new(self.read_field(AST::UnaryOp(Rc::new(retrieve_from_load(ast)),
+                                                   node::CUnaryOps::Deref))));
             }
             // TODO: impelment inc and dec
             break;
@@ -856,8 +863,7 @@ impl<'a> Parser<'a> {
     fn read_index(&mut self, ast: AST) -> AST {
         let idx = self.read_expr();
         self.lexer.expect_skip("]");
-        AST::UnaryOp(Rc::new(AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::AddrAdd)),
-                     node::CUnaryOps::Deref)
+        AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::AddrAdd)
     }
 
     fn read_field(&mut self, ast: AST) -> AST {
@@ -900,7 +906,7 @@ impl<'a> Parser<'a> {
                 let f: f64 = num_literal.parse().unwrap();
                 AST::Float(f)
             }
-            TokenKind::Identifier => AST::Variable(tok.val),
+            TokenKind::Identifier => AST::Load(Rc::new(AST::Variable(tok.val))),
             TokenKind::String => AST::String(tok.val),
             TokenKind::Char => {
                 let ch = tok.val.bytes().nth(0);

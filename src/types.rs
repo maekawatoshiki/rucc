@@ -22,3 +22,13 @@ pub enum Type {
     Func(Rc<Type>, Vec<Type>, bool), // return type, param types, vararg
     Struct(String, Vec<AST>),
 }
+
+impl Type {
+    pub fn get_ptr_elem_ty(&self) -> Option<Type> {
+        if let &Type::Ptr(ref elem_ty) = self {
+            Some((**elem_ty).clone())
+        } else {
+            None
+        }
+    }
+}

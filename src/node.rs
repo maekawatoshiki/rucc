@@ -9,6 +9,7 @@ pub enum AST {
     Char(i32),
     String(String),
     Typedef(Type, String), // from, to ( typedef from to; )
+    Load(Rc<AST>),
     Variable(String),
     VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
@@ -123,6 +124,11 @@ impl AST {
             &AST::Char(c) => print!("'{}' ", c),
             &AST::String(ref s) => print!("\"{}\" ", s),
             &AST::Typedef(ref a, ref b) => print!("(typedef {:?} {})", a, b),
+            &AST::Load(ref expr) => {
+                print!("(load ");
+                expr.show();
+                print!(")");
+            }
             &AST::Variable(ref name) => print!("{} ", name),
             &AST::VariableDecl(ref ty, ref name, ref init) => {
                 print!("(var-decl {:?} {}", ty, name);

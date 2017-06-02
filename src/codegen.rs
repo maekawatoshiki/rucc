@@ -1,17 +1,14 @@
 extern crate llvm_sys as llvm;
 
-// use std::mem;
+use std;
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
-use std;
 use std::collections::HashMap;
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
 
-// use parser;
-// use lexer;
 use node;
 use types::{Type, Sign};
 use error;
@@ -127,7 +124,8 @@ impl Codegen {
             &node::AST::StructRef(ref expr, ref field_name) => {
                 self.gen_load_struct_field(&*expr, field_name.to_string())
             }
-            &node::AST::Variable(ref name) => self.gen_var_load(name),
+            &node::AST::Load(ref expr) => self.gen_load(expr),
+            &node::AST::Variable(ref name) => self.get_var(name),
             &node::AST::ConstArray(ref elems) => (self.gen_const_array(elems), None),
             &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             &node::AST::Return(ref ret) => {
@@ -336,7 +334,7 @@ impl Codegen {
                           llvm::LLVMIntPredicate::LLVMIntNE,
                           val,
                           LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("eql").unwrap().as_ptr())
+                          CString::new("cond").unwrap().as_ptr())
         }();
 
 
@@ -478,6 +476,7 @@ impl Codegen {
             node::CBinOps::LOr => {}
             // addr add
             node::CBinOps::AddrAdd => return self.gen_binary_addradd_op(lhsast, rhsast),
+            // assignment
             node::CBinOps::Assign => {
                 return self.gen_assign(lhsast, rhsast);
             }
@@ -500,16 +499,12 @@ impl Codegen {
                                     lhsast: &node::AST,
                                     rhsast: &node::AST)
                                     -> (LLVMValueRef, Option<Type>) {
-        let (lhs, lhsty) = self.get_val(lhsast);
+        let (lhs, lhsty) = self.gen(lhsast);
         let rhs = self.gen(rhsast).0;
-        // get_val returns Ptr(real_type):
-        let exprty: Type;
-        if let Some(Type::Ptr(ref elem_ty)) = lhsty {
-            exprty = (**elem_ty).clone();
-        } else {
-            error::error_exit(0, "gen_binary_op: addradd");
-        }
-
+        // self.gen returns Ptr(real_type):
+        let exprty = lhsty.unwrap().get_ptr_elem_ty().or_else(|| 
+            error::error_exit(0,
+                              "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
         match exprty {
             Type::Ptr(elem_ty) => {
                 (self.gen_ptr_binary_op(lhs, rhs, &node::CBinOps::AddrAdd),
@@ -527,37 +522,18 @@ impl Codegen {
                          lhsast: &node::AST,
                          rhsast: &node::AST)
                          -> (LLVMValueRef, Option<Type>) {
-        let (dst, ptr_dst_ty) = self.get_val(lhsast);
-        // get_val returns Ptr(real_type)
-        let dst_ty = if let Some(Type::Ptr(ref elem_ty)) = ptr_dst_ty {
-            elem_ty
-        } else {
+        let (dst, ptr_dst_ty) = self.gen(lhsast);
+        // self.gen returns Ptr(real_type)
+        let dst_ty = ptr_dst_ty.unwrap().get_ptr_elem_ty().or_else(|| 
             error::error_exit(0,
-                              "gen_assign: ptr_dst_ty must be a pointer to the value's type");
-        };
-
+                              "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
         let (src, _src_ty) = self.gen(rhsast);
         let a = self.type_to_llvmty(&dst_ty);
         LLVMDumpType(a);
         let casted_src = self.typecast(src, a);
         LLVMBuildStore(self.builder, casted_src, dst);
         (LLVMBuildLoad(self.builder, dst, CString::new("load").unwrap().as_ptr()),
-         Some((**dst_ty).clone()))
-    }
-
-    unsafe fn get_val(&mut self, ast: &node::AST) -> (LLVMValueRef, Option<Type>) {
-        match ast {
-            &node::AST::Variable(ref name) => self.get_var(name),
-            &node::AST::UnaryOp(ref expr, node::CUnaryOps::Deref) => self.get_val(expr),
-            &node::AST::StructRef(ref expr, ref field_name) => {
-                self.get_struct_field_val(expr, field_name.to_string())
-            }
-            _ => {
-                self.gen(ast)
-                // error::error_exit(0,
-                //                   format!("get_val: unknown ast (given {:?})", ast).as_str())
-            }
-        }
+         Some((dst_ty).clone()))
     }
 
     unsafe fn gen_int_binary_op(&mut self,
@@ -735,25 +711,17 @@ impl Codegen {
                                     field_name: String)
                                     -> (LLVMValueRef, Option<Type>) {
         let (val, ptr_ty) = self.get_struct_field_val(expr, field_name);
-        let ty = if let Some(Type::Ptr(elem_ty)) = ptr_ty {
-            elem_ty
-        } else {
-            error::error_exit(0, "gen_load_struct_field");
-        };
-        (LLVMBuildLoad(self.builder, val, CString::new("load").unwrap().as_ptr()),
-         Some((*ty).clone()))
+        (val, ptr_ty)
     }
     unsafe fn get_struct_field_val(&mut self,
                                    expr: &node::AST,
                                    field_name: String)
                                    -> (LLVMValueRef, Option<Type>) {
-        let (strct, ptr_ty) = self.get_val(expr);
-        let ty = if let Some(Type::Ptr(elem_ty)) = ptr_ty {
-            elem_ty
-        } else {
-            error::error_exit(0, "get_struct_field_val");
-        };
-        let strct_name = self.get_struct_name(&*ty);
+        let (strct, ptr_ty) = self.gen(expr);
+        let ty = ptr_ty.unwrap().get_ptr_elem_ty().or_else(|| 
+            error::error_exit(0,
+                              "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
+        let strct_name = self.get_struct_name(&ty);
         assert!(strct_name.is_some());
         // llvm_struct_map: HashMap<String, (HashMap<String, u32>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
         let &(ref fieldmap, ref fieldtypes, llvm_struct_ty) = self.llvm_struct_map
@@ -767,12 +735,15 @@ impl Codegen {
          Some(Type::Ptr(Rc::new(fieldtypes[idx as usize].clone()))))
     }
 
-    unsafe fn lookup_local_var(&mut self, name: &str) -> Option<(LLVMValueRef, &Type)> {
+    unsafe fn lookup_local_var(&mut self, name: &str) -> Option<&VarInfo> {
+        if self.local_varmap.is_empty() {
+            return None;
+        }
         let mut n = (self.local_varmap.len() - 1) as i32;
         while n >= 0 {
             if self.local_varmap[n as usize].contains_key(name) {
                 let varinfo = self.local_varmap[n as usize].get(name).unwrap();
-                return Some((varinfo.llvm_val, &varinfo.ty));
+                return Some(varinfo);
             }
             n -= 1;
         }
@@ -780,12 +751,10 @@ impl Codegen {
     }
 
     unsafe fn get_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
-        if let Some((val, ty)) = self.lookup_local_var(name.as_str()) {
-            return (val, Some(Type::Ptr(Rc::new(ty.clone()))));
-            // return (val, Some(ty.clone()));
+        if let Some(ref varinfo) = self.lookup_local_var(name.as_str()) {
+            return (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty.clone()))));
         }
-        if self.global_varmap.contains_key(name.as_str()) {
-            let varinfo = self.global_varmap.get(name.as_str()).unwrap();
+        if let Some(ref varinfo) = self.global_varmap.get(name.as_str()) {
             return (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty.clone()))));
         }
         LLVMDumpModule(self.module);
@@ -793,13 +762,18 @@ impl Codegen {
                           format!("get_var: not found variable '{}'", name).as_str());
     }
 
-    unsafe fn gen_var_load(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
-        let (val, ty) = self.get_var(name);
+    unsafe fn gen_load(&mut self, var: &node::AST) -> (LLVMValueRef, Option<Type>) {
+        let (val, ty) = self.gen(var);
         if let Some(Type::Ptr(ref elem_ty)) = ty {
-            return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
-                    Some((**elem_ty).clone()));
+            match **elem_ty {
+                Type::Func(_, _, _) => return (val, Some((**elem_ty).clone())),
+                _ => {
+                    return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
+                            Some((**elem_ty).clone()))
+                }
+            }
         } else {
-            error::error_exit(0, "gen_var_load");
+            error::error_exit(0, "gen_load");
         }
     }
 
@@ -879,33 +853,36 @@ impl Codegen {
          Some(Type::Ptr(Rc::new(Type::Char(Sign::Signed)))))
     }
 
-    pub unsafe fn typecast(&self, v: LLVMValueRef, t: LLVMTypeRef) -> LLVMValueRef {
-        let v_ty = LLVMTypeOf(v);
+
+    // Functions Related to Types
+    pub unsafe fn typecast(&self, val: LLVMValueRef, to: LLVMTypeRef) -> LLVMValueRef {
+        let v_ty = LLVMTypeOf(val);
         let inst_name = CString::new("cast").unwrap().as_ptr();
+
         match LLVMGetTypeKind(v_ty) {
             llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                match LLVMGetTypeKind(t) {
+                match LLVMGetTypeKind(to) {
                     llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                        let v_bw = LLVMGetIntTypeWidth(v_ty);
-                        let t_bw = LLVMGetIntTypeWidth(t);
-                        if v_bw < t_bw {
-                            return LLVMBuildZExtOrBitCast(self.builder, v, t, inst_name);
+                        let val_bw = LLVMGetIntTypeWidth(v_ty);
+                        let to_bw = LLVMGetIntTypeWidth(to);
+                        if val_bw < to_bw {
+                            return LLVMBuildZExtOrBitCast(self.builder, val, to, inst_name);
                         }
                     }
                     llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
-                        return LLVMBuildSIToFP(self.builder, v, t, inst_name);
+                        return LLVMBuildSIToFP(self.builder, val, to, inst_name);
                     }
                     _ => {}
                 }
             }
             llvm::LLVMTypeKind::LLVMDoubleTypeKind |
             llvm::LLVMTypeKind::LLVMFloatTypeKind => {
-                return LLVMBuildFPToSI(self.builder, v, t, inst_name);
+                return LLVMBuildFPToSI(self.builder, val, to, inst_name);
             }
-            llvm::LLVMTypeKind::LLVMVoidTypeKind => return v,
+            llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
             _ => {}
         }
-        LLVMBuildTruncOrBitCast(self.builder, v, t, inst_name)
+        LLVMBuildTruncOrBitCast(self.builder, val, to, inst_name)
     }
 
     pub unsafe fn type_to_llvmty(&mut self, ty: &Type) -> LLVMTypeRef {
@@ -934,50 +911,48 @@ impl Codegen {
                                  (*param_types).len() as u32,
                                  if *is_vararg { 1 } else { 0 })
             }
-            &Type::Struct(ref name, ref fields) => {
-                let new_struct: LLVMTypeRef;
-                {
-                    let ty = self.llvm_struct_map.get(name);
-                    if let Some(&(_, _, llvm_struct_ty)) = ty {
-                        if fields.is_empty() {
-                            // declared struct
-                            return llvm_struct_ty;
-                        } else {
-                            // if the struct is declared and not set its body:
-                            new_struct = llvm_struct_ty;
-                        }
-                    } else {
-                        new_struct =
-                            LLVMStructCreateNamed(self.context,
-                                                  CString::new(name.as_str()).unwrap().as_ptr());
-                    }
+            &Type::Struct(ref name, ref fields) => self.make_struct(name, fields),
+        }
+    }
+    unsafe fn make_struct(&mut self, name: &String, fields: &Vec<node::AST>) -> LLVMTypeRef {
+        let new_struct: LLVMTypeRef = {
+            let ty = self.llvm_struct_map.get(name);
+            if let Some(&(_, _, llvm_struct_ty)) = ty {
+                if fields.is_empty() {
+                    // declared struct
+                    return llvm_struct_ty;
+                } else {
+                    // if the struct is declared and not set its body:
+                    llvm_struct_ty
                 }
+            } else {
+                LLVMStructCreateNamed(self.context, CString::new(name.as_str()).unwrap().as_ptr())
+            }
+        };
 
-                // if not declared, create a new struct
-                let mut fields_names_map: HashMap<String, u32> = HashMap::new();
-                let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
-                let mut fields_types: Vec<Type> = Vec::new();
-                // 'fields' is Vec<AST>, field is AST
-                for (i, field) in fields.iter().enumerate() {
-                    match field {
-                        &node::AST::VariableDecl(ref ty, ref name, ref _init) => {
-                            fields_llvm_types.push(self.type_to_llvmty(ty));
-                            fields_types.push(ty.clone());
-                            fields_names_map.insert(name.to_string(), i as u32);
-                        }
-                        _ => error::error_exit(0, "impossible"),
-                    }
+        // if not declared, create a new struct
+        let mut fields_names_map: HashMap<String, u32> = HashMap::new();
+        let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+        let mut fields_types: Vec<Type> = Vec::new();
+        // 'fields' is Vec<AST>, field is AST
+        for (i, field) in fields.iter().enumerate() {
+            match field {
+                &node::AST::VariableDecl(ref ty, ref name, ref _init) => {
+                    fields_llvm_types.push(self.type_to_llvmty(ty));
+                    fields_types.push(ty.clone());
+                    fields_names_map.insert(name.to_string(), i as u32);
                 }
-                LLVMStructSetBody(new_struct,
-                                  fields_llvm_types.as_mut_slice().as_mut_ptr(),
-                                  fields_llvm_types.len() as u32,
-                                  0);
-                self.llvm_struct_map
-                    .insert(name.to_string(),
-                            (fields_names_map, fields_types, new_struct));
-                new_struct
+                _ => error::error_exit(0, "impossible"),
             }
         }
+        LLVMStructSetBody(new_struct,
+                          fields_llvm_types.as_mut_slice().as_mut_ptr(),
+                          fields_llvm_types.len() as u32,
+                          0);
+        self.llvm_struct_map
+            .insert(name.to_string(),
+                    (fields_names_map, fields_types, new_struct));
+        new_struct
     }
     unsafe fn get_struct_name(&mut self, ty: &Type) -> Option<String> {
         match ty {
