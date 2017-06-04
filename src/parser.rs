@@ -806,18 +806,26 @@ impl<'a> Parser<'a> {
             .get()
             .or_else(|| error::error_exit(self.lexer.cur_line, "expected unary op"))
             .unwrap();
-        if tok.kind == TokenKind::Symbol {
-            match tok.val.as_str() { 
-                "!" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot),
-                "~" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot),
-                "+" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus),
-                "-" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus),
-                "++" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
-                "--" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
-                "*" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
-                "&" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Addr),
-                _ => {}
+        match tok.val.as_str() { 
+            "!" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot),
+            "~" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot),
+            "+" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus),
+            "-" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus),
+            "++" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
+            "--" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
+            "*" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
+            "&" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Addr),
+            "sizeof" => {
+                // TODO: must fix this sloppy implementation
+                self.lexer.expect_skip("(");
+                let tok = self.lexer.peek_e();
+                assert!(self.is_type(&tok));
+                let (basety, _) = self.read_type_spec();
+                let (ty, _, _) = self.read_declarator(basety);
+                self.lexer.expect_skip(")");
+                return AST::Int(ty.calc_size() as i32);
             }
+            _ => {}
         }
         self.lexer.unget(tok);
         self.read_postfix()
