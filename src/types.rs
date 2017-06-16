@@ -22,6 +22,7 @@ pub enum Type {
     Func(Rc<Type>, Vec<Type>, bool), // return type, param types, vararg
     Struct(String, Vec<AST>), // name, fields
     Union(String, Vec<AST>, usize), // name, fields, means size of nth field is size of the union
+    Enum, // as same as Int
 }
 
 impl Type {
@@ -73,6 +74,7 @@ impl Type {
                     0
                 }
             }
+            &Type::Enum => 4,
         }
     }
 }

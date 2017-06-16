@@ -270,7 +270,7 @@ impl<'a> Parser<'a> {
         let name = token.val.as_str();
         match name {
             "void" | "signed" | "unsigned" | "char" | "int" | "short" | "long" | "float" |
-            "double" | "struct" | "union" | "extern" | "const" | "volatile" => true,
+            "double" | "struct" | "enum" | "union" | "extern" | "const" | "volatile" => true,
             _ => self.env.back_mut().unwrap().contains_key(name),
         }
     }
@@ -554,6 +554,7 @@ impl<'a> Parser<'a> {
                 }
                 "struct" => userty = Some(self.read_struct_def()),
                 "union" => userty = Some(self.read_union_def()),
+                "enum" => userty = Some(self.read_enum_def()),
                 _ => {
                     self.lexer.unget(tok);
                     break;
@@ -677,11 +678,65 @@ impl<'a> Parser<'a> {
         }
         decls
     }
+    fn read_enum_def(&mut self) -> Type {
+        let (tag, exist_tag) = || -> (String, bool) {
+            let opt_tag = self.read_rectype_tag();
+            if opt_tag.is_some() {
+                (opt_tag.unwrap(), true)
+            } else {
+                ("".to_string(), false)
+            }
+        }();
+        if exist_tag {
+            if let Some(maybe_enum) = self.tags.back_mut().unwrap().get(tag.as_str()) {
+                match maybe_enum {
+                    &Type::Enum => {}
+                    _ => error::error_exit(self.lexer.cur_line, "undefined enum"),
+                }
+            }
+        }
+
+        if !self.lexer.skip("{") {
+            if !exist_tag ||
+               !self.tags
+                    .back_mut()
+                    .unwrap()
+                    .contains_key(tag.as_str()) {
+                error::error_exit(self.lexer.cur_line, "defined enum");
+            }
+            return Type::Int(Sign::Signed);
+        }
+
+        if exist_tag {
+            self.tags.back_mut().unwrap().insert(tag, Type::Enum);
+        }
+
+        let mut val = 0;
+        loop {
+            if self.lexer.skip("}") {
+                break;
+            }
+            let name = self.lexer.get_e().val;
+            if self.lexer.skip("=") {
+                val = self.read_expr().eval_constexpr();
+            }
+            let constval = AST::Int(val);
+            val += 1;
+            self.env.back_mut().unwrap().insert(name, constval);
+            if self.lexer.skip(",") {
+                continue;
+            }
+            if self.lexer.skip("{") {
+                break;
+            }
+        }
+
+        Type::Int(Sign::Signed)
+    }
 
 
     pub fn read_expr(&mut self) -> AST {
-        let lhs = self.read_comma();
-        lhs
+        self.read_comma()
     }
     pub fn read_opt_expr(&mut self) -> AST {
         self.read_expr()
@@ -878,7 +933,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.lexer.skip("[") {
-                ast = AST::Load(Rc::new(self.read_index(retrieve_from_load(ast))));
+                ast = AST::Load(Rc::new(self.read_index(ast)));
                 continue;
             }
             if self.lexer.skip(".") {
@@ -911,7 +966,7 @@ impl<'a> Parser<'a> {
     fn read_index(&mut self, ast: AST) -> AST {
         let idx = self.read_expr();
         self.lexer.expect_skip("]");
-        AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::AddrAdd)
+        AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add)
     }
 
     fn read_field(&mut self, ast: AST) -> AST {
@@ -954,7 +1009,13 @@ impl<'a> Parser<'a> {
                 let f: f64 = num_literal.parse().unwrap();
                 AST::Float(f)
             }
-            TokenKind::Identifier => AST::Load(Rc::new(AST::Variable(tok.val))),
+            TokenKind::Identifier => {
+                if let Some(ast) = self.env.back_mut().unwrap().get(tok.val.as_str()) {
+                    ast.clone()
+                } else {
+                    AST::Load(Rc::new(AST::Variable(tok.val)))
+                }
+            }
             TokenKind::String => AST::String(tok.val),
             TokenKind::Char => {
                 let ch = tok.val.bytes().nth(0);

@@ -65,6 +65,13 @@ pub struct Codegen {
     cur_func: Option<LLVMValueRef>,
 }
 
+fn retrieve_from_load(ast: node::AST) -> node::AST {
+    match ast {
+        node::AST::Load(var) => (*var).clone(),
+        _ => ast,
+    }
+}
+
 impl Codegen {
     pub unsafe fn new(mod_name: &str) -> Codegen {
         let c_mod_name = CString::new(mod_name).unwrap();
@@ -499,8 +506,6 @@ impl Codegen {
             // logical operators
             node::CBinOps::LAnd => {}
             node::CBinOps::LOr => {}
-            // addr add
-            node::CBinOps::AddrAdd => return self.gen_binary_addradd_op(lhsast, rhsast),
             // assignment
             node::CBinOps::Assign => {
                 return self.gen_assign(lhsast, rhsast);
@@ -510,8 +515,24 @@ impl Codegen {
 
         // normal binary operators
         let (lhs, lhsty) = self.gen(lhsast);
-        let (rhs, _rhsty) = self.gen(rhsast);
-        match lhsty.clone().unwrap() {
+        let (rhs, rhsty) = self.gen(rhsast);
+
+        match rhsty.unwrap() {
+            Type::Ptr(_) |
+            Type::Array(_, _) => {
+                return self.gen_ptr_array_binary_op(&retrieve_from_load(rhsast.clone()),
+                                                    lhsast,
+                                                    op);
+            }
+            _ => {}
+        }
+        match lhsty.unwrap() {
+            Type::Ptr(_) |
+            Type::Array(_, _) => {
+                return self.gen_ptr_array_binary_op(&retrieve_from_load(lhsast.clone()),
+                                                    rhsast,
+                                                    op);
+            }
             Type::Int(_) => {
                 return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
             }
@@ -520,10 +541,11 @@ impl Codegen {
         (ptr::null_mut(), None)
     }
 
-    unsafe fn gen_binary_addradd_op(&mut self,
-                                    lhsast: &node::AST,
-                                    rhsast: &node::AST)
-                                    -> (LLVMValueRef, Option<Type>) {
+    unsafe fn gen_ptr_array_binary_op(&mut self,
+                                      lhsast: &node::AST,
+                                      rhsast: &node::AST,
+                                      op: &node::CBinOps)
+                                      -> (LLVMValueRef, Option<Type>) {
         let (lhs, lhsty) = self.gen(lhsast);
         let rhs = self.gen(rhsast).0;
         // self.gen returns Ptr(real_type):
@@ -531,13 +553,9 @@ impl Codegen {
             error::error_exit(0,
                               "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
         match exprty {
-            Type::Ptr(elem_ty) => {
-                (self.gen_ptr_binary_op(lhs, rhs, &node::CBinOps::AddrAdd),
-                 Some(Type::Ptr(elem_ty)))
-            }
+            Type::Ptr(elem_ty) => (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty))),
             Type::Array(elem_ty, _) => {
-                (self.gen_ary_binary_op(lhs, rhs, &node::CBinOps::AddrAdd),
-                 Some(Type::Ptr(elem_ty)))
+                (self.gen_ary_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)))
             }
             _ => error::error_exit(0, "gen_binary_op: never reach"),
         }
@@ -648,19 +666,21 @@ impl Codegen {
                                 rhs: LLVMValueRef,
                                 op: &node::CBinOps)
                                 -> LLVMValueRef {
-        let mut numidx = vec![rhs];
-        match *op {
-            node::CBinOps::AddrAdd => {
-                LLVMBuildGEP(self.builder,
-                             LLVMBuildLoad(self.builder,
-                                           lhs,
-                                           CString::new("load").unwrap().as_ptr()),
-                             numidx.as_mut_slice().as_mut_ptr(),
-                             1,
-                             CString::new("add").unwrap().as_ptr())
-            }
-            _ => ptr::null_mut(),
-        }
+        let mut numidx = vec![match *op {
+                                  node::CBinOps::Add => rhs,
+                                  node::CBinOps::Sub => {
+                                      LLVMBuildSub(self.builder,
+                                                   self.make_int(0, false).0,
+                                                   rhs,
+                                                   CString::new("sub").unwrap().as_ptr())
+                                  }
+                                  _ => rhs,
+                              }];
+        LLVMBuildGEP(self.builder,
+                     LLVMBuildLoad(self.builder, lhs, CString::new("load").unwrap().as_ptr()),
+                     numidx.as_mut_slice().as_mut_ptr(),
+                     1,
+                     CString::new("add").unwrap().as_ptr())
     }
 
     unsafe fn gen_ary_binary_op(&mut self,
@@ -668,17 +688,22 @@ impl Codegen {
                                 rhs: LLVMValueRef,
                                 op: &node::CBinOps)
                                 -> LLVMValueRef {
-        let mut numidx = vec![self.make_int(0, false).0, rhs];
-        match *op {
-            node::CBinOps::AddrAdd => {
-                LLVMBuildGEP(self.builder,
-                             lhs,
-                             numidx.as_mut_slice().as_mut_ptr(),
-                             2,
-                             CString::new("add").unwrap().as_ptr())
-            }
-            _ => ptr::null_mut(),
-        }
+        let mut numidx = vec![self.make_int(0, false).0,
+                              match *op {
+                                  node::CBinOps::Add => rhs,
+                                  node::CBinOps::Sub => {
+                                      LLVMBuildSub(self.builder,
+                                                   self.make_int(0, false).0,
+                                                   rhs,
+                                                   CString::new("sub").unwrap().as_ptr())
+                                  }
+                                  _ => rhs,
+                              }];
+        LLVMBuildGEP(self.builder,
+                     lhs,
+                     numidx.as_mut_slice().as_mut_ptr(),
+                     2,
+                     CString::new("add").unwrap().as_ptr())
     }
 
     unsafe fn gen_ternary_op(&mut self,
@@ -956,6 +981,7 @@ impl Codegen {
             &Type::Union(ref name, ref fields, ref max_size_field_pos) => {
                 self.make_union(name, fields, *max_size_field_pos)
             }
+            &Type::Enum => LLVMInt32Type(),
         }
     }
     unsafe fn make_rectype_base(&mut self,

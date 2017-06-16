@@ -31,8 +31,6 @@ unsafe impl Send for AST {}
 
 #[derive(Debug, Clone)]
 pub enum CBinOps {
-    // AddrAdd does (lhs + rhs). it is the same as lhs[rhs]
-    AddrAdd,
     Add,
     Sub,
     Mul,
