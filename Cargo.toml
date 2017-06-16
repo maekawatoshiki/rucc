@@ -9,3 +9,5 @@ llvm-sys = "38.0.0"
 lazy_static = "0.2.6"
 
 regex = "0.2.1"
+
+rand = "0.3"

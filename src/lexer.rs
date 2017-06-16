@@ -111,14 +111,17 @@ impl<'a> Lexer<'a> {
         *peekc == ch
     }
 
+    pub fn peek_token_is(&mut self, expect: &str) -> bool {
+        let peek = self.peek_e();
+        peek.val == expect && peek.kind != TokenKind::String && peek.kind != TokenKind::Char
+    }
     pub fn next_token_is(&mut self, expect: &str) -> bool {
-        let next = self.peek();
-        if next.is_some() {
-            let n = next.unwrap();
-            n.val == expect && n.kind != TokenKind::String && n.kind != TokenKind::Char
-        } else {
-            error::error_exit(self.cur_line, "expected a token but reach EOF")
-        }
+        let peek = self.get_e();
+        let next = self.get_e();
+        let n = next.clone();
+        self.unget(next);
+        self.unget(peek);
+        n.val == expect && n.kind != TokenKind::String && n.kind != TokenKind::Char
     }
     pub fn skip(&mut self, s: &str) -> bool {
         let next = self.get();
@@ -454,6 +457,11 @@ impl<'a> Lexer<'a> {
                 if tok.val == "#" {
                     self.read_cpp_directive();
                     self.get()
+                } else if tok.kind == TokenKind::String && self.peek_e().kind == TokenKind::String {
+                    let s = self.get_e().val;
+                    let mut nt = tok.clone();
+                    nt.val.push_str(s.as_str());
+                    Some(nt)
                 } else {
                     Some(tok)
                 }

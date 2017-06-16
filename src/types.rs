@@ -10,17 +10,18 @@ pub enum Sign {
 #[derive(Debug, Clone)]
 pub enum Type {
     Void,
-    Char(Sign), // sign
-    Short(Sign), // sign
-    Int(Sign), // sign
-    Long(Sign), // sign
-    LLong(Sign), // sign
+    Char(Sign),
+    Short(Sign),
+    Int(Sign),
+    Long(Sign),
+    LLong(Sign),
     Float,
     Double,
     Ptr(Rc<Type>),
-    Array(Rc<Type>, i32), // ary type, size
+    Array(Rc<Type>, i32), // ary elem type, size
     Func(Rc<Type>, Vec<Type>, bool), // return type, param types, vararg
-    Struct(String, Vec<AST>),
+    Struct(String, Vec<AST>), // name, fields
+    Union(String, Vec<AST>, usize), // name, fields, means size of nth field is size of the union
 }
 
 impl Type {
@@ -64,6 +65,13 @@ impl Type {
                     };
                 }
                 size_total
+            }
+            &Type::Union(ref _name, ref fields, ref max_nth) => {
+                if let &AST::VariableDecl(ref ty, _, _) = &fields[*max_nth] {
+                    ty.calc_size()
+                } else {
+                    0
+                }
             }
         }
     }

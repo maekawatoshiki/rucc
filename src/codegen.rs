@@ -29,13 +29,38 @@ impl VarInfo {
     }
 }
 
+struct RectypeInfo {
+    field_nth: HashMap<String, u32>,
+    field_types: Vec<Type>,
+    field_llvm_types: Vec<LLVMTypeRef>,
+    llvm_rectype: LLVMTypeRef,
+    is_struct: bool,
+}
+impl RectypeInfo {
+    fn new(field_nth: HashMap<String, u32>,
+           field_types: Vec<Type>,
+           field_llvm_types: Vec<LLVMTypeRef>,
+           llvm_rectype: LLVMTypeRef,
+           is_struct: bool)
+           -> RectypeInfo {
+        RectypeInfo {
+            field_nth: field_nth,
+            field_types: field_types,
+            field_llvm_types: field_llvm_types,
+            llvm_rectype: llvm_rectype,
+            is_struct: is_struct,
+        }
+    }
+}
+
 pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
-    llvm_struct_map: HashMap<String, (HashMap<String, u32>, Vec<Type>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
+    // HashMap<StructName, (HashMap<FieldsNames, nth>, FieldTypes, LLVMFieldTypes, LLVMStructType, is_struct)>
+    llvm_struct_map: HashMap<String, RectypeInfo>,
     _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
@@ -122,7 +147,7 @@ impl Codegen {
                 self.gen_ternary_op(&*cond, &*lhs, &*rhs)
             }
             &node::AST::StructRef(ref expr, ref field_name) => {
-                self.gen_load_struct_field(&*expr, field_name.to_string())
+                self.gen_struct_field(&*expr, field_name.to_string())
             }
             &node::AST::Load(ref expr) => self.gen_load(expr),
             &node::AST::Variable(ref name) => self.get_var(name),
@@ -706,10 +731,10 @@ impl Codegen {
         (phi, ty)
     }
 
-    unsafe fn gen_load_struct_field(&mut self,
-                                    expr: &node::AST,
-                                    field_name: String)
-                                    -> (LLVMValueRef, Option<Type>) {
+    unsafe fn gen_struct_field(&mut self,
+                               expr: &node::AST,
+                               field_name: String)
+                               -> (LLVMValueRef, Option<Type>) {
         let (val, ptr_ty) = self.get_struct_field_val(expr, field_name);
         (val, ptr_ty)
     }
@@ -723,16 +748,29 @@ impl Codegen {
                               "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
         let strct_name = self.get_struct_name(&ty);
         assert!(strct_name.is_some());
-        // llvm_struct_map: HashMap<String, (HashMap<String, u32>, LLVMTypeRef)>, // HashMap<StructName, (HashMap<FieldsNames, nth>, LLVMStructType)>
-        let &(ref fieldmap, ref fieldtypes, llvm_struct_ty) = self.llvm_struct_map
+
+        // let &(ref fieldmap, ref fieldtypes, ref llvm_fieldtypes, llvm_struct_ty, is_struct) =
+        let ref rectype = self.llvm_struct_map
             .get(strct_name.unwrap().as_str())
             .unwrap();
-        let idx = *fieldmap.get(field_name.as_str()).unwrap();
-        (LLVMBuildStructGEP(self.builder,
-                            strct,
-                            idx,
-                            CString::new("structref").unwrap().as_ptr()),
-         Some(Type::Ptr(Rc::new(fieldtypes[idx as usize].clone()))))
+        // HashMap<StructName, (HashMap<FieldsNames, nth>, FieldTypes, LLVMFieldTypes, LLVMStructType, is_struct)>
+        // field_nth: HashMap<String, u32>,
+        // field_types: Vec<Type>,
+        // field_llvm_types: Vec<LLVMTypeRef>,
+        // llvm_rectype: LLVMTypeRef,
+        // is_struct: bool,
+        let idx = *rectype.field_nth.get(field_name.as_str()).unwrap();
+        if rectype.is_struct {
+            (LLVMBuildStructGEP(self.builder,
+                                strct,
+                                idx,
+                                CString::new("structref").unwrap().as_ptr()),
+             Some(Type::Ptr(Rc::new(rectype.field_types[idx as usize].clone()))))
+        } else {
+            let llvm_idx_ty = rectype.field_llvm_types[idx as usize];
+            (self.typecast(strct, LLVMPointerType(llvm_idx_ty, 0)),
+             Some(Type::Ptr(Rc::new(rectype.field_types[idx as usize].clone()))))
+        }
     }
 
     unsafe fn lookup_local_var(&mut self, name: &str) -> Option<&VarInfo> {
@@ -895,7 +933,16 @@ impl Codegen {
             &Type::LLong(_) => LLVMInt64Type(),
             &Type::Float => LLVMFloatType(),
             &Type::Double => LLVMDoubleType(),
-            &Type::Ptr(ref elemty) => LLVMPointerType(self.type_to_llvmty(&**elemty), 0),
+            &Type::Ptr(ref elemty) => {
+                LLVMPointerType(|| -> LLVMTypeRef {
+                                    let elemty = self.type_to_llvmty(&**elemty);
+                                    match LLVMGetTypeKind(elemty) {
+                                        llvm::LLVMTypeKind::LLVMVoidTypeKind => LLVMInt8Type(),
+                                        _ => elemty,
+                                    }
+                                }(),
+                                0)
+            }
             &Type::Array(ref elemty, ref size) => {
                 LLVMArrayType(self.type_to_llvmty(&**elemty), *size as u32)
             }
@@ -912,28 +959,33 @@ impl Codegen {
                                  if *is_vararg { 1 } else { 0 })
             }
             &Type::Struct(ref name, ref fields) => self.make_struct(name, fields),
+            &Type::Union(ref name, ref fields, ref max_size_field_nth) => {
+                self.make_union(name, fields, *max_size_field_nth)
+            }
         }
     }
-    unsafe fn make_struct(&mut self, name: &String, fields: &Vec<node::AST>) -> LLVMTypeRef {
+    unsafe fn make_rectype_base(&mut self,
+                                name: &String,
+                                fields: &Vec<node::AST>,
+                                fields_names_map: &mut HashMap<String, u32>,
+                                fields_llvm_types: &mut Vec<LLVMTypeRef>,
+                                fields_types: &mut Vec<Type>)
+                                -> (bool, LLVMTypeRef) {
+        // returns (does_the_rectype_already_exists?, LLVMStructType)
         let new_struct: LLVMTypeRef = {
-            let ty = self.llvm_struct_map.get(name);
-            if let Some(&(_, _, llvm_struct_ty)) = ty {
+            let strct = self.llvm_struct_map.get(name);
+            if let Some(ref rectype) = strct {
                 if fields.is_empty() {
                     // declared struct
-                    return llvm_struct_ty;
+                    return (true, rectype.llvm_rectype);
                 } else {
-                    // if the struct is declared and not set its body:
-                    llvm_struct_ty
+                    rectype.llvm_rectype
                 }
             } else {
                 LLVMStructCreateNamed(self.context, CString::new(name.as_str()).unwrap().as_ptr())
             }
         };
 
-        // if not declared, create a new struct
-        let mut fields_names_map: HashMap<String, u32> = HashMap::new();
-        let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
-        let mut fields_types: Vec<Type> = Vec::new();
         // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
             match field {
@@ -945,18 +997,72 @@ impl Codegen {
                 _ => error::error_exit(0, "impossible"),
             }
         }
+        (false, new_struct)
+    }
+    unsafe fn make_struct(&mut self, name: &String, fields: &Vec<node::AST>) -> LLVMTypeRef {
+        let mut fields_names_map: HashMap<String, u32> = HashMap::new();
+        let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+        let mut fields_types: Vec<Type> = Vec::new();
+        let (exist, new_struct) =
+            self.make_rectype_base(name,
+                                   fields,
+                                   &mut fields_names_map,
+                                   &mut fields_llvm_types,
+                                   &mut fields_types);
+        if exist {
+            return new_struct;
+        }
+
         LLVMStructSetBody(new_struct,
                           fields_llvm_types.as_mut_slice().as_mut_ptr(),
                           fields_llvm_types.len() as u32,
                           0);
         self.llvm_struct_map
             .insert(name.to_string(),
-                    (fields_names_map, fields_types, new_struct));
+                    RectypeInfo::new(fields_names_map,
+                                     fields_types,
+                                     fields_llvm_types,
+                                     new_struct,
+                                     true));
+        new_struct
+    }
+    unsafe fn make_union(&mut self,
+                         name: &String,
+                         fields: &Vec<node::AST>,
+                         max_size_field_pos: usize)
+                         -> LLVMTypeRef {
+        let mut fields_names_map: HashMap<String, u32> = HashMap::new();
+        let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+        let mut fields_types: Vec<Type> = Vec::new();
+        let (exist, new_struct) =
+            self.make_rectype_base(name,
+                                   fields,
+                                   &mut fields_names_map,
+                                   &mut fields_llvm_types,
+                                   &mut fields_types);
+        if exist {
+            return new_struct;
+        }
+        // size of an union is the same as the biggest type in the union
+        LLVMStructSetBody(new_struct,
+                          vec![fields_llvm_types[max_size_field_pos]]
+                              .as_mut_slice()
+                              .as_mut_ptr(),
+                          1,
+                          0);
+        self.llvm_struct_map
+            .insert(name.to_string(),
+                    RectypeInfo::new(fields_names_map,
+                                     fields_types,
+                                     fields_llvm_types,
+                                     new_struct,
+                                     false));
         new_struct
     }
     unsafe fn get_struct_name(&mut self, ty: &Type) -> Option<String> {
         match ty {
             &Type::Struct(ref name, _) => Some(name.to_string()),
+            &Type::Union(ref name, _, _) => Some(name.to_string()),
             _ => None,
         }
     }

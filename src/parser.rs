@@ -12,6 +12,9 @@ use std::collections::{HashMap, VecDeque, hash_map};
 
 extern crate llvm_sys as llvm;
 
+extern crate rand;
+use self::rand::Rng;
+
 #[derive(PartialEq, Debug, Clone)]
 enum StorageClass {
     Typedef,
@@ -415,7 +418,8 @@ impl<'a> Parser<'a> {
         Type::Array(Rc::new(ty), len)
     }
     fn read_declarator_func(&mut self, retty: Type) -> (Type, Option<Vec<String>>) {
-        if self.lexer.skip("void") {
+        if self.lexer.peek_token_is("void") && self.lexer.next_token_is(")") {
+            self.lexer.expect_skip("void");
             self.lexer.expect_skip(")");
             return (Type::Func(Rc::new(retty), Vec::new(), false), None);
         }
@@ -549,6 +553,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 "struct" => userty = Some(self.read_struct_def()),
+                "union" => userty = Some(self.read_union_def()),
                 _ => {
                     self.lexer.unget(tok);
                     break;
@@ -596,6 +601,9 @@ impl<'a> Parser<'a> {
     fn read_struct_def(&mut self) -> Type {
         self.read_rectype_def(true)
     }
+    fn read_union_def(&mut self) -> Type {
+        self.read_rectype_def(false)
+    }
     // rectype is abbreviation of 'record type'
     fn read_rectype_tag(&mut self) -> Option<String> {
         let maybe_tag = self.lexer.get_e();
@@ -606,23 +614,55 @@ impl<'a> Parser<'a> {
             None
         }
     }
-    fn read_rectype_def(&mut self, _is_struct: bool) -> Type {
+    fn read_rectype_def(&mut self, is_struct: bool) -> Type {
         let tag = || -> String {
             let opt_tag = self.read_rectype_tag();
             if opt_tag.is_some() {
                 opt_tag.unwrap()
             } else {
-                "".to_string()
+                // if the rectype(struct|union) has no name(e.g. typedef struct { int a; } A),
+                // generate a random name
+                rand::thread_rng().gen_ascii_chars().take(8).collect()
             }
         }();
         let fields = self.read_rectype_fields();
 
         let mut cur_tags = self.tags.back_mut().unwrap();
-        match cur_tags.entry(tag) {
-            hash_map::Entry::Occupied(o) => o.into_mut().clone(),
-            hash_map::Entry::Vacant(v) => {
-                let new_rectype = Type::Struct(v.key().to_string(), fields);
-                v.insert(new_rectype).clone()
+        if fields.is_empty() {
+            match cur_tags.entry(tag) {
+                hash_map::Entry::Occupied(o) => o.into_mut().clone(),
+                hash_map::Entry::Vacant(v) => {
+                    let new_struct = if is_struct {
+                        Type::Struct(v.key().to_string(), Vec::new())
+                    } else {
+                        Type::Union(v.key().to_string(), Vec::new(), 0)
+                    };
+                    v.insert(new_struct).clone()
+                }
+            }
+        } else {
+            let new_rectype = if is_struct {
+                Type::Struct(tag.to_string(), fields)
+            } else {
+                // if union
+                let mut max_sz_ty_nth = 0;
+                let mut max_sz = 0;
+                for (i, field_decl) in (&fields).iter().enumerate() {
+                    if let &AST::VariableDecl(ref ty, _, _) = field_decl {
+                        if ty.calc_size() > max_sz {
+                            max_sz = ty.calc_size();
+                            max_sz_ty_nth = i;
+                        }
+                    }
+                }
+                Type::Union(tag.to_string(), fields, max_sz_ty_nth)
+            };
+            match cur_tags.entry(tag) {
+                hash_map::Entry::Occupied(o) => {
+                    *o.into_mut() = new_rectype.clone();
+                    new_rectype
+                }
+                hash_map::Entry::Vacant(v) => v.insert(new_rectype).clone(),
             }
         }
     }
