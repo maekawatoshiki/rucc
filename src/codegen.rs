@@ -30,21 +30,21 @@ impl VarInfo {
 }
 
 struct RectypeInfo {
-    field_nth: HashMap<String, u32>,
+    field_pos: HashMap<String, u32>,
     field_types: Vec<Type>,
     field_llvm_types: Vec<LLVMTypeRef>,
     llvm_rectype: LLVMTypeRef,
     is_struct: bool,
 }
 impl RectypeInfo {
-    fn new(field_nth: HashMap<String, u32>,
+    fn new(field_pos: HashMap<String, u32>,
            field_types: Vec<Type>,
            field_llvm_types: Vec<LLVMTypeRef>,
            llvm_rectype: LLVMTypeRef,
            is_struct: bool)
            -> RectypeInfo {
         RectypeInfo {
-            field_nth: field_nth,
+            field_pos: field_pos,
             field_types: field_types,
             field_llvm_types: field_llvm_types,
             llvm_rectype: llvm_rectype,
@@ -753,13 +753,7 @@ impl Codegen {
         let ref rectype = self.llvm_struct_map
             .get(strct_name.unwrap().as_str())
             .unwrap();
-        // HashMap<StructName, (HashMap<FieldsNames, nth>, FieldTypes, LLVMFieldTypes, LLVMStructType, is_struct)>
-        // field_nth: HashMap<String, u32>,
-        // field_types: Vec<Type>,
-        // field_llvm_types: Vec<LLVMTypeRef>,
-        // llvm_rectype: LLVMTypeRef,
-        // is_struct: bool,
-        let idx = *rectype.field_nth.get(field_name.as_str()).unwrap();
+        let idx = *rectype.field_pos.get(field_name.as_str()).unwrap();
         if rectype.is_struct {
             (LLVMBuildStructGEP(self.builder,
                                 strct,
@@ -959,8 +953,8 @@ impl Codegen {
                                  if *is_vararg { 1 } else { 0 })
             }
             &Type::Struct(ref name, ref fields) => self.make_struct(name, fields),
-            &Type::Union(ref name, ref fields, ref max_size_field_nth) => {
-                self.make_union(name, fields, *max_size_field_nth)
+            &Type::Union(ref name, ref fields, ref max_size_field_pos) => {
+                self.make_union(name, fields, *max_size_field_pos)
             }
         }
     }
