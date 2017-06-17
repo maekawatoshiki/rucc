@@ -30,10 +30,10 @@ pub struct Parser<'a> {
     tags: VecDeque<HashMap<String, Type>>,
 }
 
-fn retrieve_from_load(ast: AST) -> AST {
+fn retrieve_from_load(ast: &AST) -> AST {
     match ast {
-        AST::Load(var) => (*var).clone(),
-        _ => ast,
+        &AST::Load(ref var) => (**var).clone(),
+        _ => (*ast).clone(),
     }
 }
 
@@ -58,19 +58,20 @@ impl<'a> Parser<'a> {
             .unwrap();
         let mut s = String::new();
         file.read_to_string(&mut s);
-        let mut lexer = Lexer::new(filename.to_string(), s.as_str());
-        loop {
-            let tok = lexer.get();
-            match tok {
-                Some(t) => {
-                    println!("t:{}{}", if t.space { " " } else { "" }, t.val);
-                }
-                None => break,
-            }
-        }
-
-        // Debug: (parsing again is big cost?)
-        lexer = Lexer::new(filename.to_string(), s.as_str());
+        let lexer = Lexer::new(filename.to_string(), s.as_str());
+        // TODO: for debugging
+        // loop {
+        //     let tok = lexer.get();
+        //     match tok {
+        //         Some(t) => {
+        //             println!("t:{}{}", if t.space { " " } else { "" }, t.val);
+        //         }
+        //         None => break,
+        //     }
+        // }
+        //
+        // // Debug: (parsing again is big cost?)
+        // lexer = Lexer::new(filename.to_string(), s.as_str());
         Parser::new(lexer).run(&mut nodes);
         nodes
     }
@@ -755,11 +756,34 @@ impl<'a> Parser<'a> {
         if self.lexer.skip("?") {
             return self.read_ternary(lhs);
         }
-        while self.lexer.skip("=") {
-            let rhs = self.read_assign();
-            lhs = AST::BinaryOp(Rc::new(retrieve_from_load(lhs)),
-                                Rc::new(rhs),
-                                node::CBinOps::Assign);
+        let assign = |lhs, rhs| -> AST {
+            AST::BinaryOp(Rc::new(retrieve_from_load(&lhs)),
+                          Rc::new(rhs),
+                          node::CBinOps::Assign)
+        };
+        loop {
+            let tok = self.lexer.get_e();
+            match tok.val.as_str() {
+                "=" => {
+                    lhs = assign(lhs, self.read_assign());
+                }
+                "+=" => {
+                    lhs = assign(lhs.clone(),
+                                 AST::BinaryOp(Rc::new(lhs),
+                                               Rc::new(self.read_assign()),
+                                               node::CBinOps::Add));
+                }
+                "-=" => {
+                    lhs = assign(lhs.clone(),
+                                 AST::BinaryOp(Rc::new(lhs),
+                                               Rc::new(self.read_assign()),
+                                               node::CBinOps::Sub));
+                }
+                _ => {
+                    self.lexer.unget(tok);
+                    break;
+                }
+            }
         }
         lhs
     }
@@ -894,6 +918,16 @@ impl<'a> Parser<'a> {
         lhs
     }
     fn read_cast(&mut self) -> AST {
+        let tok = self.lexer.get_e();
+        let peek = self.lexer.peek_e();
+        if tok.val == "(" && self.is_type(&peek) {
+            let basety = self.read_type_spec().0;
+            let ty = self.read_declarator(basety).0;
+            self.lexer.expect_skip(")");
+            return AST::TypeCast(Rc::new(self.read_cast()), ty);
+        } else {
+            self.lexer.unget(tok);
+        }
         self.read_unary()
     }
     fn read_unary(&mut self) -> AST {
@@ -909,7 +943,7 @@ impl<'a> Parser<'a> {
             "++" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
             "--" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
             "*" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
-            "&" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Addr),
+            "&" => return retrieve_from_load(&self.read_cast()),
             "sizeof" => {
                 // TODO: must fix this sloppy implementation
                 self.lexer.expect_skip("(");
@@ -929,7 +963,7 @@ impl<'a> Parser<'a> {
         let mut ast = self.read_primary();
         loop {
             if self.lexer.skip("(") {
-                ast = self.read_func_call(retrieve_from_load(ast));
+                ast = self.read_func_call(retrieve_from_load(&ast));
                 continue;
             }
             if self.lexer.skip("[") {
@@ -937,10 +971,10 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.lexer.skip(".") {
-                ast = AST::Load(Rc::new(self.read_field(retrieve_from_load(ast))));
+                ast = AST::Load(Rc::new(self.read_field(retrieve_from_load(&ast))));
             }
             if self.lexer.skip("->") {
-                ast = AST::Load(Rc::new(self.read_field(AST::UnaryOp(Rc::new(retrieve_from_load(ast)),
+                ast = AST::Load(Rc::new(self.read_field(AST::UnaryOp(Rc::new(retrieve_from_load(&ast)),
                                                    node::CUnaryOps::Deref))));
             }
             // TODO: impelment inc and dec

@@ -9,6 +9,7 @@ pub enum AST {
     Char(i32),
     String(String),
     Typedef(Type, String), // from, to ( typedef from to; )
+    TypeCast(Rc<AST>, Type),
     Load(Rc<AST>),
     Variable(String),
     VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
@@ -122,6 +123,11 @@ impl AST {
             &AST::Char(c) => print!("'{}' ", c),
             &AST::String(ref s) => print!("\"{}\" ", s),
             &AST::Typedef(ref a, ref b) => print!("(typedef {:?} {})", a, b),
+            &AST::TypeCast(ref e, ref t) => {
+                print!("(typecast {:?} ", t);
+                e.show();
+                print!(")");
+            }
             &AST::Load(ref expr) => {
                 print!("(load ");
                 expr.show();

@@ -68,6 +68,9 @@ pub struct Codegen {
 fn retrieve_from_load(ast: node::AST) -> node::AST {
     match ast {
         node::AST::Load(var) => (*var).clone(),
+        node::AST::TypeCast(v, t) => {
+            node::AST::TypeCast(Rc::new(retrieve_from_load((*v).clone())), t)
+        }
         _ => ast,
     }
 }
@@ -156,6 +159,7 @@ impl Codegen {
             &node::AST::StructRef(ref expr, ref field_name) => {
                 self.gen_struct_field(&*expr, field_name.to_string())
             }
+            &node::AST::TypeCast(ref expr, ref ty) => self.gen_type_cast(expr, ty),
             &node::AST::Load(ref expr) => self.gen_load(expr),
             &node::AST::Variable(ref name) => self.get_var(name),
             &node::AST::ConstArray(ref elems) => (self.gen_const_array(elems), None),
@@ -251,20 +255,25 @@ impl Codegen {
                                   ty: &Type,
                                   name: &String,
                                   init: &Option<Rc<node::AST>>) {
-        let (gvar, llvm_gvar_ty) = match *ty {
-            Type::Func(_, _, _) => {
-                let llvmty = self.type_to_llvmty(ty);
-                (LLVMAddFunction(self.module,
-                                 CString::new(name.as_str()).unwrap().as_ptr(),
-                                 llvmty),
-                 llvmty)
-            } 
-            _ => {
-                let llvmty = self.type_to_llvmty(ty);
-                (LLVMAddGlobal(self.module,
-                               self.type_to_llvmty(ty),
-                               CString::new(name.as_str()).unwrap().as_ptr()),
-                 llvmty)
+        let (gvar, llvm_gvar_ty) = if self.global_varmap.contains_key(name) {
+            let ref v = self.global_varmap.get(name).unwrap();
+            (v.llvm_val, v.llvm_ty)
+        } else {
+            match *ty {
+                Type::Func(_, _, _) => {
+                    let llvmty = self.type_to_llvmty(ty);
+                    (LLVMAddFunction(self.module,
+                                     CString::new(name.as_str()).unwrap().as_ptr(),
+                                     llvmty),
+                     llvmty)
+                }
+                _ => {
+                    let llvmty = self.type_to_llvmty(ty);
+                    (LLVMAddGlobal(self.module,
+                                   self.type_to_llvmty(ty),
+                                   CString::new(name.as_str()).unwrap().as_ptr()),
+                     llvmty)
+                }
             }
         };
         self.global_varmap
@@ -520,18 +529,15 @@ impl Codegen {
         match rhsty.unwrap() {
             Type::Ptr(_) |
             Type::Array(_, _) => {
-                return self.gen_ptr_array_binary_op(&retrieve_from_load(rhsast.clone()),
-                                                    lhsast,
-                                                    op);
+                return self.gen_ptr_array_binary_op(&retrieve_from_load(rhsast.clone()), lhs, op);
             }
             _ => {}
         }
         match lhsty.unwrap() {
             Type::Ptr(_) |
             Type::Array(_, _) => {
-                return self.gen_ptr_array_binary_op(&retrieve_from_load(lhsast.clone()),
-                                                    rhsast,
-                                                    op);
+                println!("here");
+                return self.gen_ptr_array_binary_op(&retrieve_from_load(lhsast.clone()), rhs, op);
             }
             Type::Int(_) => {
                 return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
@@ -541,13 +547,13 @@ impl Codegen {
         (ptr::null_mut(), None)
     }
 
+    // TODO: need to rethink
     unsafe fn gen_ptr_array_binary_op(&mut self,
                                       lhsast: &node::AST,
-                                      rhsast: &node::AST,
+                                      rhs: LLVMValueRef,
                                       op: &node::CBinOps)
                                       -> (LLVMValueRef, Option<Type>) {
         let (lhs, lhsty) = self.gen(lhsast);
-        let rhs = self.gen(rhsast).0;
         // self.gen returns Ptr(real_type):
         let exprty = lhsty.unwrap().get_ptr_elem_ty().or_else(|| 
             error::error_exit(0,
@@ -790,6 +796,21 @@ impl Codegen {
             (self.typecast(strct, LLVMPointerType(llvm_idx_ty, 0)),
              Some(Type::Ptr(Rc::new(rectype.field_types[idx as usize].clone()))))
         }
+    }
+
+    unsafe fn gen_type_cast(&mut self,
+                            expr: &node::AST,
+                            ty: &Type)
+                            -> (LLVMValueRef, Option<Type>) {
+        let (val, exprty) = self.gen(expr);
+        let mut llvm_ty = self.type_to_llvmty(ty);
+        let ret_ty = if let Type::Ptr(elemty) = exprty.unwrap() {
+            llvm_ty = LLVMPointerType(llvm_ty, 0);
+            Type::Ptr(Rc::new(Type::Ptr(Rc::new((*elemty).clone()))))
+        } else {
+            ty.clone()
+        };
+        (self.typecast(val, llvm_ty), Some(ret_ty))
     }
 
     unsafe fn lookup_local_var(&mut self, name: &str) -> Option<&VarInfo> {
