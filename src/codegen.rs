@@ -59,20 +59,9 @@ pub struct Codegen {
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
-    // HashMap<StructName, (HashMap<FieldsNames, nth>, FieldTypes, LLVMFieldTypes, LLVMStructType, is_struct)>
     llvm_struct_map: HashMap<String, RectypeInfo>,
     _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
-}
-
-fn retrieve_from_load(ast: node::AST) -> node::AST {
-    match ast {
-        node::AST::Load(var) => (*var).clone(),
-        node::AST::TypeCast(v, t) => {
-            node::AST::TypeCast(Rc::new(retrieve_from_load((*v).clone())), t)
-        }
-        _ => ast,
-    }
 }
 
 impl Codegen {
@@ -95,27 +84,6 @@ impl Codegen {
         for ast in node {
             self.gen(&ast);
         }
-
-        // e.g. create func
-        // let int_t = LLVMInt32TypeInContext(self.context);
-        // let func_t = LLVMFunctionType(/* ret type = */
-        //                               int_t,
-        //                               /* param types = */
-        //                               ptr::null_mut(),
-        //                               /* param count = */
-        //                               0,
-        //                               /* is vararg? = */
-        //                               0);
-        // let main_func =
-        //     LLVMAddFunction(self.module, CString::new("main").unwrap().as_ptr(), func_t);
-        //
-        // // create basic block 'entry'
-        // let bb_entry = LLVMAppendBasicBlock(main_func, CString::new("entry").unwrap().as_ptr());
-        //
-        // LLVMPositionBuilderAtEnd(self.builder, bb_entry); // SetInsertPoint in C++
-        //
-        // LLVMBuildRet(self.builder, self.make_int(0, false));
-
         LLVMDumpModule(self.module);
     }
 
@@ -527,17 +495,16 @@ impl Codegen {
         let (rhs, rhsty) = self.gen(rhsast);
 
         match rhsty.unwrap() {
-            Type::Ptr(_) |
-            Type::Array(_, _) => {
-                return self.gen_ptr_array_binary_op(&retrieve_from_load(rhsast.clone()), lhs, op);
+            Type::Ptr(elem_ty) |
+            Type::Array(elem_ty, _) => {
+                return (self.gen_ptr_binary_op(rhs, lhs, op), Some(Type::Ptr(elem_ty)))
             }
             _ => {}
         }
         match lhsty.unwrap() {
-            Type::Ptr(_) |
-            Type::Array(_, _) => {
-                println!("here");
-                return self.gen_ptr_array_binary_op(&retrieve_from_load(lhsast.clone()), rhs, op);
+            Type::Ptr(elem_ty) |
+            Type::Array(elem_ty, _) => {
+                return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
             }
             Type::Int(_) => {
                 return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
@@ -545,26 +512,6 @@ impl Codegen {
             _ => {}
         }
         (ptr::null_mut(), None)
-    }
-
-    // TODO: need to rethink
-    unsafe fn gen_ptr_array_binary_op(&mut self,
-                                      lhsast: &node::AST,
-                                      rhs: LLVMValueRef,
-                                      op: &node::CBinOps)
-                                      -> (LLVMValueRef, Option<Type>) {
-        let (lhs, lhsty) = self.gen(lhsast);
-        // self.gen returns Ptr(real_type):
-        let exprty = lhsty.unwrap().get_ptr_elem_ty().or_else(|| 
-            error::error_exit(0,
-                              "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
-        match exprty {
-            Type::Ptr(elem_ty) => (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty))),
-            Type::Array(elem_ty, _) => {
-                (self.gen_ary_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)))
-            }
-            _ => error::error_exit(0, "gen_binary_op: never reach"),
-        }
     }
 
     unsafe fn gen_assign(&mut self,
@@ -683,32 +630,9 @@ impl Codegen {
                                   _ => rhs,
                               }];
         LLVMBuildGEP(self.builder,
-                     LLVMBuildLoad(self.builder, lhs, CString::new("load").unwrap().as_ptr()),
-                     numidx.as_mut_slice().as_mut_ptr(),
-                     1,
-                     CString::new("add").unwrap().as_ptr())
-    }
-
-    unsafe fn gen_ary_binary_op(&mut self,
-                                lhs: LLVMValueRef,
-                                rhs: LLVMValueRef,
-                                op: &node::CBinOps)
-                                -> LLVMValueRef {
-        let mut numidx = vec![self.make_int(0, false).0,
-                              match *op {
-                                  node::CBinOps::Add => rhs,
-                                  node::CBinOps::Sub => {
-                                      LLVMBuildSub(self.builder,
-                                                   self.make_int(0, false).0,
-                                                   rhs,
-                                                   CString::new("sub").unwrap().as_ptr())
-                                  }
-                                  _ => rhs,
-                              }];
-        LLVMBuildGEP(self.builder,
                      lhs,
                      numidx.as_mut_slice().as_mut_ptr(),
-                     2,
+                     1,
                      CString::new("add").unwrap().as_ptr())
     }
 
@@ -802,15 +726,9 @@ impl Codegen {
                             expr: &node::AST,
                             ty: &Type)
                             -> (LLVMValueRef, Option<Type>) {
-        let (val, exprty) = self.gen(expr);
-        let mut llvm_ty = self.type_to_llvmty(ty);
-        let ret_ty = if let Type::Ptr(elemty) = exprty.unwrap() {
-            llvm_ty = LLVMPointerType(llvm_ty, 0);
-            Type::Ptr(Rc::new(Type::Ptr(Rc::new((*elemty).clone()))))
-        } else {
-            ty.clone()
-        };
-        (self.typecast(val, llvm_ty), Some(ret_ty))
+        let (val, _exprty) = self.gen(expr);
+        let llvm_ty = self.type_to_llvmty(ty);
+        (self.typecast(val, llvm_ty), Some(ty.clone()))
     }
 
     unsafe fn lookup_local_var(&mut self, name: &str) -> Option<&VarInfo> {
@@ -842,16 +760,28 @@ impl Codegen {
 
     unsafe fn gen_load(&mut self, var: &node::AST) -> (LLVMValueRef, Option<Type>) {
         let (val, ty) = self.gen(var);
+
         if let Some(Type::Ptr(ref elem_ty)) = ty {
             match **elem_ty {
                 Type::Func(_, _, _) => return (val, Some((**elem_ty).clone())),
+                Type::Array(ref ary_elemty, _) => {
+                    return (LLVMBuildGEP(self.builder,
+                                         val,
+                                         vec![self.make_int(0, false).0,
+                                              self.make_int(0, false).0]
+                                                 .as_mut_slice()
+                                                 .as_mut_ptr(),
+                                         2,
+                                         CString::new("gep").unwrap().as_ptr()),
+                            Some(Type::Ptr(Rc::new((**ary_elemty).clone()))));
+                }
                 _ => {
                     return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
                             Some((**elem_ty).clone()))
                 }
             }
         } else {
-            error::error_exit(0, "gen_load");
+            panic!();
         }
     }
 
