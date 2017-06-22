@@ -75,6 +75,7 @@ impl AST {
     fn eval(&self) -> i32 {
         match self {
             &AST::Int(n) => n,
+            &AST::TypeCast(ref e, _) => e.eval(),
             &AST::UnaryOp(ref e, CUnaryOps::LNot) => (e.eval() == 0) as i32,
             &AST::UnaryOp(ref e, CUnaryOps::BNot) => !e.eval(),
             &AST::UnaryOp(ref e, CUnaryOps::Plus) => e.eval(),

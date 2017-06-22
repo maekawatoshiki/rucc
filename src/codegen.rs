@@ -506,8 +506,9 @@ impl Codegen {
             Type::Array(elem_ty, _) => {
                 return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
             }
-            Type::Int(_) => {
-                return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)))
+            Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
+                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
+                return (self.gen_int_binary_op(lhs, castrhs, op), Some(Type::Int(Sign::Signed)));
             }
             _ => {}
         }
@@ -525,7 +526,6 @@ impl Codegen {
                               "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
         let (src, _src_ty) = self.gen(rhsast);
         let a = self.type_to_llvmty(&dst_ty);
-        LLVMDumpType(a);
         let casted_src = self.typecast(src, a);
         LLVMBuildStore(self.builder, casted_src, dst);
         (LLVMBuildLoad(self.builder, dst, CString::new("load").unwrap().as_ptr()),
@@ -609,6 +609,33 @@ impl Codegen {
                               lhs,
                               rhs,
                               CString::new("ge").unwrap().as_ptr())
+            }
+            node::CBinOps::Shl => {
+                LLVMBuildShl(self.builder,
+                             lhs,
+                             rhs,
+                             CString::new("shl").unwrap().as_ptr())
+            }
+            node::CBinOps::Shr => {
+                LLVMBuildAShr(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("shr").unwrap().as_ptr())
+            }
+            node::CBinOps::And => {
+                LLVMBuildAnd(self.builder,
+                             lhs,
+                             rhs,
+                             CString::new("and").unwrap().as_ptr())
+            }
+            node::CBinOps::Or => {
+                LLVMBuildOr(self.builder, lhs, rhs, CString::new("or").unwrap().as_ptr())
+            }
+            node::CBinOps::Xor => {
+                LLVMBuildXor(self.builder,
+                             lhs,
+                             rhs,
+                             CString::new("xor").unwrap().as_ptr())
             }
             _ => ptr::null_mut(),
         }
@@ -753,7 +780,6 @@ impl Codegen {
         if let Some(ref varinfo) = self.global_varmap.get(name.as_str()) {
             return (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty.clone()))));
         }
-        LLVMDumpModule(self.module);
         error::error_exit(0,
                           format!("get_var: not found variable '{}'", name).as_str());
     }

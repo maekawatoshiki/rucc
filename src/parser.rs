@@ -674,9 +674,28 @@ impl<'a> Parser<'a> {
         }
 
         let mut decls: Vec<AST> = Vec::new();
-        while !self.lexer.skip("}") {
-            self.read_decl(&mut decls);
+        loop {
+            let peek = self.lexer.peek_e();
+            if !self.is_type(&peek) {
+                break;
+            }
+            let (basety, _) = self.read_type_spec();
+            loop {
+                let (ty, name, _) = self.read_declarator(basety.clone());
+                if self.lexer.skip(":") {
+                    // TODO: for now, designated bitwidth ignore
+                    self.read_expr();
+                }
+                decls.push(AST::VariableDecl(ty, name, None));
+                if self.lexer.skip(",") {
+                    continue;
+                } else {
+                    self.lexer.expect_skip(";");
+                }
+                break;
+            }
         }
+        self.lexer.expect_skip("}");
         decls
     }
     fn read_enum_def(&mut self) -> Type {
@@ -1087,16 +1106,16 @@ impl<'a> Parser<'a> {
         n
     }
     fn read_hex_num(&mut self, num_literal: &str) -> i32 {
-        let mut n = 0;
+        let mut n = 0u64;
         for c in num_literal.chars() {
             match c {
                 '0'...'9' | 'A'...'F' | 'a'...'f' => {
-                    n = n * 16 + c.to_digit(16).unwrap() as i32;
+                    n = n * 16 + c.to_digit(16).unwrap() as u64;
                 }
                 _ => {} // TODO: suffix
             }
         }
-        n
+        n as i32
     }
     ////////// operators end here
 }
