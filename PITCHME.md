@@ -1,15 +1,16 @@
-# page 1
+# rucc
 
-page 1
+a small C compiler in Rust
 
-----
+---
 
-#page 2
+# Progress
 
-```ruby
-def f(x)
- x + 1
-end
+```c
+#include <stdio.h>
+int main() {
+  puts("hello world!");
+}
 ```
 
 ---
