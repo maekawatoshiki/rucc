@@ -494,6 +494,9 @@ impl Codegen {
         let (lhs, lhsty) = self.gen(lhsast);
         let (rhs, rhsty) = self.gen(rhsast);
 
+        let lhsty_sz = lhsty.clone().unwrap().calc_size();
+        let rhsty_sz = rhsty.clone().unwrap().calc_size();
+
         match rhsty.unwrap() {
             Type::Ptr(elem_ty) |
             Type::Array(elem_ty, _) => {
@@ -507,8 +510,17 @@ impl Codegen {
                 return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
             }
             Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
-                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
-                return (self.gen_int_binary_op(lhs, castrhs, op), Some(Type::Int(Sign::Signed)));
+                if lhsty_sz < rhsty_sz {
+                    let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
+                    return (self.gen_int_binary_op(castlhs, rhs, op),
+                            Some(Type::Int(Sign::Signed)));
+                } else if lhsty_sz == rhsty_sz {
+                    return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)));
+                } else {
+                    let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
+                    return (self.gen_int_binary_op(lhs, castrhs, op),
+                            Some(Type::Int(Sign::Signed)));
+                }
             }
             _ => {}
         }

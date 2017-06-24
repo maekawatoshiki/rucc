@@ -36,6 +36,7 @@ pub struct Token {
     pub val: String,
     pub macro_position: usize,
     pub hideset: HashSet<String>,
+    pub is_included_tok: bool, // TODO: this is not good solution..
     pub line: i32,
 }
 
@@ -47,6 +48,7 @@ impl Token {
             val: val.to_string(),
             macro_position: macro_position,
             hideset: HashSet::new(),
+            is_included_tok: false,
             line: line,
         }
     }
@@ -434,6 +436,10 @@ impl<'a> Lexer<'a> {
     }
     fn expand(&mut self, token: Option<Token>) -> Option<Token> {
         token.and_then(|tok| {
+            if tok.is_included_tok {
+                return Some(tok);
+            }
+
             let name = tok.val.to_string();
 
             if tok.hideset.contains(name.as_str()) ||
@@ -558,7 +564,11 @@ impl<'a> Lexer<'a> {
         let mut v: Vec<Token> = Vec::new();
         loop {
             match lexer.get() {
-                Some(tok) => v.push(tok),
+                Some(tok) => {
+                    let mut t = tok;
+                    t.is_included_tok = true;
+                    v.push(t)
+                }
                 None => break,
             }
         }

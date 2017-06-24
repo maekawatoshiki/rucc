@@ -738,7 +738,7 @@ impl<'a> Parser<'a> {
             }
             let name = self.lexer.get_e().val;
             if self.lexer.skip("=") {
-                val = self.read_expr().eval_constexpr();
+                val = self.read_assign().eval_constexpr();
             }
             let constval = AST::Int(val);
             val += 1;
