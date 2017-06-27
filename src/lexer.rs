@@ -1,6 +1,5 @@
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::iter;
 use std::str;
 use std::collections::VecDeque;
 use std::path;
@@ -36,7 +35,6 @@ pub struct Token {
     pub val: String,
     pub macro_position: usize,
     pub hideset: HashSet<String>,
-    pub is_included_tok: bool, // TODO: this is not good solution..
     pub line: i32,
 }
 
@@ -48,69 +46,79 @@ impl Token {
             val: val.to_string(),
             macro_position: macro_position,
             hideset: HashSet::new(),
-            is_included_tok: false,
             line: line,
         }
     }
 }
 
 #[derive(Clone)]
-pub struct Lexer<'a> {
+pub struct Lexer {
     pub cur_line: i32,
     filename: String,
-    peek: iter::Peekable<str::Chars<'a>>,
-    peek_buf: VecDeque<char>,
+    peek: VecDeque<Vec<u8>>,
+    peek_pos: VecDeque<usize>,
     buf: VecDeque<VecDeque<Token>>,
     cond_stack: Vec<bool>,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(filename: String, input: &'a str) -> Lexer<'a> {
-        let mut v: VecDeque<VecDeque<Token>> = VecDeque::new();
-        v.push_back(VecDeque::new());
+impl Lexer {
+    pub fn new(filename: String) -> Lexer {
+        let mut buf: VecDeque<VecDeque<Token>> = VecDeque::new();
+        buf.push_back(VecDeque::new());
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(filename.to_string())
+            .unwrap();
+        let mut file_body = String::new();
+        file.read_to_string(&mut file_body);
+        let mut peek = VecDeque::new();
+        unsafe {
+            peek.push_back(file_body.as_mut_vec().clone());
+        }
+
+        let mut peek_pos = VecDeque::new();
+        peek_pos.push_back(0);
+
         Lexer {
             cur_line: 1,
             filename: filename.to_string(),
-            peek: input.chars().peekable(),
-            peek_buf: VecDeque::new(),
-            buf: v,
+            peek: peek,
+            peek_pos: peek_pos,
+            buf: buf,
             cond_stack: Vec::new(),
         }
     }
     pub fn get_filename(self) -> String {
         self.filename
     }
-    fn peek_get(&mut self) -> Option<&char> {
-        if self.peek_buf.len() > 0 {
-            self.peek_buf.front()
+    fn peek_get(&mut self) -> Option<char> {
+        let peek = self.peek.back_mut().unwrap();
+        let peek_pos = *self.peek_pos.back_mut().unwrap();
+        if peek_pos >= peek.len() {
+            None
         } else {
-            self.peek.peek()
+            Some(peek[peek_pos] as char)
         }
     }
     fn peek_next(&mut self) -> char {
-        if self.peek_buf.len() > 0 {
-            self.peek_buf.pop_front().unwrap()
-        } else {
-            self.peek.next().unwrap()
-        }
-    }
-    fn peek_unget(&mut self, ch: char) {
-        self.peek_buf.push_back(ch);
+        let peek_pos = self.peek_pos.back_mut().unwrap();
+        *peek_pos += 1;
+        self.peek.back_mut().unwrap()[*peek_pos - 1] as char
     }
     fn peek_next_char_is(&mut self, ch: char) -> bool {
-        let c = self.peek_next();
+        self.peek_next();
         let nextc = self.peek_next();
-        self.peek_unget(c);
-        self.peek_unget(nextc);
+        *self.peek_pos.back_mut().unwrap() -= 2;
         nextc == ch
     }
     fn peek_char_is(&mut self, ch: char) -> bool {
         let line = self.cur_line;
         let errf =
-            || -> Option<&char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
+            || -> Option<char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
 
         let peekc = self.peek_get().or_else(errf).unwrap();
-        *peekc == ch
+        peekc == ch
     }
 
     pub fn peek_token_is(&mut self, expect: &str) -> bool {
@@ -162,7 +170,7 @@ impl<'a> Lexer<'a> {
         let mut ident = String::new();
         loop {
             match self.peek_get() {
-                Some(&c) => {
+                Some(c) => {
                     match c {
                         'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
                         _ => break,
@@ -179,7 +187,7 @@ impl<'a> Lexer<'a> {
         let mut is_float = false;
         loop {
             match self.peek_get() {
-                Some(&c) => {
+                Some(c) => {
                     match c {
                         '.' | '0'...'9' | 'a'...'z' | 'A'...'Z' => {
                             num.push(c);
@@ -264,18 +272,18 @@ impl<'a> Lexer<'a> {
         }
 
         match self.peek_get() {
-            Some(&c) => {
+            Some(c) => {
                 match c {
                     'a'...'z' | 'A'...'Z' | '_' => Some(self.read_identifier()),
                     ' ' | '\t' => {
                         self.peek_next();
+                        self.do_read_token()
                         // set a leading space
-                        fn f(tok: Token) -> Option<Token> {
-                            let mut t = tok;
-                            t.space = true;
-                            Some(t)
-                        }
-                        self.do_read_token().and_then(f)
+                            .and_then(|tok| {
+                                          let mut t = tok;
+                                          t.space = true;
+                                          Some(t)
+                                      })
                     }
                     '0'...'9' => Some(self.read_number_literal()),
                     '\"' => Some(self.read_string_literal()),
@@ -310,20 +318,23 @@ impl<'a> Lexer<'a> {
                     _ => Some(self.read_symbol()),
                 }
             }
-            None => None as Option<Token>,
+            None => {
+                if self.peek.len() > 1 {
+                    self.peek.pop_back();
+                    self.peek_pos.pop_back();
+                    self.do_read_token()
+                } else {
+                    None as Option<Token>
+                }
+            }
         }
     }
     pub fn read_token(&mut self) -> Option<Token> {
-        let t = self.do_read_token();
-        match t {
-            Some(tok) => {
-                match tok.kind {
-                    TokenKind::Newline => self.read_token(),
-                    _ => Some(tok),
-                }
-            }
-            _ => t,
-        }
+        let token = self.do_read_token();
+        token.and_then(|tok| match tok.kind {
+                           TokenKind::Newline => self.read_token(),
+                           _ => Some(tok),
+                       })
     }
 
     fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) {
@@ -436,10 +447,6 @@ impl<'a> Lexer<'a> {
     }
     fn expand(&mut self, token: Option<Token>) -> Option<Token> {
         token.and_then(|tok| {
-            if tok.is_included_tok {
-                return Some(tok);
-            }
-
             let name = tok.val.to_string();
 
             if tok.hideset.contains(name.as_str()) ||
@@ -560,20 +567,10 @@ impl<'a> Lexer<'a> {
             .unwrap();
         let mut body = String::new();
         file.read_to_string(&mut body);
-        let mut lexer = Lexer::new(filename, body.as_str());
-        let mut v: Vec<Token> = Vec::new();
-        loop {
-            match lexer.get() {
-                Some(tok) => {
-                    let mut t = tok;
-                    t.is_included_tok = true;
-                    v.push(t)
-                }
-                None => break,
-            }
+        unsafe {
+            self.peek.push_back(body.as_mut_vec().clone());
         }
-        self.unget_all(v);
-        println!("end of: {}", real_filename);
+        self.peek_pos.push_back(0);
     }
 
     fn read_define_obj_macro(&mut self, name: String) {

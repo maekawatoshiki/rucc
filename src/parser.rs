@@ -24,8 +24,8 @@ enum StorageClass {
     Register,
 }
 
-pub struct Parser<'a> {
-    lexer: Lexer<'a>,
+pub struct Parser {
+    lexer: Lexer,
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
 }
@@ -37,8 +37,8 @@ fn retrieve_from_load(ast: &AST) -> AST {
     }
 }
 
-impl<'a> Parser<'a> {
-    pub fn new(lexer: Lexer<'a>) -> Parser<'a> {
+impl Parser {
+    pub fn new(lexer: Lexer) -> Parser {
         let mut env = VecDeque::new();
         let mut tags = VecDeque::new();
         env.push_back(HashMap::new());
@@ -58,7 +58,7 @@ impl<'a> Parser<'a> {
             .unwrap();
         let mut s = String::new();
         file.read_to_string(&mut s);
-        let lexer = Lexer::new(filename.to_string(), s.as_str());
+        let lexer = Lexer::new(filename.to_string());
         // TODO: for debugging
         // loop {
         //     let tok = lexer.get();
@@ -73,13 +73,6 @@ impl<'a> Parser<'a> {
         // // Debug: (parsing again is big cost?)
         // lexer = Lexer::new(filename.to_string(), s.as_str());
         Parser::new(lexer).run(&mut nodes);
-        nodes
-    }
-    pub fn run_string(input: String) -> Vec<AST> {
-        let lexer = Lexer::new("__input__".to_string(), input.as_str());
-        let mut parser = Parser::new(lexer);
-        let mut nodes: Vec<AST> = Vec::new();
-        parser.run(&mut nodes);
         nodes
     }
     pub fn run(&mut self, node: &mut Vec<AST>) {
