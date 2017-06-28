@@ -1,4 +1,4 @@
-use lexer::{Lexer, Token, TokenKind};
+use lexer::{Lexer, Token, TokenKind, Keyword};
 use node::AST;
 use node;
 use error;
@@ -64,7 +64,7 @@ impl Parser {
         //     let tok = lexer.get();
         //     match tok {
         //         Some(t) => {
-        //             println!("t:{}{}", if t.space { " " } else { "" }, t.val);
+        //             println!("t:{}{:?} {}", if t.space { " " } else { "" }, t.kind, t.val);
         //         }
         //         None => break,
         //     }
@@ -96,7 +96,11 @@ impl Parser {
         let localtags = (*self.tags.back().unwrap()).clone();
         self.env.push_back(localenv);
         self.tags.push_back(localtags);
-
+        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
+        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
+        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
+        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
+        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
         let retty = self.read_type_spec().0;
         let (functy, name, param_names) = self.read_declarator(retty);
         println!("functy: {:?}", functy);
@@ -258,14 +262,22 @@ impl Parser {
         }
     }
     fn is_type(&mut self, token: &Token) -> bool {
-        if token.kind != TokenKind::Identifier {
-            return false;
-        }
-        let name = token.val.as_str();
-        match name {
-            "void" | "signed" | "unsigned" | "char" | "int" | "short" | "long" | "float" |
-            "double" | "struct" | "enum" | "union" | "extern" | "const" | "volatile" => true,
-            _ => self.env.back_mut().unwrap().contains_key(name),
+        if let TokenKind::Keyword(ref keyw) = token.kind {
+            match *keyw {
+                Keyword::Typedef | Keyword::Extern | Keyword::Static | Keyword::Auto |
+                Keyword::Register | Keyword::Const | Keyword::Volatile | Keyword::Void |
+                Keyword::Signed | Keyword::Unsigned | Keyword::Char | Keyword::Int |
+                Keyword::Short | Keyword::Long | Keyword::Float | Keyword::Double |
+                Keyword::Struct | Keyword::Enum | Keyword::Union | Keyword::Noreturn |
+                Keyword::Inline | Keyword::Restrict => true,
+            }
+        } else if token.kind == TokenKind::Identifier {
+            self.env
+                .back_mut()
+                .unwrap()
+                .contains_key(token.val.as_str())
+        } else {
+            false
         }
     }
     fn read_decl_init(&mut self, ty: &mut Type) -> AST {
@@ -307,8 +319,9 @@ impl Parser {
         // self.read_assign()
     }
     fn skip_type_qualifiers(&mut self) {
-        while self.lexer.skip("const") || self.lexer.skip("volatile") ||
-              self.lexer.skip("restrict") {}
+        while self.lexer.skip_keyword(Keyword::Const) ||
+              self.lexer.skip_keyword(Keyword::Volatile) ||
+              self.lexer.skip_keyword(Keyword::Restrict) {}
     }
     fn read_decl(&mut self, ast: &mut Vec<AST>) {
         let (basety, sclass) = self.read_type_spec();
@@ -412,8 +425,8 @@ impl Parser {
         Type::Array(Rc::new(ty), len)
     }
     fn read_declarator_func(&mut self, retty: Type) -> (Type, Option<Vec<String>>) {
-        if self.lexer.peek_token_is("void") && self.lexer.next_token_is(")") {
-            self.lexer.expect_skip("void");
+        if self.lexer.peek_keyword_token_is(Keyword::Void) && self.lexer.next_token_is(")") {
+            self.lexer.expect_skip_keyword(Keyword::Void);
             self.lexer.expect_skip(")");
             return (Type::Func(Rc::new(retty), Vec::new(), false), None);
         }
@@ -429,6 +442,7 @@ impl Parser {
         let mut paramtypes: Vec<Type> = Vec::new();
         let mut paramnames: Vec<String> = Vec::new();
         loop {
+            println!("{}", self.lexer.peek_e().val);
             if self.lexer.skip("...") {
                 if paramtypes.len() == 0 {
                     error::error_exit(self.lexer.cur_line,
@@ -449,6 +463,7 @@ impl Parser {
     }
     fn read_func_param(&mut self) -> (Type, String) {
         let basety = self.read_type_spec().0;
+        println!("{}", self.lexer.peek_e().val);
         let (ty, name, _) = self.read_declarator(basety);
         match ty {
             Type::Array(subst, _) => return (Type::Ptr(subst), name),
@@ -503,56 +518,61 @@ impl Parser {
                 }
             }
 
-            match tok.val.as_str() {
-                "typedef" => sclass = Some(StorageClass::Typedef),
-                "extern" => sclass = Some(StorageClass::Extern),
-                "static" => sclass = Some(StorageClass::Static),
-                "auto" => sclass = Some(StorageClass::Auto),
-                "register" => sclass = Some(StorageClass::Register),
-                "const" | "volatile" | "inline" | "noreturn" => {}
-                "void" => {
-                    err_kind(&self.lexer, kind);
-                    kind = Some(PrimitiveType::Void);
-                }
-                "char" => {
-                    err_kind(&self.lexer, kind);
-                    kind = Some(PrimitiveType::Char);
-                }
-                "int" => {
-                    err_kind(&self.lexer, kind);
-                    kind = Some(PrimitiveType::Int);
-                }
-                "float" => {
-                    err_kind(&self.lexer, kind);
-                    kind = Some(PrimitiveType::Float);
-                }
-                "double" => {
-                    err_kind(&self.lexer, kind);
-                    kind = Some(PrimitiveType::Double);
-                }
-                "signed" => {
-                    err_sign(&self.lexer, sign);
-                    sign = Some(Sign::Signed);
-                }
-                "unsigned" => {
-                    err_sign(&self.lexer, sign);
-                    sign = Some(Sign::Unsigned);
-                }
-                "short" => size = Size::Short,
-                "long" => {
-                    if size == Size::Normal {
-                        size = Size::Long;
-                    } else if size == Size::Long {
-                        size = Size::LLong;
+            if let TokenKind::Keyword(keyw) = tok.kind {
+                match &keyw {
+                    &Keyword::Typedef => sclass = Some(StorageClass::Typedef),
+                    &Keyword::Extern => sclass = Some(StorageClass::Extern),
+                    &Keyword::Static => sclass = Some(StorageClass::Static),
+                    &Keyword::Auto => sclass = Some(StorageClass::Auto),
+                    &Keyword::Register => sclass = Some(StorageClass::Register),
+                    &Keyword::Const |
+                    &Keyword::Volatile |
+                    &Keyword::Inline |
+                    &Keyword::Restrict |
+                    &Keyword::Noreturn => {}
+                    &Keyword::Void => {
+                        err_kind(&self.lexer, kind);
+                        kind = Some(PrimitiveType::Void);
                     }
+                    &Keyword::Char => {
+                        err_kind(&self.lexer, kind);
+                        kind = Some(PrimitiveType::Char);
+                    }
+                    &Keyword::Int => {
+                        err_kind(&self.lexer, kind);
+                        kind = Some(PrimitiveType::Int);
+                    }
+                    &Keyword::Float => {
+                        err_kind(&self.lexer, kind);
+                        kind = Some(PrimitiveType::Float);
+                    }
+                    &Keyword::Double => {
+                        err_kind(&self.lexer, kind);
+                        kind = Some(PrimitiveType::Double);
+                    }
+                    &Keyword::Signed => {
+                        err_sign(&self.lexer, sign);
+                        sign = Some(Sign::Signed);
+                    }
+                    &Keyword::Unsigned => {
+                        err_sign(&self.lexer, sign);
+                        sign = Some(Sign::Unsigned);
+                    }
+                    &Keyword::Short => size = Size::Short,
+                    &Keyword::Long => {
+                        if size == Size::Normal {
+                            size = Size::Long;
+                        } else if size == Size::Long {
+                            size = Size::LLong;
+                        }
+                    }
+                    &Keyword::Struct => userty = Some(self.read_struct_def()),
+                    &Keyword::Union => userty = Some(self.read_union_def()),
+                    &Keyword::Enum => userty = Some(self.read_enum_def()),
                 }
-                "struct" => userty = Some(self.read_struct_def()),
-                "union" => userty = Some(self.read_union_def()),
-                "enum" => userty = Some(self.read_enum_def()),
-                _ => {
-                    self.lexer.unget(tok);
-                    break;
-                }
+            } else {
+                self.lexer.unget(tok);
+                break;
             }
         }
 

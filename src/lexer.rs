@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::str;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, LinkedList};
 use std::path;
 use std::process;
 use std::collections::{HashSet, HashMap};
@@ -16,9 +16,37 @@ pub enum Macro {
     FuncLike(Vec<Token>),
 }
 
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum Keyword {
+    Typedef,
+    Extern,
+    Static,
+    Auto,
+    Restrict,
+    Register,
+    Const,
+    Volatile,
+    Void,
+    Signed,
+    Unsigned,
+    Char,
+    Int,
+    Short,
+    Long,
+    Float,
+    Double,
+    Struct,
+    Enum,
+    Union,
+    Noreturn,
+    Inline,
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum TokenKind {
     MacroParam,
+    Keyword(Keyword),
     Identifier,
     IntNumber,
     FloatNumber,
@@ -54,7 +82,7 @@ impl Token {
 #[derive(Clone)]
 pub struct Lexer {
     pub cur_line: i32,
-    filename: String,
+    filename: LinkedList<String>,
     peek: VecDeque<Vec<u8>>,
     peek_pos: VecDeque<usize>,
     buf: VecDeque<VecDeque<Token>>,
@@ -80,9 +108,12 @@ impl Lexer {
         let mut peek_pos = VecDeque::new();
         peek_pos.push_back(0);
 
+        let mut filenames = LinkedList::new();
+        filenames.push_back(filename);
+
         Lexer {
             cur_line: 1,
-            filename: filename.to_string(),
+            filename: filenames,
             peek: peek,
             peek_pos: peek_pos,
             buf: buf,
@@ -90,7 +121,7 @@ impl Lexer {
         }
     }
     pub fn get_filename(self) -> String {
-        self.filename
+        self.filename.back().unwrap().clone()
     }
     fn peek_get(&mut self) -> Option<char> {
         let peek = self.peek.back_mut().unwrap();
@@ -125,6 +156,10 @@ impl Lexer {
         let peek = self.peek_e();
         peek.val == expect && peek.kind != TokenKind::String && peek.kind != TokenKind::Char
     }
+    pub fn peek_keyword_token_is(&mut self, expect: Keyword) -> bool {
+        let peek = self.peek_e();
+        peek.kind == TokenKind::Keyword(expect)
+    }
     pub fn next_token_is(&mut self, expect: &str) -> bool {
         let peek = self.get_e();
         let next = self.get_e();
@@ -132,6 +167,14 @@ impl Lexer {
         self.unget(next);
         self.unget(peek);
         n.val == expect && n.kind != TokenKind::String && n.kind != TokenKind::Char
+    }
+    pub fn next_keyword_token_is(&mut self, expect: Keyword) -> bool {
+        let peek = self.get_e();
+        let next = self.get_e();
+        let n = next.clone();
+        self.unget(next);
+        self.unget(peek);
+        n.kind == TokenKind::Keyword(expect)
     }
     pub fn skip(&mut self, s: &str) -> bool {
         let next = self.get();
@@ -150,9 +193,31 @@ impl Lexer {
             }
         }
     }
+    pub fn skip_keyword(&mut self, keyword: Keyword) -> bool {
+        match self.get() {
+            Some(n) => {
+                if n.kind == TokenKind::Keyword(keyword) {
+                    true
+                } else {
+                    self.buf.back_mut().unwrap().push_back(n);
+                    false
+                }
+            }
+            None => {
+                error::error_exit(self.cur_line,
+                                  format!("expect '{:?}' but reach EOF", keyword).as_str())
+            }
+        }
+    }
     pub fn expect_skip(&mut self, expect: &str) -> bool {
         if !self.skip(expect) {
             error::error_exit(self.cur_line, format!("expected '{}'", expect).as_str());
+        }
+        true
+    }
+    pub fn expect_skip_keyword(&mut self, expect: Keyword) -> bool {
+        if !self.skip_keyword(expect.clone()) {
+            error::error_exit(self.cur_line, format!("expected '{:?}'", expect).as_str());
         }
         true
     }
@@ -322,6 +387,7 @@ impl Lexer {
                 if self.peek.len() > 1 {
                     self.peek.pop_back();
                     self.peek_pos.pop_back();
+                    self.filename.pop_back();
                     self.do_read_token()
                 } else {
                     None as Option<Token>
@@ -333,8 +399,36 @@ impl Lexer {
         let token = self.do_read_token();
         token.and_then(|tok| match tok.kind {
                            TokenKind::Newline => self.read_token(),
+                           TokenKind::Identifier => Some(self.convert_to_keyword(tok)),
                            _ => Some(tok),
                        })
+    }
+    fn convert_to_keyword(&mut self, token: Token) -> Token {
+        match token.val.as_str() {
+            "typedef" => Token::new(TokenKind::Keyword(Keyword::Typedef), "", 0, self.cur_line),
+            "extern" => Token::new(TokenKind::Keyword(Keyword::Extern), "", 0, self.cur_line),
+            "auto" => Token::new(TokenKind::Keyword(Keyword::Auto), "", 0, self.cur_line),
+            "register" => Token::new(TokenKind::Keyword(Keyword::Register), "", 0, self.cur_line),
+            "static" => Token::new(TokenKind::Keyword(Keyword::Static), "", 0, self.cur_line),
+            "restrict" => Token::new(TokenKind::Keyword(Keyword::Restrict), "", 0, self.cur_line),
+            "const" => Token::new(TokenKind::Keyword(Keyword::Const), "", 0, self.cur_line),
+            "volatile" => Token::new(TokenKind::Keyword(Keyword::Volatile), "", 0, self.cur_line),
+            "void" => Token::new(TokenKind::Keyword(Keyword::Void), "", 0, self.cur_line),
+            "signed" => Token::new(TokenKind::Keyword(Keyword::Signed), "", 0, self.cur_line),
+            "unsigned" => Token::new(TokenKind::Keyword(Keyword::Unsigned), "", 0, self.cur_line),
+            "char" => Token::new(TokenKind::Keyword(Keyword::Char), "", 0, self.cur_line),
+            "int" => Token::new(TokenKind::Keyword(Keyword::Int), "", 0, self.cur_line),
+            "short" => Token::new(TokenKind::Keyword(Keyword::Short), "", 0, self.cur_line),
+            "long" => Token::new(TokenKind::Keyword(Keyword::Long), "", 0, self.cur_line),
+            "float" => Token::new(TokenKind::Keyword(Keyword::Float), "", 0, self.cur_line),
+            "double" => Token::new(TokenKind::Keyword(Keyword::Double), "", 0, self.cur_line),
+            "struct" => Token::new(TokenKind::Keyword(Keyword::Struct), "", 0, self.cur_line),
+            "union" => Token::new(TokenKind::Keyword(Keyword::Union), "", 0, self.cur_line),
+            "enum" => Token::new(TokenKind::Keyword(Keyword::Enum), "", 0, self.cur_line),
+            "inline" => Token::new(TokenKind::Keyword(Keyword::Inline), "", 0, self.cur_line),
+            "noreturn" => Token::new(TokenKind::Keyword(Keyword::Noreturn), "", 0, self.cur_line),
+            _ => token,
+        }
     }
 
     fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) {
@@ -352,7 +446,7 @@ impl Lexer {
         let mut n = 0;
         let mut arg: Vec<Token> = Vec::new();
         loop {
-            let tok = self.read_token()
+            let tok = self.do_read_token()
                 .or_else(|| error::error_exit(self.cur_line, "expected macro args but reach EOF"))
                 .unwrap();
             if n == 0 {
@@ -391,7 +485,7 @@ impl Lexer {
         let mut args: Vec<Vec<Token>> = Vec::new();
         // read macro arguments
         loop {
-            let maybe_bracket = self.read_token()
+            let maybe_bracket = self.do_read_token()
                 .or_else(|| error::error_exit(self.cur_line, "expected ')' but reach EOF"))
                 .unwrap();
             if maybe_bracket.val == ")" {
@@ -544,15 +638,26 @@ impl Lexer {
         }
         if found { Some(real_filename) } else { None }
     }
+    fn read_headerfile_name(&mut self) -> String {
+        let mut name = "".to_string();
+        if self.skip("<") {
+            while !self.peek_char_is('>') {
+                name.push(self.peek_next());
+            }
+            self.peek_next(); // >
+        } else if self.skip("\"") {
+            while !self.peek_char_is('"') {
+                name.push(self.peek_next());
+            }
+            self.peek_next(); // "
+        } else {
+            error::error_exit(self.cur_line, "expected '<' or '\"'");
+        }
+        name
+    }
     fn read_include(&mut self) {
         // this will be a function
-        let mut filename = String::new();
-        if self.skip("<") {
-            while !self.skip(">") {
-                println!("{}", filename);
-                filename.push_str(self.do_read_token().unwrap().val.as_str());
-            }
-        }
+        let filename = self.read_headerfile_name();
         let real_filename = match self.try_include(filename.as_str()) {
             Some(f) => f,
             _ => {
@@ -567,6 +672,7 @@ impl Lexer {
             .unwrap();
         let mut body = String::new();
         file.read_to_string(&mut body);
+        self.filename.push_back(real_filename);
         unsafe {
             self.peek.push_back(body.as_mut_vec().clone());
         }
