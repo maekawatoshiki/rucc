@@ -1,4 +1,4 @@
-use lexer::{Lexer, Token, TokenKind, Keyword};
+use lexer::{Lexer, Token, TokenKind, Keyword, Symbol};
 use node::AST;
 use node;
 use error;
@@ -69,7 +69,7 @@ impl Parser {
         //         None => break,
         //     }
         // }
-        //
+
         // // Debug: (parsing again is big cost?)
         // lexer = Lexer::new(filename.to_string(), s.as_str());
         Parser::new(lexer).run(&mut nodes);
@@ -96,16 +96,11 @@ impl Parser {
         let localtags = (*self.tags.back().unwrap()).clone();
         self.env.push_back(localenv);
         self.tags.push_back(localtags);
-        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
-        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
-        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
-        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
-        // println!("{:?} {}", self.lexer.peek_e().kind, self.lexer.get_e().val);
         let retty = self.read_type_spec().0;
         let (functy, name, param_names) = self.read_declarator(retty);
         println!("functy: {:?}", functy);
 
-        self.lexer.expect_skip("{");
+        self.lexer.expect_skip_symbol(Symbol::OpeningBrace);
         let body = self.read_func_body(&functy);
         self.env.pop_back();
         self.tags.pop_back();
@@ -124,7 +119,7 @@ impl Parser {
     fn read_compound_stmt(&mut self) -> AST {
         let mut stmts: Vec<AST> = Vec::new();
         loop {
-            if self.lexer.skip("}") {
+            if self.lexer.skip_symbol(Symbol::ClosingBrace) {
                 break;
             }
 
@@ -140,25 +135,28 @@ impl Parser {
     }
     fn read_stmt(&mut self) -> AST {
         let tok = self.lexer.get_e();
-        match tok.val.as_str() {
-            "{" => return self.read_compound_stmt(),
-            "if" => return self.read_if_stmt(),
-            "for" => return self.read_for_stmt(),
-            "while" => return self.read_while_stmt(),
-            "return" => return self.read_return_stmt(),
-            _ => {}
+        if let &TokenKind::Keyword(ref keyw) = &tok.kind {
+            match *keyw {
+                Keyword::If => return self.read_if_stmt(),
+                Keyword::For => return self.read_for_stmt(),
+                Keyword::While => return self.read_while_stmt(),
+                Keyword::Return => return self.read_return_stmt(),
+                _ => {}
+            }
+        } else if let &TokenKind::Symbol(Symbol::OpeningBrace) = &tok.kind {
+            return self.read_compound_stmt();
         }
         self.lexer.unget(tok);
         let expr = self.read_expr();
-        self.lexer.expect_skip(";");
+        self.lexer.expect_skip_symbol(Symbol::Semicolon);
         expr
     }
     fn read_if_stmt(&mut self) -> AST {
-        self.lexer.expect_skip("(");
+        self.lexer.expect_skip_symbol(Symbol::OpeningParen);
         let cond = self.read_expr();
-        self.lexer.expect_skip(")");
+        self.lexer.expect_skip_symbol(Symbol::ClosingParen);
         let then_stmt = Rc::new(self.read_stmt());
-        let else_stmt = if self.lexer.skip("else") {
+        let else_stmt = if self.lexer.skip_keyword(Keyword::Else) {
             Rc::new(self.read_stmt())
         } else {
             Rc::new(AST::Block(Vec::new()))
@@ -166,30 +164,30 @@ impl Parser {
         AST::If(Rc::new(cond), then_stmt, else_stmt)
     }
     fn read_for_stmt(&mut self) -> AST {
-        self.lexer.expect_skip("(");
+        self.lexer.expect_skip_symbol(Symbol::OpeningParen);
         let init = self.read_opt_decl_or_stmt();
         // TODO: make read_expr returns Option<AST>.
         //       when cur tok is ';', returns None.
         let cond = self.read_opt_expr();
-        self.lexer.expect_skip(";");
+        self.lexer.expect_skip_symbol(Symbol::Semicolon);
         let step = self.read_opt_expr();
-        self.lexer.expect_skip(")");
+        self.lexer.expect_skip_symbol(Symbol::ClosingParen);
         let body = self.read_stmt();
         AST::For(Rc::new(init), Rc::new(cond), Rc::new(step), Rc::new(body))
     }
     fn read_while_stmt(&mut self) -> AST {
-        self.lexer.expect_skip("(");
+        self.lexer.expect_skip_symbol(Symbol::OpeningParen);
         let cond = self.read_expr();
-        self.lexer.expect_skip(")");
+        self.lexer.expect_skip_symbol(Symbol::ClosingParen);
         let body = self.read_stmt();
         AST::While(Rc::new(cond), Rc::new(body))
     }
     fn read_return_stmt(&mut self) -> AST {
-        if self.lexer.skip(";") {
+        if self.lexer.skip_symbol(Symbol::Semicolon) {
             AST::Return(None)
         } else {
             let retval = Some(Rc::new(self.read_expr()));
-            self.lexer.expect_skip(";");
+            self.lexer.expect_skip_symbol(Symbol::Semicolon);
             AST::Return(retval)
         }
     }
@@ -201,7 +199,7 @@ impl Parser {
             let mut tok = self.lexer.get().unwrap();
             buf.push(tok.clone());
 
-            if tok.val == ";" {
+            if tok.kind == TokenKind::Symbol(Symbol::Semicolon) {
                 break;
             }
 
@@ -209,7 +207,7 @@ impl Parser {
                 continue;
             }
 
-            if tok.val == "(" {
+            if tok.kind == TokenKind::Symbol(Symbol::OpeningParen) {
                 self.skip_brackets(&mut buf);
                 continue;
             }
@@ -218,7 +216,7 @@ impl Parser {
                 continue;
             }
 
-            if self.lexer.peek().unwrap().val != "(" {
+            if self.lexer.peek().unwrap().kind != TokenKind::Symbol(Symbol::OpeningParen) {
                 continue;
             }
 
@@ -226,7 +224,7 @@ impl Parser {
             self.skip_brackets(&mut buf);
 
             tok = self.lexer.peek().unwrap();
-            is_funcdef = tok.val.as_str() == "{";
+            is_funcdef = tok.kind == TokenKind::Symbol(Symbol::OpeningBrace);
             break;
         }
 
@@ -238,9 +236,9 @@ impl Parser {
             let tok = self.lexer.get().unwrap();
             buf.push(tok.clone());
 
-            match tok.val.as_str() {
-                "(" => self.skip_brackets(buf),
-                ")" => break,
+            match tok.kind {
+                TokenKind::Symbol(Symbol::OpeningParen) => self.skip_brackets(buf),
+                TokenKind::Symbol(Symbol::ClosingParen) => break,
                 _ => {}
             }
         }
@@ -270,6 +268,7 @@ impl Parser {
                 Keyword::Short | Keyword::Long | Keyword::Float | Keyword::Double |
                 Keyword::Struct | Keyword::Enum | Keyword::Union | Keyword::Noreturn |
                 Keyword::Inline | Keyword::Restrict => true,
+                _ => false,
             }
         } else if token.kind == TokenKind::Identifier {
             self.env
@@ -282,7 +281,8 @@ impl Parser {
     }
     fn read_decl_init(&mut self, ty: &mut Type) -> AST {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
-        if self.lexer.skip("{") || self.lexer.peek_e().kind == TokenKind::String {
+        if self.lexer.skip_symbol(Symbol::OpeningBrace) ||
+           self.lexer.peek_e().kind == TokenKind::String {
             // self.read_
             self.read_initializer_list(ty)
         } else {
@@ -301,12 +301,12 @@ impl Parser {
             let mut elems = Vec::new();
             let mut count = 0;
             loop {
-                if self.lexer.skip("}") {
+                if self.lexer.skip_symbol(Symbol::ClosingBrace) {
                     break;
                 }
                 let elem = self.read_assign();
                 elems.push(elem);
-                self.lexer.skip(",");
+                self.lexer.skip_symbol(Symbol::Comma);
                 count += 1;
             }
             if is_flexible {
@@ -326,7 +326,7 @@ impl Parser {
     fn read_decl(&mut self, ast: &mut Vec<AST>) {
         let (basety, sclass) = self.read_type_spec();
         let is_typedef = sclass.is_some() && sclass.unwrap() == StorageClass::Typedef;
-        if self.lexer.skip(";") {
+        if self.lexer.skip_symbol(Symbol::Semicolon) {
             return;
         }
 
@@ -339,21 +339,25 @@ impl Parser {
                 return;
             }
 
-            let init = if self.lexer.skip("=") {
+            let init = if self.lexer.skip_symbol(Symbol::Assign) {
                 Some(Rc::new(self.read_decl_init(&mut ty)))
             } else {
                 None
             };
             ast.push(AST::VariableDecl(ty, name, init));
 
-            if self.lexer.skip(";") {
+            if self.lexer.skip_symbol(Symbol::Semicolon) {
                 return;
             }
-            self.lexer.expect_skip(",");
+            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
+            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
+            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
+            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
+            self.lexer.expect_skip_symbol(Symbol::Comma);
         }
     }
     fn read_opt_decl_or_stmt(&mut self) -> AST {
-        if self.lexer.skip(";") {
+        if self.lexer.skip_symbol(Symbol::Semicolon) {
             return AST::Compound(Vec::new());
         }
 
@@ -369,7 +373,7 @@ impl Parser {
     }
     // returns (declarator type, name, params{for function})
     fn read_declarator(&mut self, basety: Type) -> (Type, String, Option<Vec<String>>) {
-        if self.lexer.skip("(") {
+        if self.lexer.skip_symbol(Symbol::OpeningParen) {
             let peek_tok = self.lexer.peek_e();
             if self.is_type(&peek_tok) {
                 let (ty, params) = self.read_declarator_func(basety);
@@ -378,7 +382,7 @@ impl Parser {
 
             // TODO: HUH? MAKES NO SENSE!!
             let mut buf: Vec<Token> = Vec::new();
-            while !self.lexer.skip(")") {
+            while !self.lexer.skip_symbol(Symbol::ClosingParen) {
                 buf.push(self.lexer.get().unwrap());
             }
             let t = self.read_declarator_tail(basety);
@@ -386,7 +390,7 @@ impl Parser {
             return self.read_declarator(t.0);
         }
 
-        if self.lexer.skip("*") {
+        if self.lexer.skip_symbol(Symbol::Asterisk) {
             self.skip_type_qualifiers();
             return self.read_declarator(Type::Ptr(Rc::new(basety)));
         }
@@ -404,10 +408,10 @@ impl Parser {
         (ty, "".to_string(), params)
     }
     fn read_declarator_tail(&mut self, basety: Type) -> (Type, Option<Vec<String>>) {
-        if self.lexer.skip("[") {
+        if self.lexer.skip_symbol(Symbol::OpeningBoxBracket) {
             return (self.read_declarator_array(basety), None);
         }
-        if self.lexer.skip("(") {
+        if self.lexer.skip_symbol(Symbol::OpeningParen) {
             return self.read_declarator_func(basety);
         }
         (basety, None)
@@ -415,22 +419,23 @@ impl Parser {
 
     fn read_declarator_array(&mut self, basety: Type) -> Type {
         let len: i32;
-        if self.lexer.skip("]") {
+        if self.lexer.skip_symbol(Symbol::ClosingBoxBracket) {
             len = -1;
         } else {
             len = self.read_expr().eval_constexpr();
-            self.lexer.expect_skip("]");
+            self.lexer.expect_skip_symbol(Symbol::ClosingBoxBracket);
         }
         let ty = self.read_declarator_tail(basety).0;
         Type::Array(Rc::new(ty), len)
     }
     fn read_declarator_func(&mut self, retty: Type) -> (Type, Option<Vec<String>>) {
-        if self.lexer.peek_keyword_token_is(Keyword::Void) && self.lexer.next_token_is(")") {
+        if self.lexer.peek_keyword_token_is(Keyword::Void) &&
+           self.lexer.next_symbol_token_is(Symbol::ClosingParen) {
             self.lexer.expect_skip_keyword(Keyword::Void);
-            self.lexer.expect_skip(")");
+            self.lexer.expect_skip_symbol(Symbol::ClosingParen);
             return (Type::Func(Rc::new(retty), Vec::new(), false), None);
         }
-        if self.lexer.skip(")") {
+        if self.lexer.skip_symbol(Symbol::ClosingParen) {
             return (Type::Func(Rc::new(retty), Vec::new(), false), None);
         }
 
@@ -442,28 +447,26 @@ impl Parser {
         let mut paramtypes: Vec<Type> = Vec::new();
         let mut paramnames: Vec<String> = Vec::new();
         loop {
-            println!("{}", self.lexer.peek_e().val);
-            if self.lexer.skip("...") {
+            if self.lexer.skip_symbol(Symbol::Vararg) {
                 if paramtypes.len() == 0 {
                     error::error_exit(self.lexer.cur_line,
                                       "at least one param is required before '...'");
                 }
-                self.lexer.expect_skip(")");
+                self.lexer.expect_skip_symbol(Symbol::ClosingParen);
                 return (paramtypes, paramnames, true);
             }
 
             let (ty, name) = self.read_func_param();
             paramtypes.push(ty);
             paramnames.push(name);
-            if self.lexer.skip(")") {
+            if self.lexer.skip_symbol(Symbol::ClosingParen) {
                 return (paramtypes, paramnames, false);
             }
-            self.lexer.expect_skip(",");
+            self.lexer.expect_skip_symbol(Symbol::Comma);
         }
     }
     fn read_func_param(&mut self) -> (Type, String) {
         let basety = self.read_type_spec().0;
-        println!("{}", self.lexer.peek_e().val);
         let (ty, name, _) = self.read_declarator(basety);
         match ty {
             Type::Array(subst, _) => return (Type::Ptr(subst), name),
@@ -569,6 +572,7 @@ impl Parser {
                     &Keyword::Struct => userty = Some(self.read_struct_def()),
                     &Keyword::Union => userty = Some(self.read_union_def()),
                     &Keyword::Enum => userty = Some(self.read_enum_def()),
+                    _ => {}
                 }
             } else {
                 self.lexer.unget(tok);
@@ -682,7 +686,7 @@ impl Parser {
         }
     }
     fn read_rectype_fields(&mut self) -> Vec<AST> {
-        if !self.lexer.skip("{") {
+        if !self.lexer.skip_symbol(Symbol::OpeningBrace) {
             return Vec::new();
         }
 
@@ -695,20 +699,20 @@ impl Parser {
             let (basety, _) = self.read_type_spec();
             loop {
                 let (ty, name, _) = self.read_declarator(basety.clone());
-                if self.lexer.skip(":") {
+                if self.lexer.skip_symbol(Symbol::Colon) {
                     // TODO: for now, designated bitwidth ignore
                     self.read_expr();
                 }
                 decls.push(AST::VariableDecl(ty, name, None));
-                if self.lexer.skip(",") {
+                if self.lexer.skip_symbol(Symbol::Comma) {
                     continue;
                 } else {
-                    self.lexer.expect_skip(";");
+                    self.lexer.expect_skip_symbol(Symbol::Semicolon);
                 }
                 break;
             }
         }
-        self.lexer.expect_skip("}");
+        self.lexer.expect_skip_symbol(Symbol::ClosingBrace);
         decls
     }
     fn read_enum_def(&mut self) -> Type {
@@ -729,7 +733,7 @@ impl Parser {
             }
         }
 
-        if !self.lexer.skip("{") {
+        if !self.lexer.skip_symbol(Symbol::OpeningBrace) {
             if !exist_tag ||
                !self.tags
                     .back_mut()
@@ -746,20 +750,20 @@ impl Parser {
 
         let mut val = 0;
         loop {
-            if self.lexer.skip("}") {
+            if self.lexer.skip_symbol(Symbol::ClosingBrace) {
                 break;
             }
             let name = self.lexer.get_e().val;
-            if self.lexer.skip("=") {
+            if self.lexer.skip_symbol(Symbol::Assign) {
                 val = self.read_assign().eval_constexpr();
             }
             let constval = AST::Int(val);
             val += 1;
             self.env.back_mut().unwrap().insert(name, constval);
-            if self.lexer.skip(",") {
+            if self.lexer.skip_symbol(Symbol::Comma) {
                 continue;
             }
-            if self.lexer.skip("{") {
+            if self.lexer.skip_symbol(Symbol::OpeningBrace) {
                 break;
             }
         }
@@ -777,7 +781,7 @@ impl Parser {
     ////////// operators start from here
     fn read_comma(&mut self) -> AST {
         let mut lhs = self.read_assign();
-        while self.lexer.skip(",") {
+        while self.lexer.skip_symbol(Symbol::Comma) {
             let rhs = self.read_assign();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Comma);
         }
@@ -785,7 +789,7 @@ impl Parser {
     }
     fn read_assign(&mut self) -> AST {
         let mut lhs = self.read_logor();
-        if self.lexer.skip("?") {
+        if self.lexer.skip_symbol(Symbol::Question) {
             return self.read_ternary(lhs);
         }
         let assign = |lhs, rhs| -> AST {
@@ -795,17 +799,17 @@ impl Parser {
         };
         loop {
             let tok = self.lexer.get_e();
-            match tok.val.as_str() {
-                "=" => {
+            match tok.kind {
+                TokenKind::Symbol(Symbol::Assign) => {
                     lhs = assign(lhs, self.read_assign());
                 }
-                "+=" => {
+                TokenKind::Symbol(Symbol::AssignAdd) => {
                     lhs = assign(lhs.clone(),
                                  AST::BinaryOp(Rc::new(lhs),
                                                Rc::new(self.read_assign()),
                                                node::CBinOps::Add));
                 }
-                "-=" => {
+                TokenKind::Symbol(Symbol::AssignSub) => {
                     lhs = assign(lhs.clone(),
                                  AST::BinaryOp(Rc::new(lhs),
                                                Rc::new(self.read_assign()),
@@ -821,13 +825,13 @@ impl Parser {
     }
     fn read_ternary(&mut self, cond: AST) -> AST {
         let then_expr = self.read_expr();
-        self.lexer.expect_skip(":");
+        self.lexer.expect_skip_symbol(Symbol::Colon);
         let else_expr = self.read_assign();
         AST::TernaryOp(Rc::new(cond), Rc::new(then_expr), Rc::new(else_expr))
     }
     fn read_logor(&mut self) -> AST {
         let mut lhs = self.read_logand();
-        while self.lexer.skip("||") {
+        while self.lexer.skip_symbol(Symbol::LOr) {
             let rhs = self.read_logand();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LOr);
         }
@@ -835,7 +839,7 @@ impl Parser {
     }
     fn read_logand(&mut self) -> AST {
         let mut lhs = self.read_or();
-        while self.lexer.skip("&&") {
+        while self.lexer.skip_symbol(Symbol::LAnd) {
             let rhs = self.read_or();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LAnd);
         }
@@ -843,7 +847,7 @@ impl Parser {
     }
     fn read_or(&mut self) -> AST {
         let mut lhs = self.read_xor();
-        while self.lexer.skip("|") {
+        while self.lexer.skip_symbol(Symbol::Or) {
             let rhs = self.read_xor();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Or);
         }
@@ -851,7 +855,7 @@ impl Parser {
     }
     fn read_xor(&mut self) -> AST {
         let mut lhs = self.read_and();
-        while self.lexer.skip("^") {
+        while self.lexer.skip_symbol(Symbol::Xor) {
             let rhs = self.read_and();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Xor);
         }
@@ -859,7 +863,7 @@ impl Parser {
     }
     fn read_and(&mut self) -> AST {
         let mut lhs = self.read_eq_ne();
-        while self.lexer.skip("&") {
+        while self.lexer.skip_symbol(Symbol::Ampersand) {
             let rhs = self.read_eq_ne();
             lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::And);
         }
@@ -868,10 +872,10 @@ impl Parser {
     fn read_eq_ne(&mut self) -> AST {
         let mut lhs = self.read_relation();
         loop {
-            if self.lexer.skip("==") {
+            if self.lexer.skip_symbol(Symbol::Eq) {
                 let rhs = self.read_relation();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Eq);
-            } else if self.lexer.skip("!=") {
+            } else if self.lexer.skip_symbol(Symbol::Ne) {
                 let rhs = self.read_relation();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ne);
             } else {
@@ -883,16 +887,16 @@ impl Parser {
     fn read_relation(&mut self) -> AST {
         let mut lhs = self.read_shl_shr();
         loop {
-            if self.lexer.skip("<") {
+            if self.lexer.skip_symbol(Symbol::Lt) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Lt);
-            } else if self.lexer.skip("<=") {
+            } else if self.lexer.skip_symbol(Symbol::Le) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Le);
-            } else if self.lexer.skip(">") {
+            } else if self.lexer.skip_symbol(Symbol::Gt) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Gt);
-            } else if self.lexer.skip(">=") {
+            } else if self.lexer.skip_symbol(Symbol::Ge) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ge);
             } else {
@@ -904,10 +908,10 @@ impl Parser {
     fn read_shl_shr(&mut self) -> AST {
         let mut lhs = self.read_add_sub();
         loop {
-            if self.lexer.skip("<<") {
+            if self.lexer.skip_symbol(Symbol::Shl) {
                 let rhs = self.read_add_sub();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shl);
-            } else if self.lexer.skip(">>") {
+            } else if self.lexer.skip_symbol(Symbol::Shr) {
                 let rhs = self.read_add_sub();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shr);
             } else {
@@ -919,10 +923,10 @@ impl Parser {
     fn read_add_sub(&mut self) -> AST {
         let mut lhs = self.read_mul_div_rem();
         loop {
-            if self.lexer.skip("+") {
+            if self.lexer.skip_symbol(Symbol::Add) {
                 let rhs = self.read_mul_div_rem();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Add);
-            } else if self.lexer.skip("-") {
+            } else if self.lexer.skip_symbol(Symbol::Sub) {
                 let rhs = self.read_mul_div_rem();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Sub);
             } else {
@@ -934,13 +938,13 @@ impl Parser {
     fn read_mul_div_rem(&mut self) -> AST {
         let mut lhs = self.read_cast();
         loop {
-            if self.lexer.skip("*") {
+            if self.lexer.skip_symbol(Symbol::Asterisk) {
                 let rhs = self.read_cast();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Mul);
-            } else if self.lexer.skip("/") {
+            } else if self.lexer.skip_symbol(Symbol::Div) {
                 let rhs = self.read_cast();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Div);
-            } else if self.lexer.skip("%") {
+            } else if self.lexer.skip_symbol(Symbol::Mod) {
                 let rhs = self.read_cast();
                 lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Rem);
             } else {
@@ -952,10 +956,10 @@ impl Parser {
     fn read_cast(&mut self) -> AST {
         let tok = self.lexer.get_e();
         let peek = self.lexer.peek_e();
-        if tok.val == "(" && self.is_type(&peek) {
+        if tok.kind == TokenKind::Symbol(Symbol::OpeningParen) && self.is_type(&peek) {
             let basety = self.read_type_spec().0;
             let ty = self.read_declarator(basety).0;
-            self.lexer.expect_skip(")");
+            self.lexer.expect_skip_symbol(Symbol::ClosingParen);
             return AST::TypeCast(Rc::new(self.read_cast()), ty);
         } else {
             self.lexer.unget(tok);
@@ -967,23 +971,37 @@ impl Parser {
             .get()
             .or_else(|| error::error_exit(self.lexer.cur_line, "expected unary op"))
             .unwrap();
-        match tok.val.as_str() { 
-            "!" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot),
-            "~" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot),
-            "+" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus),
-            "-" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus),
-            "++" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
-            "--" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
-            "*" => return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
-            "&" => return retrieve_from_load(&self.read_cast()),
-            "sizeof" => {
+        match tok.kind { 
+            TokenKind::Symbol(Symbol::Not) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot)
+            }
+            TokenKind::Symbol(Symbol::BitwiseNot) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot)
+            }
+            TokenKind::Symbol(Symbol::Add) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus)
+            }
+            TokenKind::Symbol(Symbol::Sub) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus)
+            }
+            TokenKind::Symbol(Symbol::Inc) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc)
+            }
+            TokenKind::Symbol(Symbol::Dec) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec)
+            }
+            TokenKind::Symbol(Symbol::Asterisk) => {
+                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref)
+            }
+            TokenKind::Symbol(Symbol::Ampersand) => return retrieve_from_load(&self.read_cast()),
+            TokenKind::Symbol(Symbol::Sizeof) => {
                 // TODO: must fix this sloppy implementation
-                self.lexer.expect_skip("(");
+                self.lexer.expect_skip_symbol(Symbol::OpeningParen);
                 let tok = self.lexer.peek_e();
                 assert!(self.is_type(&tok));
                 let (basety, _) = self.read_type_spec();
                 let (ty, _, _) = self.read_declarator(basety);
-                self.lexer.expect_skip(")");
+                self.lexer.expect_skip_symbol(Symbol::ClosingParen);
                 return AST::Int(ty.calc_size() as i32);
             }
             _ => {}
@@ -994,18 +1012,18 @@ impl Parser {
     fn read_postfix(&mut self) -> AST {
         let mut ast = self.read_primary();
         loop {
-            if self.lexer.skip("(") {
+            if self.lexer.skip_symbol(Symbol::OpeningParen) {
                 ast = self.read_func_call(retrieve_from_load(&ast));
                 continue;
             }
-            if self.lexer.skip("[") {
+            if self.lexer.skip_symbol(Symbol::OpeningBoxBracket) {
                 ast = AST::Load(Rc::new(self.read_index(ast)));
                 continue;
             }
-            if self.lexer.skip(".") {
+            if self.lexer.skip_symbol(Symbol::Point) {
                 ast = AST::Load(Rc::new(self.read_field(retrieve_from_load(&ast))));
             }
-            if self.lexer.skip("->") {
+            if self.lexer.skip_symbol(Symbol::Arrow) {
                 ast = AST::Load(Rc::new(self.read_field(AST::UnaryOp(Rc::new(retrieve_from_load(&ast)),
                                                    node::CUnaryOps::Deref))));
             }
@@ -1016,22 +1034,22 @@ impl Parser {
     }
     fn read_func_call(&mut self, f: AST) -> AST {
         let mut args: Vec<AST> = Vec::new();
-        if !self.lexer.skip(")") {
+        if !self.lexer.skip_symbol(Symbol::ClosingParen) {
             loop {
                 let arg = self.read_assign();
                 args.push(arg);
 
-                if self.lexer.skip(")") {
+                if self.lexer.skip_symbol(Symbol::ClosingParen) {
                     break;
                 }
-                self.lexer.expect_skip(",");
+                self.lexer.expect_skip_symbol(Symbol::Comma);
             }
         }
         AST::FuncCall(Rc::new(f), args)
     }
     fn read_index(&mut self, ast: AST) -> AST {
         let idx = self.read_expr();
-        self.lexer.expect_skip("]");
+        self.lexer.expect_skip_symbol(Symbol::ClosingBoxBracket);
         AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add)
     }
 
@@ -1049,10 +1067,10 @@ impl Parser {
         let mut elems = Vec::new();
         loop {
             elems.push(self.read_assign());
-            if self.lexer.skip("}") {
+            if self.lexer.skip_symbol(Symbol::OpeningBrace) {
                 break;
             }
-            self.lexer.expect_skip(",");
+            self.lexer.expect_skip_symbol(Symbol::Comma);
         }
         node::AST::ConstArray(elems)
     }
@@ -1061,7 +1079,7 @@ impl Parser {
             .get()
             .or_else(|| error::error_exit(self.lexer.cur_line, "expected primary"))
             .unwrap();
-        match tok.kind {
+        match tok.kind.clone() {
             TokenKind::IntNumber => {
                 let num_literal = tok.val;
                 if num_literal.len() > 2 && num_literal.chars().nth(1).unwrap() == 'x' {
@@ -1087,14 +1105,14 @@ impl Parser {
                 let ch = tok.val.bytes().nth(0);
                 AST::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32)
             }
-            TokenKind::Symbol => {
-                match tok.val.as_str() {
-                    "(" => {
+            TokenKind::Symbol(sym) => {
+                match sym {
+                    Symbol::OpeningParen => {
                         let expr = self.read_expr();
-                        self.lexer.skip(")");
+                        self.lexer.skip_symbol(Symbol::ClosingParen);
                         expr
                     }
-                    "{" => self.read_const_array(),
+                    Symbol::OpeningBrace => self.read_const_array(),
                     _ => {
                         self.lexer.unget(tok);
                         AST::Compound(Vec::new())

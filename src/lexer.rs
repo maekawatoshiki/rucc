@@ -41,6 +41,63 @@ pub enum Keyword {
     Union,
     Noreturn,
     Inline,
+    If,
+    Else,
+    For,
+    While,
+    Return,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum Symbol {
+    OpeningParen,
+    ClosingParen,
+    OpeningBrace,
+    ClosingBrace,
+    OpeningBoxBracket,
+    ClosingBoxBracket,
+    Comma,
+    Semicolon,
+    Colon,
+    Point,
+    Arrow,
+    Inc,
+    Dec,
+    Add,
+    Sub,
+    Asterisk,
+    Div,
+    Mod,
+    Not,
+    BitwiseNot,
+    Ampersand,
+    Shl,
+    Shr,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+    Xor,
+    Or,
+    LAnd,
+    LOr,
+    Question,
+    Assign,
+    AssignAdd,
+    AssignSub,
+    AssignMul,
+    AssignDiv,
+    AssignMod,
+    AssignShl,
+    AssignShr,
+    AssignAnd,
+    AssignXor,
+    AssignOr,
+    Hash,
+    Vararg,
+    Sizeof,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -52,7 +109,7 @@ pub enum TokenKind {
     FloatNumber,
     String,
     Char,
-    Symbol,
+    Symbol(Symbol),
     Newline,
 }
 
@@ -160,6 +217,10 @@ impl Lexer {
         let peek = self.peek_e();
         peek.kind == TokenKind::Keyword(expect)
     }
+    pub fn peek_symbol_token_is(&mut self, expect: Symbol) -> bool {
+        let peek = self.peek_e();
+        peek.kind == TokenKind::Symbol(expect)
+    }
     pub fn next_token_is(&mut self, expect: &str) -> bool {
         let peek = self.get_e();
         let next = self.get_e();
@@ -175,6 +236,14 @@ impl Lexer {
         self.unget(next);
         self.unget(peek);
         n.kind == TokenKind::Keyword(expect)
+    }
+    pub fn next_symbol_token_is(&mut self, expect: Symbol) -> bool {
+        let peek = self.get_e();
+        let next = self.get_e();
+        let n = next.clone();
+        self.unget(next);
+        self.unget(peek);
+        n.kind == TokenKind::Symbol(expect)
     }
     pub fn skip(&mut self, s: &str) -> bool {
         let next = self.get();
@@ -209,15 +278,40 @@ impl Lexer {
             }
         }
     }
+    pub fn skip_symbol(&mut self, sym: Symbol) -> bool {
+        match self.get() {
+            Some(n) => {
+                if n.kind == TokenKind::Symbol(sym) {
+                    true
+                } else {
+                    self.buf.back_mut().unwrap().push_back(n);
+                    false
+                }
+            }
+            None => {
+                error::error_exit(self.cur_line,
+                                  format!("expect '{:?}' but reach EOF", sym).as_str())
+            }
+        }
+    }
     pub fn expect_skip(&mut self, expect: &str) -> bool {
         if !self.skip(expect) {
-            error::error_exit(self.cur_line, format!("expected '{}'", expect).as_str());
+            error::error_exit(self.cur_line,
+                              format!("expected the keyword '{}'", expect).as_str());
         }
         true
     }
     pub fn expect_skip_keyword(&mut self, expect: Keyword) -> bool {
         if !self.skip_keyword(expect.clone()) {
-            error::error_exit(self.cur_line, format!("expected '{:?}'", expect).as_str());
+            error::error_exit(self.cur_line,
+                              format!("expected the keyword '{:?}'", expect).as_str());
+        }
+        true
+    }
+    pub fn expect_skip_symbol(&mut self, expect: Symbol) -> bool {
+        if !self.skip_symbol(expect.clone()) {
+            error::error_exit(self.cur_line,
+                              format!("expected the keyword '{:?}'", expect).as_str());
         }
         true
     }
@@ -310,7 +404,7 @@ impl Lexer {
             }
             _ => {}
         };
-        Token::new(TokenKind::Symbol, sym.as_str(), 0, self.cur_line)
+        Token::new(TokenKind::Identifier, sym.as_str(), 0, self.cur_line)
     }
     fn read_string_literal(&mut self) -> Token {
         self.peek_next();
@@ -399,11 +493,11 @@ impl Lexer {
         let token = self.do_read_token();
         token.and_then(|tok| match tok.kind {
                            TokenKind::Newline => self.read_token(),
-                           TokenKind::Identifier => Some(self.convert_to_keyword(tok)),
+                           TokenKind::Identifier => Some(self.convert_to_keyword_or_symbol(tok)),
                            _ => Some(tok),
                        })
     }
-    fn convert_to_keyword(&mut self, token: Token) -> Token {
+    fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
         match token.val.as_str() {
             "typedef" => Token::new(TokenKind::Keyword(Keyword::Typedef), "", 0, self.cur_line),
             "extern" => Token::new(TokenKind::Keyword(Keyword::Extern), "", 0, self.cur_line),
@@ -427,6 +521,89 @@ impl Lexer {
             "enum" => Token::new(TokenKind::Keyword(Keyword::Enum), "", 0, self.cur_line),
             "inline" => Token::new(TokenKind::Keyword(Keyword::Inline), "", 0, self.cur_line),
             "noreturn" => Token::new(TokenKind::Keyword(Keyword::Noreturn), "", 0, self.cur_line),
+            "if" => Token::new(TokenKind::Keyword(Keyword::If), "", 0, self.cur_line),
+            "else" => Token::new(TokenKind::Keyword(Keyword::Else), "", 0, self.cur_line),
+            "for" => Token::new(TokenKind::Keyword(Keyword::For), "", 0, self.cur_line),
+            "while" => Token::new(TokenKind::Keyword(Keyword::While), "", 0, self.cur_line),
+            "return" => Token::new(TokenKind::Keyword(Keyword::Return), "", 0, self.cur_line),
+            "++" => Token::new(TokenKind::Symbol(Symbol::Inc), "", 0, self.cur_line), 
+            "--" => Token::new(TokenKind::Symbol(Symbol::Dec), "", 0, self.cur_line),
+            "(" => {
+                Token::new(TokenKind::Symbol(Symbol::OpeningParen),
+                           "",
+                           0,
+                           self.cur_line)
+            }
+            ")" => {
+                Token::new(TokenKind::Symbol(Symbol::ClosingParen),
+                           "",
+                           0,
+                           self.cur_line)
+            }
+            "[" => {
+                Token::new(TokenKind::Symbol(Symbol::OpeningBoxBracket),
+                           "",
+                           0,
+                           self.cur_line)
+            }
+            "]" => {
+                Token::new(TokenKind::Symbol(Symbol::ClosingBoxBracket),
+                           "",
+                           0,
+                           self.cur_line)
+            }
+            "{" => {
+                Token::new(TokenKind::Symbol(Symbol::OpeningBrace),
+                           "",
+                           0,
+                           self.cur_line)
+            }
+            "}" => {
+                Token::new(TokenKind::Symbol(Symbol::ClosingBrace),
+                           "",
+                           0,
+                           self.cur_line)
+            }
+            "." => Token::new(TokenKind::Symbol(Symbol::Point), "", 0, self.cur_line),
+            "," => Token::new(TokenKind::Symbol(Symbol::Comma), "", 0, self.cur_line),
+            ";" => Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, self.cur_line),
+            ":" => Token::new(TokenKind::Symbol(Symbol::Colon), "", 0, self.cur_line),
+            "->" => Token::new(TokenKind::Symbol(Symbol::Arrow), "", 0, self.cur_line),
+            "+" => Token::new(TokenKind::Symbol(Symbol::Add), "", 0, self.cur_line),
+            "-" => Token::new(TokenKind::Symbol(Symbol::Sub), "", 0, self.cur_line),
+            "!" => Token::new(TokenKind::Symbol(Symbol::Not), "", 0, self.cur_line),
+            "~" => Token::new(TokenKind::Symbol(Symbol::BitwiseNot), "", 0, self.cur_line),
+            "*" => Token::new(TokenKind::Symbol(Symbol::Asterisk), "", 0, self.cur_line),
+            "&" => Token::new(TokenKind::Symbol(Symbol::Ampersand), "", 0, self.cur_line),
+            "/" => Token::new(TokenKind::Symbol(Symbol::Div), "", 0, self.cur_line),
+            "%" => Token::new(TokenKind::Symbol(Symbol::Mod), "", 0, self.cur_line),
+            "<<" => Token::new(TokenKind::Symbol(Symbol::Shl), "", 0, self.cur_line),
+            ">>" => Token::new(TokenKind::Symbol(Symbol::Shr), "", 0, self.cur_line),
+            "<" => Token::new(TokenKind::Symbol(Symbol::Lt), "", 0, self.cur_line),
+            "<=" => Token::new(TokenKind::Symbol(Symbol::Le), "", 0, self.cur_line),
+            ">" => Token::new(TokenKind::Symbol(Symbol::Gt), "", 0, self.cur_line),
+            ">=" => Token::new(TokenKind::Symbol(Symbol::Ge), "", 0, self.cur_line),
+            "==" => Token::new(TokenKind::Symbol(Symbol::Eq), "", 0, self.cur_line),
+            "!=" => Token::new(TokenKind::Symbol(Symbol::Ne), "", 0, self.cur_line),
+            "^" => Token::new(TokenKind::Symbol(Symbol::Xor), "", 0, self.cur_line),
+            "|" => Token::new(TokenKind::Symbol(Symbol::Or), "", 0, self.cur_line),
+            "&&" => Token::new(TokenKind::Symbol(Symbol::LAnd), "", 0, self.cur_line),
+            "||" => Token::new(TokenKind::Symbol(Symbol::LOr), "", 0, self.cur_line),
+            "?" => Token::new(TokenKind::Symbol(Symbol::Question), "", 0, self.cur_line),
+            "=" => Token::new(TokenKind::Symbol(Symbol::Assign), "", 0, self.cur_line),
+            "+=" => Token::new(TokenKind::Symbol(Symbol::AssignAdd), "", 0, self.cur_line),
+            "-=" => Token::new(TokenKind::Symbol(Symbol::AssignSub), "", 0, self.cur_line),
+            "*=" => Token::new(TokenKind::Symbol(Symbol::AssignMul), "", 0, self.cur_line),
+            "/=" => Token::new(TokenKind::Symbol(Symbol::AssignDiv), "", 0, self.cur_line),
+            "%=" => Token::new(TokenKind::Symbol(Symbol::AssignMod), "", 0, self.cur_line),
+            "<<=" => Token::new(TokenKind::Symbol(Symbol::AssignShl), "", 0, self.cur_line),
+            ">>=" => Token::new(TokenKind::Symbol(Symbol::AssignShr), "", 0, self.cur_line),
+            "&=" => Token::new(TokenKind::Symbol(Symbol::AssignAnd), "", 0, self.cur_line),
+            "^=" => Token::new(TokenKind::Symbol(Symbol::AssignXor), "", 0, self.cur_line),
+            "|=" => Token::new(TokenKind::Symbol(Symbol::AssignOr), "", 0, self.cur_line),
+            "#" => Token::new(TokenKind::Symbol(Symbol::Hash), "", 0, self.cur_line),
+            "..." => Token::new(TokenKind::Symbol(Symbol::Vararg), "", 0, self.cur_line),
+            "sizeof" => Token::new(TokenKind::Symbol(Symbol::Sizeof), "", 0, self.cur_line),
             _ => token,
         }
     }
@@ -478,7 +655,7 @@ impl Lexer {
         let expect_bracket = self.read_token()
             .or_else(|| error::error_exit(self.cur_line, "expected '(' but reach EOF"))
             .unwrap();
-        if expect_bracket.val != "(" {
+        if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
             error::error_exit(self.cur_line, "expected '('");
         }
 
@@ -561,7 +738,7 @@ impl Lexer {
         let t = self.read_token();
         let tok = match t {
             Some(tok) => {
-                if tok.val == "#" {
+                if tok.kind == TokenKind::Symbol(Symbol::Hash) {
                     self.read_cpp_directive();
                     self.get()
                 } else if tok.kind == TokenKind::String && self.peek_e().kind == TokenKind::String {
@@ -640,7 +817,7 @@ impl Lexer {
     }
     fn read_headerfile_name(&mut self) -> String {
         let mut name = "".to_string();
-        if self.skip("<") {
+        if self.skip_symbol(Symbol::Lt) {
             while !self.peek_char_is('>') {
                 name.push(self.peek_next());
             }
@@ -705,10 +882,10 @@ impl Lexer {
                 .unwrap()
                 .val;
             args.insert(arg, count);
-            if self.skip(")") {
+            if self.skip_symbol(Symbol::ClosingParen) {
                 break;
             }
-            self.expect_skip(",");
+            self.expect_skip_symbol(Symbol::Comma);
             count += 1;
         }
 
@@ -770,7 +947,7 @@ impl Lexer {
         let mut tok = self.do_read_token().unwrap();
         if tok.val == "(" {
             tok = self.do_read_token().unwrap();
-            self.expect_skip(")");
+            self.expect_skip_symbol(Symbol::ClosingParen);
         }
         if MACRO_MAP.lock().unwrap().contains_key(tok.val.as_str()) {
             Token::new(TokenKind::IntNumber, "1", 0, self.cur_line)
@@ -787,13 +964,16 @@ impl Lexer {
             tok = self.expand(Some(tok)).unwrap();
             if tok.kind == TokenKind::Newline {
                 break;
-            } else if tok.val == "defined" {
-                v.push(self.read_defined_op());
-            } else if tok.kind == TokenKind::Identifier {
-                // identifier in expr line is replaced with 0i
-                v.push(Token::new(TokenKind::IntNumber, "0", 0, self.cur_line));
             } else {
-                v.push(tok);
+                tok = self.convert_to_keyword_or_symbol(tok);
+                if tok.val == "defined" {
+                    v.push(self.read_defined_op());
+                } else if tok.kind == TokenKind::Identifier {
+                    // identifier in expr line is replaced with 0i
+                    v.push(Token::new(TokenKind::IntNumber, "0", 0, self.cur_line));
+                } else {
+                    v.push(tok);
+                }
             }
         }
         v
@@ -802,7 +982,7 @@ impl Lexer {
         let expr_line = self.read_intexpr_line();
         self.buf.push_back(VecDeque::new());
 
-        self.unget(Token::new(TokenKind::Symbol, ";", 0, 0));
+        self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, 0));
         self.unget_all(expr_line);
 
         let node = parser::Parser::new((*self).clone()).run_as_expr();
@@ -870,7 +1050,7 @@ impl Lexer {
                     "else" | "elif" | "endif" => {
                         let line = self.cur_line;
                         self.unget(tok);
-                        self.unget(Token::new(TokenKind::Symbol, "#", 0, line));
+                        self.unget(Token::new(TokenKind::Identifier, "#", 0, line));
                         return;
                     }
                     _ => {}
