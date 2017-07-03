@@ -1,7 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::str;
-use std::collections::{VecDeque, LinkedList};
+use std::collections::VecDeque;
 use std::path;
 use std::process;
 use std::collections::{HashSet, HashMap};
@@ -107,7 +107,7 @@ pub enum TokenKind {
     Identifier,
     IntNumber,
     FloatNumber,
-    String,
+    String(String),
     Char,
     Symbol(Symbol),
     Newline,
@@ -139,7 +139,7 @@ impl Token {
 #[derive(Clone)]
 pub struct Lexer {
     pub cur_line: i32,
-    filename: LinkedList<String>,
+    filename: VecDeque<String>,
     peek: VecDeque<Vec<u8>>,
     peek_pos: VecDeque<usize>,
     buf: VecDeque<VecDeque<Token>>,
@@ -148,7 +148,7 @@ pub struct Lexer {
 
 impl Lexer {
     pub fn new(filename: String) -> Lexer {
-        let mut buf: VecDeque<VecDeque<Token>> = VecDeque::new();
+        let mut buf = VecDeque::new();
         buf.push_back(VecDeque::new());
 
         let mut file = OpenOptions::new()
@@ -156,17 +156,33 @@ impl Lexer {
             .open(filename.to_string())
             .unwrap();
         let mut file_body = String::new();
-        file.read_to_string(&mut file_body);
+        file.read_to_string(&mut file_body)
+            .ok()
+            // TODO: fix
+            .expect("cannot open file");
+
+        let mut rucc_header = OpenOptions::new()
+            .read(true)
+            .open("./include/rucc.h")
+            .unwrap();
+        let mut rucc_header_body = String::new();
+        rucc_header.read_to_string(&mut rucc_header_body)
+            .ok()
+            // TODO: fix
+            .expect("cannot open file");
         let mut peek = VecDeque::new();
         unsafe {
             peek.push_back(file_body.as_mut_vec().clone());
+            peek.push_back(rucc_header_body.as_mut_vec().clone());
         }
 
         let mut peek_pos = VecDeque::new();
         peek_pos.push_back(0);
+        peek_pos.push_back(0);
 
-        let mut filenames = LinkedList::new();
+        let mut filenames = VecDeque::new();
         filenames.push_back(filename);
+        filenames.push_back("rucc.h".to_string());
 
         Lexer {
             cur_line: 1,
@@ -191,27 +207,25 @@ impl Lexer {
     }
     fn peek_next(&mut self) -> char {
         let peek_pos = self.peek_pos.back_mut().unwrap();
+        let ret = self.peek.back_mut().unwrap()[*peek_pos] as char;
         *peek_pos += 1;
-        self.peek.back_mut().unwrap()[*peek_pos - 1] as char
+        ret
     }
     fn peek_next_char_is(&mut self, ch: char) -> bool {
-        self.peek_next();
-        let nextc = self.peek_next();
-        *self.peek_pos.back_mut().unwrap() -= 2;
+        let nextc = self.peek.back_mut().unwrap()[*self.peek_pos.back_mut().unwrap() + 1] as char;
         nextc == ch
     }
     fn peek_char_is(&mut self, ch: char) -> bool {
         let line = self.cur_line;
         let errf =
             || -> Option<char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
-
         let peekc = self.peek_get().or_else(errf).unwrap();
         peekc == ch
     }
 
     pub fn peek_token_is(&mut self, expect: &str) -> bool {
         let peek = self.peek_e();
-        peek.val == expect && peek.kind != TokenKind::String && peek.kind != TokenKind::Char
+        peek.val == expect && peek.kind != TokenKind::Char
     }
     pub fn peek_keyword_token_is(&mut self, expect: Keyword) -> bool {
         let peek = self.peek_e();
@@ -227,7 +241,7 @@ impl Lexer {
         let n = next.clone();
         self.unget(next);
         self.unget(peek);
-        n.val == expect && n.kind != TokenKind::String && n.kind != TokenKind::Char
+        n.val == expect && n.kind != TokenKind::Char
     }
     pub fn next_keyword_token_is(&mut self, expect: Keyword) -> bool {
         let peek = self.get_e();
@@ -244,23 +258,6 @@ impl Lexer {
         self.unget(next);
         self.unget(peek);
         n.kind == TokenKind::Symbol(expect)
-    }
-    pub fn skip(&mut self, s: &str) -> bool {
-        let next = self.get();
-        match next {
-            Some(n) => {
-                if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {
-                    true
-                } else {
-                    self.buf.back_mut().unwrap().push_back(n);
-                    false
-                }
-            }
-            None => {
-                error::error_exit(self.cur_line,
-                                  format!("expect '{}' but reach EOF", s).as_str())
-            }
-        }
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> bool {
         match self.get() {
@@ -280,11 +277,11 @@ impl Lexer {
     }
     pub fn skip_symbol(&mut self, sym: Symbol) -> bool {
         match self.get() {
-            Some(n) => {
-                if n.kind == TokenKind::Symbol(sym) {
+            Some(tok) => {
+                if tok.kind == TokenKind::Symbol(sym) {
                     true
                 } else {
-                    self.buf.back_mut().unwrap().push_back(n);
+                    self.buf.back_mut().unwrap().push_back(tok);
                     false
                 }
             }
@@ -293,13 +290,6 @@ impl Lexer {
                                   format!("expect '{:?}' but reach EOF", sym).as_str())
             }
         }
-    }
-    pub fn expect_skip(&mut self, expect: &str) -> bool {
-        if !self.skip(expect) {
-            error::error_exit(self.cur_line,
-                              format!("expected the keyword '{}'", expect).as_str());
-        }
-        true
     }
     pub fn expect_skip_keyword(&mut self, expect: Keyword) -> bool {
         if !self.skip_keyword(expect.clone()) {
@@ -328,17 +318,13 @@ impl Lexer {
     pub fn read_identifier(&mut self) -> Token {
         let mut ident = String::new();
         loop {
-            match self.peek_get() {
-                Some(c) => {
-                    match c {
-                        'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
-                        _ => break,
-                    }
-                }
+            let c = self.peek_next();
+            match c {
+                'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
                 _ => break,
             };
-            self.peek_next();
         }
+        *self.peek_pos.back_mut().unwrap() -= 1;
         Token::new(TokenKind::Identifier, ident.as_str(), 0, self.cur_line)
     }
     fn read_number_literal(&mut self) -> Token {
@@ -413,7 +399,7 @@ impl Lexer {
             s.push(self.peek_next());
         }
         self.peek_next();
-        Token::new(TokenKind::String, s.as_str(), 0, self.cur_line)
+        Token::new(TokenKind::String(s), "", 0, self.cur_line)
     }
     fn read_char_literal(&mut self) -> Token {
         self.peek_next();
@@ -646,9 +632,15 @@ impl Lexer {
     fn stringize(&mut self, tokens: &Vec<Token>) -> Token {
         let mut string = String::new();
         for token in tokens {
-            string += format!("{}{}", (if token.space { " " } else { "" }), token.val).as_str();
+            string += format!("{}{}",
+                              (if token.space { " " } else { "" }),
+                              match token.kind {
+                                  TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
+                                  _ => token.val.to_string(),
+                              })
+                    .as_str();
         }
-        Token::new(TokenKind::String, string.as_str(), 0, self.cur_line)
+        Token::new(TokenKind::String(string), "", 0, self.cur_line)
     }
     fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) {
         // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
@@ -741,11 +733,18 @@ impl Lexer {
                 if tok.kind == TokenKind::Symbol(Symbol::Hash) {
                     self.read_cpp_directive();
                     self.get()
-                } else if tok.kind == TokenKind::String && self.peek_e().kind == TokenKind::String {
-                    let s = self.get_e().val;
-                    let mut nt = tok.clone();
-                    nt.val.push_str(s.as_str());
-                    Some(nt)
+                } else if let TokenKind::String(s) = tok.kind.clone() {
+                    if let TokenKind::String(s2) = self.peek_e().kind {
+                        // TODO: makes no sense...
+                        self.get_e();
+                        let mut ntok = tok;
+                        let mut ns = s.clone();
+                        ns.push_str(s2.as_str());
+                        ntok.kind = TokenKind::String(ns);
+                        Some(ntok)
+                    } else {
+                        Some(tok)
+                    }
                 } else {
                     Some(tok)
                 }
@@ -822,13 +821,15 @@ impl Lexer {
                 name.push(self.peek_next());
             }
             self.peek_next(); // >
-        } else if self.skip("\"") {
-            while !self.peek_char_is('"') {
-                name.push(self.peek_next());
-            }
-            self.peek_next(); // "
         } else {
-            error::error_exit(self.cur_line, "expected '<' or '\"'");
+            let tok = self.do_read_token()
+                .or_else(|| { error::error_exit(self.cur_line, "expcted macro args"); })
+                .unwrap();
+            if let TokenKind::String(s) = tok.kind {
+                name = s;
+            } else {
+                error::error_exit(self.cur_line, "expected '<' or '\"'");
+            }
         }
         name
     }
@@ -985,7 +986,7 @@ impl Lexer {
         self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, 0));
         self.unget_all(expr_line);
 
-        let node = parser::Parser::new((*self).clone()).run_as_expr();
+        let node = parser::Parser::new(self).run_as_expr();
 
         self.buf.pop_back();
 

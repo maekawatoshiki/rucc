@@ -4,8 +4,6 @@ use node;
 use error;
 use types::{Type, Sign};
 
-use std::fs::OpenOptions;
-use std::io::prelude::*;
 use std::{str, u32};
 use std::rc::Rc;
 use std::collections::{HashMap, VecDeque, hash_map};
@@ -24,8 +22,8 @@ enum StorageClass {
     Register,
 }
 
-pub struct Parser {
-    lexer: Lexer,
+pub struct Parser<'a> {
+    lexer: &'a mut Lexer,
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
 }
@@ -37,8 +35,8 @@ fn retrieve_from_load(ast: &AST) -> AST {
     }
 }
 
-impl Parser {
-    pub fn new(lexer: Lexer) -> Parser {
+impl<'a> Parser<'a> {
+    pub fn new(lexer: &'a mut Lexer) -> Parser<'a> {
         let mut env = VecDeque::new();
         let mut tags = VecDeque::new();
         env.push_back(HashMap::new());
@@ -52,13 +50,7 @@ impl Parser {
     }
     pub fn run_file(filename: String) -> Vec<AST> {
         let mut nodes: Vec<AST> = Vec::new();
-        let mut file = OpenOptions::new()
-            .read(true)
-            .open(filename.to_string())
-            .unwrap();
-        let mut s = String::new();
-        file.read_to_string(&mut s);
-        let lexer = Lexer::new(filename.to_string());
+        let mut lexer = Lexer::new(filename.to_string());
         // TODO: for debugging
         // loop {
         //     let tok = lexer.get();
@@ -69,10 +61,10 @@ impl Parser {
         //         None => break,
         //     }
         // }
-
+        //
         // // Debug: (parsing again is big cost?)
         // lexer = Lexer::new(filename.to_string(), s.as_str());
-        Parser::new(lexer).run(&mut nodes);
+        Parser::new(&mut lexer).run(&mut nodes);
         nodes
     }
     pub fn run(&mut self, node: &mut Vec<AST>) {
@@ -281,9 +273,9 @@ impl Parser {
     }
     fn read_decl_init(&mut self, ty: &mut Type) -> AST {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
-        if self.lexer.skip_symbol(Symbol::OpeningBrace) ||
-           self.lexer.peek_e().kind == TokenKind::String {
-            // self.read_
+        if self.lexer.skip_symbol(Symbol::OpeningBrace) {
+            self.read_initializer_list(ty)
+        } else if let TokenKind::String(_) = self.lexer.peek_e().kind {
             self.read_initializer_list(ty)
         } else {
             self.read_assign()
@@ -1100,7 +1092,7 @@ impl Parser {
                     AST::Load(Rc::new(AST::Variable(tok.val)))
                 }
             }
-            TokenKind::String => AST::String(tok.val),
+            TokenKind::String(s) => AST::String(s),
             TokenKind::Char => {
                 let ch = tok.val.bytes().nth(0);
                 AST::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32)
