@@ -996,7 +996,7 @@ impl Codegen {
         let new_struct: LLVMTypeRef = {
             let strct = self.llvm_struct_map.get(name);
             if let Some(ref rectype) = strct {
-                if fields.is_empty() {
+                if !rectype.field_types.is_empty() {
                     // declared struct
                     return (true, rectype.llvm_rectype);
                 } else {
