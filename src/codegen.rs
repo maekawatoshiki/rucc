@@ -521,7 +521,7 @@ impl Codegen {
             Type::Array(elem_ty, _) => {
                 return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
             }
-            Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
+            Type::Char(_) | Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
                 if lhsty_sz < rhsty_sz {
                     let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
                     return (self.gen_int_binary_op(castlhs, rhs, op),
@@ -826,8 +826,10 @@ impl Codegen {
                             Some(Type::Ptr(Rc::new((**ary_elemty).clone()))));
                 }
                 _ => {
-                    return (LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
-                            Some((**elem_ty).clone()))
+                    return (LLVMBuildLoad(self.builder,
+                                          val,
+                                          CString::new("var").unwrap().as_ptr()),
+                            Some((**elem_ty).clone()));
                 }
             }
         } else {
