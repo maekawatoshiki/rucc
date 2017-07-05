@@ -251,19 +251,20 @@ impl Codegen {
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
         } else {
+            // TODO: implement correctly
             // default initializer
-            match *ty {
-                Type::Array(ref elem_ty, _) => {
-                    LLVMSetInitializer(gvar,
-                                       LLVMConstArray(self.type_to_llvmty(elem_ty),
-                                                      ptr::null_mut(),
-                                                      0))
-                }
-                Type::Struct(_, _) => {
-                    LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0))
-                }
-                _ => {}
-            }
+            // match *ty {
+            //     Type::Array(ref elem_ty, _) => {
+            //         LLVMSetInitializer(gvar,
+            //                            LLVMConstArray(self.type_to_llvmty(elem_ty),
+            //                                           ptr::null_mut(),
+            //                                           0))
+            //     }
+            //     Type::Struct(_, _) => {
+            //         LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0))
+            //     }
+            //     _ => {}
+            // }
         }
     }
     unsafe fn const_init_global_var(&mut self,
