@@ -7,6 +7,16 @@ pub enum Sign {
     Unsigned,
 }
 
+#[derive(PartialEq, Debug, Clone)]
+pub enum StorageClass {
+    Typedef,
+    Extern,
+    Static,
+    Auto,
+    Register,
+}
+
+
 #[derive(Debug, Clone)]
 pub enum Type {
     Void,
@@ -58,7 +68,7 @@ impl Type {
                     }
                 };
                 for field in fields {
-                    size_total += if let &AST::VariableDecl(ref ty, _, _) = field {
+                    size_total += if let &AST::VariableDecl(ref ty, _, _, _) = field {
                         let size = ty.calc_size();
                         size + calc_padding(size_total, size)
                     } else {
@@ -68,7 +78,7 @@ impl Type {
                 size_total
             }
             &Type::Union(ref _name, ref fields, ref max_nth) => {
-                if let &AST::VariableDecl(ref ty, _, _) = &fields[*max_nth] {
+                if let &AST::VariableDecl(ref ty, _, _, _) = &fields[*max_nth] {
                     ty.calc_size()
                 } else {
                     0

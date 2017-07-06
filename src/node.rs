@@ -1,5 +1,5 @@
 use std::rc::Rc;
-use types::Type;
+use types::{Type, StorageClass};
 use std::marker::Send;
 
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub enum AST {
     TypeCast(Rc<AST>, Type),
     Load(Rc<AST>),
     Variable(String),
-    VariableDecl(Type, String, Option<Rc<AST>>), // type, name, init val
+    VariableDecl(Type, String, StorageClass, Option<Rc<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
@@ -135,8 +135,8 @@ impl AST {
                 print!(")");
             }
             &AST::Variable(ref name) => print!("{} ", name),
-            &AST::VariableDecl(ref ty, ref name, ref init) => {
-                print!("(var-decl {:?} {}", ty, name);
+            &AST::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
+                print!("(var-decl {:?} {:?} {}", ty, sclass, name);
                 if init.is_some() {
                     print!(" (init ");
                     init.clone().unwrap().show();

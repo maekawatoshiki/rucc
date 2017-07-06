@@ -10,7 +10,7 @@ use self::llvm::core::*;
 use self::llvm::prelude::*;
 
 use node;
-use types::{Type, Sign};
+use types::{Type, StorageClass, Sign};
 use error;
 
 // used by global_varmap and local_varmap(not to use tuples)
@@ -105,8 +105,8 @@ impl Codegen {
             &node::AST::FuncDef(ref functy, ref param_names, ref name, ref body) => {
                 self.gen_func_def(functy, param_names, name, body)
             }
-            &node::AST::VariableDecl(ref ty, ref name, ref init) => {
-                self.gen_var_decl(ty, name, init)
+            &node::AST::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
+                self.gen_var_decl(ty, name, sclass, init)
             }
             &node::AST::Block(ref block) => self.gen_block(block),
             &node::AST::Compound(ref block) => self.gen_compound(block),
@@ -180,7 +180,7 @@ impl Codegen {
                 .zip(param_names.iter())
                 .enumerate() {
             let arg_val = LLVMGetParam(func, i as u32);
-            let var = self.gen_local_var_decl(arg_ty, arg_name, &None);
+            let var = self.gen_local_var_decl(arg_ty, arg_name, &StorageClass::Auto, &None);
             LLVMBuildStore(self.builder, arg_val, var);
         }
 
@@ -208,13 +208,14 @@ impl Codegen {
     unsafe fn gen_var_decl(&mut self,
                            ty: &Type,
                            name: &String,
+                           sclass: &StorageClass,
                            init: &Option<Rc<node::AST>>)
                            -> (LLVMValueRef, Option<Type>) {
         // is global
         if self.cur_func.is_none() {
-            self.gen_global_var_decl(ty, name, init);
+            self.gen_global_var_decl(ty, name, sclass, init);
         } else {
-            self.gen_local_var_decl(ty, name, init);
+            self.gen_local_var_decl(ty, name, sclass, init);
         }
         (ptr::null_mut(), None)
     }
@@ -222,6 +223,7 @@ impl Codegen {
     unsafe fn gen_global_var_decl(&mut self,
                                   ty: &Type,
                                   name: &String,
+                                  sclass: &StorageClass,
                                   init: &Option<Rc<node::AST>>) {
         let (gvar, llvm_gvar_ty) = if self.global_varmap.contains_key(name) {
             let ref v = self.global_varmap.get(name).unwrap();
@@ -251,20 +253,34 @@ impl Codegen {
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap());
         } else {
+            match *ty {
+                Type::Func(_, _, _) => return,
+                _ => {}
+            }
+
+            LLVMSetLinkage(gvar,
+                           match *sclass {
+                               StorageClass::Typedef => panic!(),
+                               StorageClass::Extern => llvm::LLVMLinkage::LLVMExternalLinkage,
+                               StorageClass::Static => llvm::LLVMLinkage::LLVMCommonLinkage, // TODO: think handling of static
+                               StorageClass::Register => llvm::LLVMLinkage::LLVMCommonLinkage,
+                               StorageClass::Auto => llvm::LLVMLinkage::LLVMCommonLinkage,
+                           });
             // TODO: implement correctly
-            // default initializer
-            // match *ty {
-            //     Type::Array(ref elem_ty, _) => {
-            //         LLVMSetInitializer(gvar,
-            //                            LLVMConstArray(self.type_to_llvmty(elem_ty),
-            //                                           ptr::null_mut(),
-            //                                           0))
-            //     }
-            //     Type::Struct(_, _) => {
-            //         LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0))
-            //     }
-            //     _ => {}
-            // }
+            if *sclass == StorageClass::Auto {
+                match *ty {
+                    Type::Array(ref elem_ty, _) => {
+                        LLVMSetInitializer(gvar,
+                                           LLVMConstArray(self.type_to_llvmty(elem_ty),
+                                                          ptr::null_mut(),
+                                                          0))
+                    }
+                    Type::Struct(_, _) => {
+                        LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0))
+                    }
+                    _ => {}
+                }
+            }
         }
     }
     unsafe fn const_init_global_var(&mut self,
@@ -293,6 +309,7 @@ impl Codegen {
     unsafe fn gen_local_var_decl(&mut self,
                                  ty: &Type,
                                  name: &String,
+                                 sclass: &StorageClass,
                                  init: &Option<Rc<node::AST>>)
                                  -> LLVMValueRef {
 
@@ -504,20 +521,30 @@ impl Codegen {
         }
 
         // normal binary operators
-        let (lhs, lhsty) = self.gen(lhsast);
-        let (rhs, rhsty) = self.gen(rhsast);
+        let (lhs, lhsty_w) = self.gen(lhsast);
+        let (rhs, rhsty_w) = self.gen(rhsast);
+        let lhsty = if let Some(lhsty) = lhsty_w {
+            lhsty
+        } else {
+            panic!("left hand side must return the type of expression");
+        };
+        let rhsty = if let Some(rhsty) = rhsty_w {
+            rhsty
+        } else {
+            panic!("right hand side must return the type of expression");
+        };
 
-        let lhsty_sz = lhsty.clone().unwrap().calc_size();
-        let rhsty_sz = rhsty.clone().unwrap().calc_size();
+        let lhsty_sz = lhsty.calc_size();
+        let rhsty_sz = rhsty.calc_size();
 
-        match rhsty.unwrap() {
+        match rhsty {
             Type::Ptr(elem_ty) |
             Type::Array(elem_ty, _) => {
                 return (self.gen_ptr_binary_op(rhs, lhs, op), Some(Type::Ptr(elem_ty)))
             }
             _ => {}
         }
-        match lhsty.unwrap() {
+        match lhsty {
             Type::Ptr(elem_ty) |
             Type::Array(elem_ty, _) => {
                 return (self.gen_ptr_binary_op(lhs, rhs, op), Some(Type::Ptr(elem_ty)));
@@ -525,14 +552,12 @@ impl Codegen {
             Type::Char(_) | Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
                 if lhsty_sz < rhsty_sz {
                     let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
-                    return (self.gen_int_binary_op(castlhs, rhs, op),
-                            Some(Type::Int(Sign::Signed)));
+                    return (self.gen_int_binary_op(castlhs, rhs, op), Some(rhsty));
                 } else if lhsty_sz == rhsty_sz {
-                    return (self.gen_int_binary_op(lhs, rhs, op), Some(Type::Int(Sign::Signed)));
+                    return (self.gen_int_binary_op(lhs, rhs, op), Some(lhsty));
                 } else {
                     let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
-                    return (self.gen_int_binary_op(lhs, castrhs, op),
-                            Some(Type::Int(Sign::Signed)));
+                    return (self.gen_int_binary_op(lhs, castrhs, op), Some(lhsty));
                 }
             }
             _ => {}
@@ -1013,7 +1038,7 @@ impl Codegen {
         // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
             match field {
-                &node::AST::VariableDecl(ref ty, ref name, ref _init) => {
+                &node::AST::VariableDecl(ref ty, ref name, ref _sclass, ref _init) => {
                     fields_llvm_types.push(self.type_to_llvmty(ty));
                     fields_types.push(ty.clone());
                     fields_names_map.insert(name.to_string(), i as u32);

@@ -2,7 +2,7 @@ use lexer::{Lexer, Token, TokenKind, Keyword, Symbol};
 use node::AST;
 use node;
 use error;
-use types::{Type, Sign};
+use types::{Type, StorageClass, Sign};
 
 use std::{str, u32};
 use std::rc::Rc;
@@ -12,15 +12,6 @@ extern crate llvm_sys as llvm;
 
 extern crate rand;
 use self::rand::Rng;
-
-#[derive(PartialEq, Debug, Clone)]
-enum StorageClass {
-    Typedef,
-    Extern,
-    Static,
-    Auto,
-    Register,
-}
 
 pub struct Parser<'a> {
     lexer: &'a mut Lexer,
@@ -316,8 +307,13 @@ impl<'a> Parser<'a> {
               self.lexer.skip_keyword(Keyword::Restrict) {}
     }
     fn read_decl(&mut self, ast: &mut Vec<AST>) {
-        let (basety, sclass) = self.read_type_spec();
-        let is_typedef = sclass.is_some() && sclass.unwrap() == StorageClass::Typedef;
+        let (basety, sclass_w) = self.read_type_spec();
+        let (sclass, is_typedef) = if let Some(sclass) = sclass_w {
+            (sclass.clone(), sclass == StorageClass::Typedef)
+        } else {
+            (StorageClass::Auto, false)
+        };
+
         if self.lexer.skip_symbol(Symbol::Semicolon) {
             return;
         }
@@ -336,15 +332,11 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            ast.push(AST::VariableDecl(ty, name, init));
+            ast.push(AST::VariableDecl(ty, name, sclass.clone(), init));
 
             if self.lexer.skip_symbol(Symbol::Semicolon) {
                 return;
             }
-            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
-            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
-            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
-            // println!("{}{:?}", self.lexer.peek_e().val, self.lexer.get_e().kind);
             self.lexer.expect_skip_symbol(Symbol::Comma);
         }
     }
@@ -659,7 +651,7 @@ impl<'a> Parser<'a> {
                 let mut max_sz_ty_nth = 0;
                 let mut max_sz = 0;
                 for (i, field_decl) in (&fields).iter().enumerate() {
-                    if let &AST::VariableDecl(ref ty, _, _) = field_decl {
+                    if let &AST::VariableDecl(ref ty, _, _, _) = field_decl {
                         if ty.calc_size() > max_sz {
                             max_sz = ty.calc_size();
                             max_sz_ty_nth = i;
@@ -695,7 +687,7 @@ impl<'a> Parser<'a> {
                     // TODO: for now, designated bitwidth ignore
                     self.read_expr();
                 }
-                decls.push(AST::VariableDecl(ty, name, None));
+                decls.push(AST::VariableDecl(ty, name, StorageClass::Auto, None));
                 if self.lexer.skip_symbol(Symbol::Comma) {
                     continue;
                 } else {
