@@ -1,5 +1,5 @@
 use lexer::{Lexer, Token, TokenKind, Keyword, Symbol};
-use node::AST;
+use node::{AST, ASTKind};
 use node;
 use error;
 use types::{Type, StorageClass, Sign};
@@ -20,8 +20,8 @@ pub struct Parser<'a> {
 }
 
 fn retrieve_from_load(ast: &AST) -> AST {
-    match ast {
-        &AST::Load(ref var) => (**var).clone(),
+    match ast.kind {
+        ASTKind::Load(ref var) => (**var).clone(),
         _ => (*ast).clone(),
     }
 }
@@ -87,14 +87,15 @@ impl<'a> Parser<'a> {
         let body = self.read_func_body(&functy);
         self.env.pop_back();
         self.tags.pop_back();
-        AST::FuncDef(functy,
-                     if param_names.is_none() {
-                         Vec::new()
-                     } else {
-                         param_names.unwrap()
-                     },
-                     name,
-                     Rc::new(body))
+        AST::new(ASTKind::FuncDef(functy,
+                                  if param_names.is_none() {
+                                      Vec::new()
+                                  } else {
+                                      param_names.unwrap()
+                                  },
+                                  name,
+                                  Rc::new(body)),
+                 0)
     }
     fn read_func_body(&mut self, _functy: &Type) -> AST {
         self.read_compound_stmt()
@@ -114,7 +115,7 @@ impl<'a> Parser<'a> {
                 stmts.push(self.read_stmt());
             }
         }
-        AST::Block(stmts)
+        AST::new(ASTKind::Block(stmts), 0)
     }
     fn read_stmt(&mut self) -> AST {
         let tok = self.lexer.get_e();
@@ -142,9 +143,9 @@ impl<'a> Parser<'a> {
         let else_stmt = if self.lexer.skip_keyword(Keyword::Else) {
             Rc::new(self.read_stmt())
         } else {
-            Rc::new(AST::Block(Vec::new()))
+            Rc::new(AST::new(ASTKind::Block(Vec::new()), 0))
         };
-        AST::If(Rc::new(cond), then_stmt, else_stmt)
+        AST::new(ASTKind::If(Rc::new(cond), then_stmt, else_stmt), 0)
     }
     fn read_for_stmt(&mut self) -> AST {
         self.lexer.expect_skip_symbol(Symbol::OpeningParen);
@@ -156,22 +157,24 @@ impl<'a> Parser<'a> {
         let step = self.read_opt_expr();
         self.lexer.expect_skip_symbol(Symbol::ClosingParen);
         let body = self.read_stmt();
-        AST::For(Rc::new(init), Rc::new(cond), Rc::new(step), Rc::new(body))
+        AST::new(ASTKind::For(Rc::new(init), Rc::new(cond), Rc::new(step), Rc::new(body)),
+                 0)
     }
     fn read_while_stmt(&mut self) -> AST {
         self.lexer.expect_skip_symbol(Symbol::OpeningParen);
         let cond = self.read_expr();
         self.lexer.expect_skip_symbol(Symbol::ClosingParen);
         let body = self.read_stmt();
-        AST::While(Rc::new(cond), Rc::new(body))
+        AST::new(ASTKind::While(Rc::new(cond), Rc::new(body)), 0)
     }
     fn read_return_stmt(&mut self) -> AST {
+        let line = self.lexer.cur_line;
         if self.lexer.skip_symbol(Symbol::Semicolon) {
-            AST::Return(None)
+            AST::new(ASTKind::Return(None), line)
         } else {
             let retval = Some(Rc::new(self.read_expr()));
             self.lexer.expect_skip_symbol(Symbol::Semicolon);
-            AST::Return(retval)
+            AST::new(ASTKind::Return(retval), line)
         }
     }
     fn is_function_def(&mut self) -> bool {
@@ -231,8 +234,8 @@ impl<'a> Parser<'a> {
         let env = self.env.back_mut().unwrap();
         match env.get(name) {
             Some(ast) => {
-                Some(match ast {
-                         &AST::Typedef(ref from, ref _to) => (*from).clone(),
+                Some(match ast.kind {
+                         ASTKind::Typedef(ref from, ref _to) => (*from).clone(),
                          _ => {
                              error::error_exit(self.lexer.cur_line,
                                                format!("not found type '{}'", name).as_str())
@@ -295,7 +298,7 @@ impl<'a> Parser<'a> {
             if is_flexible {
                 *len = count;
             }
-            AST::ConstArray(elems)
+            AST::new(ASTKind::ConstArray(elems), self.lexer.cur_line)
         } else {
             error::error_exit(self.lexer.cur_line, "impossible");
         }
@@ -322,7 +325,8 @@ impl<'a> Parser<'a> {
             let (mut ty, name, _) = self.read_declarator(basety.clone());
 
             if is_typedef {
-                let typedef = AST::Typedef(basety, name.to_string());
+                let typedef = AST::new(ASTKind::Typedef(basety, name.to_string()),
+                                       self.lexer.cur_line);
                 self.env.back_mut().unwrap().insert(name, typedef);
                 return;
             }
@@ -332,7 +336,8 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            ast.push(AST::VariableDecl(ty, name, sclass.clone(), init));
+            ast.push(AST::new(ASTKind::VariableDecl(ty, name, sclass.clone(), init),
+                              self.lexer.cur_line));
 
             if self.lexer.skip_symbol(Symbol::Semicolon) {
                 return;
@@ -342,15 +347,16 @@ impl<'a> Parser<'a> {
     }
     fn read_opt_decl_or_stmt(&mut self) -> AST {
         if self.lexer.skip_symbol(Symbol::Semicolon) {
-            return AST::Compound(Vec::new());
+            return AST::new(ASTKind::Compound(Vec::new()), self.lexer.cur_line);
         }
 
         let peek_tok = self.lexer.peek_e();
         if self.is_type(&peek_tok) {
             // variable declaration
             let mut stmts = Vec::new();
+            let line = self.lexer.cur_line;
             self.read_decl(&mut stmts);
-            AST::Compound(stmts)
+            AST::new(ASTKind::Compound(stmts), line)
         } else {
             self.read_stmt()
         }
@@ -651,7 +657,7 @@ impl<'a> Parser<'a> {
                 let mut max_sz_ty_nth = 0;
                 let mut max_sz = 0;
                 for (i, field_decl) in (&fields).iter().enumerate() {
-                    if let &AST::VariableDecl(ref ty, _, _, _) = field_decl {
+                    if let ASTKind::VariableDecl(ref ty, _, _, _) = field_decl.kind {
                         if ty.calc_size() > max_sz {
                             max_sz = ty.calc_size();
                             max_sz_ty_nth = i;
@@ -687,7 +693,8 @@ impl<'a> Parser<'a> {
                     // TODO: for now, designated bitwidth ignore
                     self.read_expr();
                 }
-                decls.push(AST::VariableDecl(ty, name, StorageClass::Auto, None));
+                decls.push(AST::new(ASTKind::VariableDecl(ty, name, StorageClass::Auto, None),
+                                    self.lexer.cur_line));
                 if self.lexer.skip_symbol(Symbol::Comma) {
                     continue;
                 } else {
@@ -741,7 +748,7 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Assign) {
                 val = self.read_assign().eval_constexpr();
             }
-            let constval = AST::Int(val);
+            let constval = AST::new(ASTKind::Int(val), self.lexer.cur_line);
             val += 1;
             self.env.back_mut().unwrap().insert(name, constval);
             if self.lexer.skip_symbol(Symbol::Comma) {
@@ -767,7 +774,8 @@ impl<'a> Parser<'a> {
         let mut lhs = self.read_assign();
         while self.lexer.skip_symbol(Symbol::Comma) {
             let rhs = self.read_assign();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Comma);
+            lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Comma),
+                           self.lexer.cur_line)
         }
         lhs
     }
@@ -776,28 +784,33 @@ impl<'a> Parser<'a> {
         if self.lexer.skip_symbol(Symbol::Question) {
             return self.read_ternary(lhs);
         }
-        let assign = |lhs, rhs| -> AST {
-            AST::BinaryOp(Rc::new(retrieve_from_load(&lhs)),
-                          Rc::new(rhs),
-                          node::CBinOps::Assign)
+        let assign = |lhs, rhs, line| -> AST {
+            AST::new(ASTKind::BinaryOp(Rc::new(retrieve_from_load(&lhs)),
+                                       Rc::new(rhs),
+                                       node::CBinOps::Assign),
+                     line)
         };
         loop {
             let tok = self.lexer.get_e();
             match tok.kind {
                 TokenKind::Symbol(Symbol::Assign) => {
-                    lhs = assign(lhs, self.read_assign());
+                    lhs = assign(lhs, self.read_assign(), self.lexer.cur_line);
                 }
                 TokenKind::Symbol(Symbol::AssignAdd) => {
                     lhs = assign(lhs.clone(),
-                                 AST::BinaryOp(Rc::new(lhs),
-                                               Rc::new(self.read_assign()),
-                                               node::CBinOps::Add));
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(self.read_assign()),
+                                                            node::CBinOps::Add),
+                                          self.lexer.cur_line),
+                                 self.lexer.cur_line);
                 }
                 TokenKind::Symbol(Symbol::AssignSub) => {
                     lhs = assign(lhs.clone(),
-                                 AST::BinaryOp(Rc::new(lhs),
-                                               Rc::new(self.read_assign()),
-                                               node::CBinOps::Sub));
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(self.read_assign()),
+                                                            node::CBinOps::Sub),
+                                          self.lexer.cur_line),
+                                 self.lexer.cur_line);
                 }
                 _ => {
                     self.lexer.unget(tok);
@@ -811,13 +824,15 @@ impl<'a> Parser<'a> {
         let then_expr = self.read_expr();
         self.lexer.expect_skip_symbol(Symbol::Colon);
         let else_expr = self.read_assign();
-        AST::TernaryOp(Rc::new(cond), Rc::new(then_expr), Rc::new(else_expr))
+        AST::new(ASTKind::TernaryOp(Rc::new(cond), Rc::new(then_expr), Rc::new(else_expr)),
+                 self.lexer.cur_line)
     }
     fn read_logor(&mut self) -> AST {
         let mut lhs = self.read_logand();
         while self.lexer.skip_symbol(Symbol::LOr) {
             let rhs = self.read_logand();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LOr);
+            lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LOr),
+                           self.lexer.cur_line);
         }
         lhs
     }
@@ -825,7 +840,8 @@ impl<'a> Parser<'a> {
         let mut lhs = self.read_or();
         while self.lexer.skip_symbol(Symbol::LAnd) {
             let rhs = self.read_or();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LAnd);
+            lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LAnd),
+                           self.lexer.cur_line);
         }
         lhs
     }
@@ -833,7 +849,8 @@ impl<'a> Parser<'a> {
         let mut lhs = self.read_xor();
         while self.lexer.skip_symbol(Symbol::Or) {
             let rhs = self.read_xor();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Or);
+            lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Or),
+                           self.lexer.cur_line);
         }
         lhs
     }
@@ -841,7 +858,8 @@ impl<'a> Parser<'a> {
         let mut lhs = self.read_and();
         while self.lexer.skip_symbol(Symbol::Xor) {
             let rhs = self.read_and();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Xor);
+            lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Xor),
+                           self.lexer.cur_line);
         }
         lhs
     }
@@ -849,7 +867,8 @@ impl<'a> Parser<'a> {
         let mut lhs = self.read_eq_ne();
         while self.lexer.skip_symbol(Symbol::Ampersand) {
             let rhs = self.read_eq_ne();
-            lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::And);
+            lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::And),
+                           self.lexer.cur_line);
         }
         lhs
     }
@@ -858,10 +877,12 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.skip_symbol(Symbol::Eq) {
                 let rhs = self.read_relation();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Eq);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Eq),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Ne) {
                 let rhs = self.read_relation();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ne);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ne),
+                               self.lexer.cur_line);
             } else {
                 break;
             }
@@ -873,16 +894,20 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.skip_symbol(Symbol::Lt) {
                 let rhs = self.read_shl_shr();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Lt);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Lt),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Le) {
                 let rhs = self.read_shl_shr();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Le);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Le),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Gt) {
                 let rhs = self.read_shl_shr();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Gt);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Gt),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Ge) {
                 let rhs = self.read_shl_shr();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ge);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ge),
+                               self.lexer.cur_line);
             } else {
                 break;
             }
@@ -894,10 +919,12 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.skip_symbol(Symbol::Shl) {
                 let rhs = self.read_add_sub();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shl);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shl),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Shr) {
                 let rhs = self.read_add_sub();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shr);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shr),
+                               self.lexer.cur_line);
             } else {
                 break;
             }
@@ -909,10 +936,12 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.skip_symbol(Symbol::Add) {
                 let rhs = self.read_mul_div_rem();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Add);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Add),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Sub) {
                 let rhs = self.read_mul_div_rem();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Sub);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Sub),
+                               self.lexer.cur_line);
             } else {
                 break;
             }
@@ -924,13 +953,16 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.skip_symbol(Symbol::Asterisk) {
                 let rhs = self.read_cast();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Mul);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Mul),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Div) {
                 let rhs = self.read_cast();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Div);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Div),
+                               self.lexer.cur_line);
             } else if self.lexer.skip_symbol(Symbol::Mod) {
                 let rhs = self.read_cast();
-                lhs = AST::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Rem);
+                lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Rem),
+                               self.lexer.cur_line);
             } else {
                 break;
             }
@@ -944,7 +976,8 @@ impl<'a> Parser<'a> {
             let basety = self.read_type_spec().0;
             let ty = self.read_declarator(basety).0;
             self.lexer.expect_skip_symbol(Symbol::ClosingParen);
-            return AST::TypeCast(Rc::new(self.read_cast()), ty);
+            return AST::new(ASTKind::TypeCast(Rc::new(self.read_cast()), ty),
+                            self.lexer.cur_line);
         } else {
             self.lexer.unget(tok);
         }
@@ -957,25 +990,32 @@ impl<'a> Parser<'a> {
             .unwrap();
         match tok.kind { 
             TokenKind::Symbol(Symbol::Not) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::BitwiseNot) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::Add) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::Sub) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::Inc) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::Dec) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::Asterisk) => {
-                return AST::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref)
+                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
+                                self.lexer.cur_line)
             }
             TokenKind::Symbol(Symbol::Ampersand) => return retrieve_from_load(&self.read_cast()),
             TokenKind::Symbol(Symbol::Sizeof) => {
@@ -986,7 +1026,7 @@ impl<'a> Parser<'a> {
                 let (basety, _) = self.read_type_spec();
                 let (ty, _, _) = self.read_declarator(basety);
                 self.lexer.expect_skip_symbol(Symbol::ClosingParen);
-                return AST::Int(ty.calc_size() as i32);
+                return AST::new(ASTKind::Int(ty.calc_size() as i32), self.lexer.cur_line);
             }
             _ => {}
         }
@@ -1001,15 +1041,21 @@ impl<'a> Parser<'a> {
                 continue;
             }
             if self.lexer.skip_symbol(Symbol::OpeningBoxBracket) {
-                ast = AST::Load(Rc::new(self.read_index(ast)));
+                ast = AST::new(ASTKind::Load(Rc::new(self.read_index(ast))),
+                               self.lexer.cur_line);
                 continue;
             }
             if self.lexer.skip_symbol(Symbol::Point) {
-                ast = AST::Load(Rc::new(self.read_field(retrieve_from_load(&ast))));
+                ast = AST::new(ASTKind::Load(Rc::new(self.read_field(retrieve_from_load(&ast)))),
+                               self.lexer.cur_line);
             }
             if self.lexer.skip_symbol(Symbol::Arrow) {
-                ast = AST::Load(Rc::new(self.read_field(AST::UnaryOp(Rc::new(retrieve_from_load(&ast)),
-                                                   node::CUnaryOps::Deref))));
+                let line = self.lexer.cur_line;
+                let field =
+                    self.read_field(AST::new(ASTKind::UnaryOp(Rc::new(retrieve_from_load(&ast)),
+                                                              node::CUnaryOps::Deref),
+                                             line));
+                ast = AST::new(ASTKind::Load(Rc::new(field)), line);
             }
             // TODO: impelment inc and dec
             break;
@@ -1029,12 +1075,13 @@ impl<'a> Parser<'a> {
                 self.lexer.expect_skip_symbol(Symbol::Comma);
             }
         }
-        AST::FuncCall(Rc::new(f), args)
+        AST::new(ASTKind::FuncCall(Rc::new(f), args), self.lexer.cur_line)
     }
     fn read_index(&mut self, ast: AST) -> AST {
         let idx = self.read_expr();
         self.lexer.expect_skip_symbol(Symbol::ClosingBoxBracket);
-        AST::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add)
+        AST::new(ASTKind::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add),
+                 self.lexer.cur_line)
     }
 
     fn read_field(&mut self, ast: AST) -> AST {
@@ -1044,7 +1091,8 @@ impl<'a> Parser<'a> {
         }
 
         let field_name = field.val;
-        AST::StructRef(Rc::new(ast), field_name)
+        AST::new(ASTKind::StructRef(Rc::new(ast), field_name),
+                 self.lexer.cur_line)
     }
 
     fn read_const_array(&mut self) -> AST {
@@ -1056,7 +1104,7 @@ impl<'a> Parser<'a> {
             }
             self.lexer.expect_skip_symbol(Symbol::Comma);
         }
-        node::AST::ConstArray(elems)
+        AST::new(ASTKind::ConstArray(elems), self.lexer.cur_line)
     }
     fn read_primary(&mut self) -> AST {
         let tok = self.lexer
@@ -1067,27 +1115,32 @@ impl<'a> Parser<'a> {
             TokenKind::IntNumber => {
                 let num_literal = tok.val;
                 if num_literal.len() > 2 && num_literal.chars().nth(1).unwrap() == 'x' {
-                    AST::Int(self.read_hex_num(&num_literal[2..]))
+                    AST::new(ASTKind::Int(self.read_hex_num(&num_literal[2..])),
+                             self.lexer.cur_line)
                 } else {
-                    AST::Int(self.read_dec_num(num_literal.as_str()))
+                    AST::new(ASTKind::Int(self.read_dec_num(num_literal.as_str())),
+                             self.lexer.cur_line)
                 }
             }
             TokenKind::FloatNumber => {
                 let num_literal = &tok.val;
                 let f: f64 = num_literal.parse().unwrap();
-                AST::Float(f)
+                AST::new(ASTKind::Float(f), self.lexer.cur_line)
             }
             TokenKind::Identifier => {
                 if let Some(ast) = self.env.back_mut().unwrap().get(tok.val.as_str()) {
                     ast.clone()
                 } else {
-                    AST::Load(Rc::new(AST::Variable(tok.val)))
+                    AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(tok.val),
+                                                            self.lexer.cur_line))),
+                             self.lexer.cur_line)
                 }
             }
-            TokenKind::String(s) => AST::String(s),
+            TokenKind::String(s) => AST::new(ASTKind::String(s), self.lexer.cur_line),
             TokenKind::Char => {
                 let ch = tok.val.bytes().nth(0);
-                AST::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32)
+                AST::new(ASTKind::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32),
+                         self.lexer.cur_line)
             }
             TokenKind::Symbol(sym) => {
                 match sym {
@@ -1099,7 +1152,7 @@ impl<'a> Parser<'a> {
                     Symbol::OpeningBrace => self.read_const_array(),
                     _ => {
                         self.lexer.unget(tok);
-                        AST::Compound(Vec::new())
+                        AST::new(ASTKind::Compound(Vec::new()), self.lexer.cur_line)
                     }
                 }
             }

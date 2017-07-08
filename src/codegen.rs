@@ -14,6 +14,7 @@ use types::{Type, StorageClass, Sign};
 use error;
 
 // used by global_varmap and local_varmap(not to use tuples)
+#[derive(Clone)]
 struct VarInfo {
     ty: Type,
     llvm_ty: LLVMTypeRef,
@@ -101,38 +102,38 @@ impl Codegen {
     }
 
     pub unsafe fn gen(&mut self, ast: &node::AST) -> (LLVMValueRef, Option<Type>) {
-        match ast {
-            &node::AST::FuncDef(ref functy, ref param_names, ref name, ref body) => {
+        match ast.kind {
+            node::ASTKind::FuncDef(ref functy, ref param_names, ref name, ref body) => {
                 self.gen_func_def(functy, param_names, name, body)
             }
-            &node::AST::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
+            node::ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
                 self.gen_var_decl(ty, name, sclass, init)
             }
-            &node::AST::Block(ref block) => self.gen_block(block),
-            &node::AST::Compound(ref block) => self.gen_compound(block),
-            &node::AST::If(ref cond, ref then_stmt, ref else_stmt) => {
+            node::ASTKind::Block(ref block) => self.gen_block(block),
+            node::ASTKind::Compound(ref block) => self.gen_compound(block),
+            node::ASTKind::If(ref cond, ref then_stmt, ref else_stmt) => {
                 self.gen_if(&*cond, &*then_stmt, &*else_stmt)
             }
-            &node::AST::For(ref init, ref cond, ref step, ref body) => {
+            node::ASTKind::For(ref init, ref cond, ref step, ref body) => {
                 self.gen_for(&*init, &*cond, &*step, &*body)
             }
-            &node::AST::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
-            &node::AST::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
-            &node::AST::BinaryOp(ref lhs, ref rhs, ref op) => {
+            node::ASTKind::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
+            node::ASTKind::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
+            node::ASTKind::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
             }
-            &node::AST::TernaryOp(ref cond, ref lhs, ref rhs) => {
+            node::ASTKind::TernaryOp(ref cond, ref lhs, ref rhs) => {
                 self.gen_ternary_op(&*cond, &*lhs, &*rhs)
             }
-            &node::AST::StructRef(ref expr, ref field_name) => {
+            node::ASTKind::StructRef(ref expr, ref field_name) => {
                 self.gen_struct_field(&*expr, field_name.to_string())
             }
-            &node::AST::TypeCast(ref expr, ref ty) => self.gen_type_cast(expr, ty),
-            &node::AST::Load(ref expr) => self.gen_load(expr),
-            &node::AST::Variable(ref name) => self.get_var(name),
-            &node::AST::ConstArray(ref elems) => (self.gen_const_array(elems), None),
-            &node::AST::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
-            &node::AST::Return(ref ret) => {
+            node::ASTKind::TypeCast(ref expr, ref ty) => self.gen_type_cast(expr, ty),
+            node::ASTKind::Load(ref expr) => self.gen_load(expr),
+            node::ASTKind::Variable(ref name) => self.gen_var(name),
+            node::ASTKind::ConstArray(ref elems) => (self.gen_const_array(elems), None),
+            node::ASTKind::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
+            node::ASTKind::Return(ref ret) => {
                 if ret.is_none() {
                     (LLVMBuildRetVoid(self.builder), None)
                 } else {
@@ -140,10 +141,10 @@ impl Codegen {
                     self.gen_return(retval)
                 }
             }
-            &node::AST::Int(ref n) => self.make_int(*n as u64, false),
-            &node::AST::Float(ref f) => self.make_double(*f),
-            &node::AST::Char(ref c) => self.make_char(*c),
-            &node::AST::String(ref s) => self.make_const_str(s),
+            node::ASTKind::Int(ref n) => self.make_int(*n as u64, false),
+            node::ASTKind::Float(ref f) => self.make_double(*f),
+            node::ASTKind::Char(ref c) => self.make_char(*c),
+            node::ASTKind::String(ref s) => self.make_const_str(s),
             _ => {
                 error::error_exit(0,
                                   format!("codegen: unknown ast (given {:?})", ast).as_str())
@@ -489,16 +490,18 @@ impl Codegen {
                            -> (LLVMValueRef, Option<Type>) {
         match *op {
             node::CUnaryOps::Deref => {
-                let (expr_val, val_ty) = self.gen(expr);
-                let ty = match val_ty.unwrap() {
-                    Type::Array(t, _) |
-                    Type::Ptr(t) => (*t).clone(),
-                    _ => error::error_exit(0, "gen_unary_op: never reach"),
-                };
-                (LLVMBuildLoad(self.builder,
-                               expr_val,
-                               CString::new("deref").unwrap().as_ptr()),
-                 Some(ty))
+                self.gen_load(expr)
+                // let (expr_val, val_ty) = self.gen(expr);
+                // let ty = match val_ty.unwrap() {
+                //     Type::Array(t, _) |
+                //     Type::Ptr(t) => (*t).clone(),
+                //     Type::Func(a, b, c) => return (expr_val, Some(Type::Func(a, b, c))),
+                //     _ => error::error_exit(0, "gen_unary_op: never reach"),
+                // };
+                // (LLVMBuildLoad(self.builder,
+                //                expr_val,
+                //                CString::new("deref").unwrap().as_ptr()),
+                //  Some(ty))
             }
             _ => (ptr::null_mut(), None),
         }
@@ -823,15 +826,26 @@ impl Codegen {
         None
     }
 
-    unsafe fn get_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
-        if let Some(ref varinfo) = self.lookup_local_var(name.as_str()) {
-            return (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty.clone()))));
+    unsafe fn gen_var(&mut self, name: &String) -> (LLVMValueRef, Option<Type>) {
+        let varinfo_w = self.lookup_var(name.as_str());
+        match varinfo_w {
+            Some(varinfo) => (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty)))),
+            None => {
+                error::error_exit(0,
+                                  format!("gen_var: not found variable '{}'", name).as_str())
+            }
         }
-        if let Some(ref varinfo) = self.global_varmap.get(name.as_str()) {
-            return (varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty.clone()))));
+    }
+
+    unsafe fn lookup_var(&mut self, name: &str) -> Option<VarInfo> {
+        if let Some(varinfo) = self.lookup_local_var(name) {
+            return Some(varinfo.clone());
+        }
+        if let Some(varinfo) = self.global_varmap.get(name) {
+            return Some(varinfo.clone());
         }
         error::error_exit(0,
-                          format!("get_var: not found variable '{}'", name).as_str());
+                          format!("gen_var: not found variable '{}'", name).as_str());
     }
 
     unsafe fn gen_load(&mut self, var: &node::AST) -> (LLVMValueRef, Option<Type>) {
@@ -839,7 +853,7 @@ impl Codegen {
 
         if let Some(Type::Ptr(ref elem_ty)) = ty {
             match **elem_ty {
-                Type::Func(_, _, _) => return (val, Some((**elem_ty).clone())),
+                Type::Func(_, _, _) => return (val, Some(Type::Ptr((*elem_ty).clone()))),
                 Type::Array(ref ary_elemty, _) => {
                     return (LLVMBuildGEP(self.builder,
                                          val,
@@ -864,51 +878,79 @@ impl Codegen {
     }
 
     unsafe fn gen_func_call(&mut self,
-                            fast: &node::AST,
+                            ast: &node::AST,
                             args: &Vec<node::AST>)
                             -> (LLVMValueRef, Option<Type>) {
-        // before implicit type casting. so 'maybe incorrect'
+        // there's a possibility that the types of args are not the same as the types of params.
+        // so we call args before implicit type casting 'maybe incorrect args'.
         let mut maybe_incorrect_args_val = Vec::new();
         for arg in &*args {
             maybe_incorrect_args_val.push(self.gen(arg).0);
         }
         let args_len = args.len();
 
-        let maybe_func = match *fast {
-            node::AST::Variable(ref name) => self.global_varmap.get(name),
-            _ => None, // for func ptr
+        let func = match ast.kind {
+            node::ASTKind::Variable(ref name) => {
+                let var = self.lookup_var(name);
+                if let Some(varinfo) = var {
+                    varinfo
+                } else {
+                    error::error_exit(ast.line, "gen_func_call: not found such function");
+                }
+            }
+            _ => {
+                let (val, ty_w) = self.gen(ast);
+                VarInfo::new(ty_w.unwrap(), LLVMTypeOf(val), val)
+            }
         };
-        if maybe_func.is_none() {
-            error::error_exit(0, "gen_func_call: not found func");
-        }
 
-        let exist_func = maybe_func.unwrap();
-        let functy = exist_func.ty.clone();
-        let (func_retty, func_args_types, _func_is_vararg) = match functy {
-            Type::Func(retty, args_types, is_vararg) => (retty, args_types, is_vararg),
-            _ => error::error_exit(0, "gen_func_call: never reach!"),
+        let (func_retty, func_params_types, func_is_vararg) = match func.ty {
+            Type::Func(retty, params_types, is_vararg) => (retty, params_types, is_vararg),
+            Type::Ptr(elemty) => {
+                // func ptr
+                if let Type::Func(retty, params_types, is_vararg) = (*elemty).clone() {
+                    (retty, params_types, is_vararg)
+                } else {
+                    panic!();
+                }
+            }
+            _ => panic!(),
         };
-        let llvm_functy = exist_func.llvm_ty;
-        let func = exist_func.llvm_val;
 
-        let args_count = func_args_types.len();
+        let (llvm_func, llvm_functy) = match LLVMGetTypeKind(func.llvm_ty) {
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => {
+                (LLVMBuildLoad(self.builder,
+                               func.llvm_val,
+                               CString::new("load").unwrap().as_ptr()),
+                 LLVMGetElementType(func.llvm_ty))
+            }
+            _ => (func.llvm_val, func.llvm_ty),
+        };
+
+        let params_count = func_params_types.len();
         let mut args_val = Vec::new();
-        let ptr_args_types = (&mut Vec::with_capacity(args_count)).as_mut_ptr();
-        LLVMGetParamTypes(llvm_functy, ptr_args_types);
-        let llvm_args_types = Vec::from_raw_parts(ptr_args_types, args_count, 0);
+        let ptr_params_types = (&mut Vec::with_capacity(params_count)).as_mut_ptr();
+        LLVMGetParamTypes(llvm_functy, ptr_params_types);
+        let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
 
-        // do implicit type casting to args
+        // do implicit type casting
+        if !func_is_vararg && params_count < args_len {
+            error::error_exit(ast.line, "too many arguments");
+        }
+        if !func_is_vararg && params_count > args_len {
+            error::error_exit(ast.line, "too little arguments");
+        }
         for i in 0..args_len {
-            args_val.push(if func_args_types.len() <= i {
+            args_val.push(if params_count <= i {
                               maybe_incorrect_args_val[i]
                           } else {
-                              self.typecast(maybe_incorrect_args_val[i], llvm_args_types[i])
+                              self.typecast(maybe_incorrect_args_val[i], llvm_params_types[i])
                           })
         }
 
         let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
         (LLVMBuildCall(self.builder,
-                       func,
+                       llvm_func,
                        args_val_ptr,
                        args_len as u32,
                        CString::new("funccall").unwrap().as_ptr()),
@@ -1037,8 +1079,8 @@ impl Codegen {
 
         // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
-            match field {
-                &node::AST::VariableDecl(ref ty, ref name, ref _sclass, ref _init) => {
+            match field.kind {
+                node::ASTKind::VariableDecl(ref ty, ref name, ref _sclass, ref _init) => {
                     fields_llvm_types.push(self.type_to_llvmty(ty));
                     fields_types.push(ty.clone());
                     fields_names_map.insert(name.to_string(), i as u32);
