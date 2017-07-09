@@ -168,7 +168,7 @@ impl<'a> Parser<'a> {
         AST::new(ASTKind::While(Rc::new(cond), Rc::new(body)), 0)
     }
     fn read_return_stmt(&mut self) -> AST {
-        let line = self.lexer.cur_line;
+        let line = *self.lexer.cur_line.back().unwrap();
         if self.lexer.skip_symbol(Symbol::Semicolon) {
             AST::new(ASTKind::Return(None), line)
         } else {
@@ -237,7 +237,7 @@ impl<'a> Parser<'a> {
                 Some(match ast.kind {
                          ASTKind::Typedef(ref from, ref _to) => (*from).clone(),
                          _ => {
-                             error::error_exit(self.lexer.cur_line,
+                             error::error_exit(*self.lexer.cur_line.back().unwrap(),
                                                format!("not found type '{}'", name).as_str())
                          }
                      })
@@ -298,9 +298,10 @@ impl<'a> Parser<'a> {
             if is_flexible {
                 *len = count;
             }
-            AST::new(ASTKind::ConstArray(elems), self.lexer.cur_line)
+            AST::new(ASTKind::ConstArray(elems),
+                     *self.lexer.cur_line.back().unwrap())
         } else {
-            error::error_exit(self.lexer.cur_line, "impossible");
+            error::error_exit(*self.lexer.cur_line.back().unwrap(), "impossible");
         }
         // self.read_assign()
     }
@@ -326,7 +327,7 @@ impl<'a> Parser<'a> {
 
             if is_typedef {
                 let typedef = AST::new(ASTKind::Typedef(basety, name.to_string()),
-                                       self.lexer.cur_line);
+                                       *self.lexer.cur_line.back().unwrap());
                 self.env.back_mut().unwrap().insert(name, typedef);
                 return;
             }
@@ -337,7 +338,7 @@ impl<'a> Parser<'a> {
                 None
             };
             ast.push(AST::new(ASTKind::VariableDecl(ty, name, sclass.clone(), init),
-                              self.lexer.cur_line));
+                              *self.lexer.cur_line.back().unwrap()));
 
             if self.lexer.skip_symbol(Symbol::Semicolon) {
                 return;
@@ -347,14 +348,15 @@ impl<'a> Parser<'a> {
     }
     fn read_opt_decl_or_stmt(&mut self) -> AST {
         if self.lexer.skip_symbol(Symbol::Semicolon) {
-            return AST::new(ASTKind::Compound(Vec::new()), self.lexer.cur_line);
+            return AST::new(ASTKind::Compound(Vec::new()),
+                            *self.lexer.cur_line.back().unwrap());
         }
 
         let peek_tok = self.lexer.peek_e();
         if self.is_type(&peek_tok) {
             // variable declaration
             let mut stmts = Vec::new();
-            let line = self.lexer.cur_line;
+            let line = *self.lexer.cur_line.back().unwrap();
             self.read_decl(&mut stmts);
             AST::new(ASTKind::Compound(stmts), line)
         } else {
@@ -439,7 +441,7 @@ impl<'a> Parser<'a> {
         loop {
             if self.lexer.skip_symbol(Symbol::Vararg) {
                 if paramtypes.len() == 0 {
-                    error::error_exit(self.lexer.cur_line,
+                    error::error_exit(*self.lexer.cur_line.back().unwrap(),
                                       "at least one param is required before '...'");
                 }
                 self.lexer.expect_skip_symbol(Symbol::ClosingParen);
@@ -489,10 +491,10 @@ impl<'a> Parser<'a> {
         let mut userty: Option<Type> = None;
 
         let err_kind = |lexer: &Lexer, kind: Option<PrimitiveType>| if kind.is_some() {
-            error::error_exit(lexer.cur_line, "type mismatch");
+            error::error_exit(*lexer.cur_line.back().unwrap(), "type mismatch");
         };
         let err_sign = |lexer: &Lexer, sign: Option<Sign>| if sign.is_some() {
-            error::error_exit(lexer.cur_line, "type mismatch");
+            error::error_exit(*lexer.cur_line.back().unwrap(), "type mismatch");
         };
 
         // let mut env = ENV_MAP.lock().unwrap();
@@ -500,7 +502,10 @@ impl<'a> Parser<'a> {
         loop {
             let tok = self.lexer
                 .get()
-                .or_else(|| error::error_exit(self.lexer.cur_line, "expect types but reach EOF"))
+                .or_else(|| {
+                             error::error_exit(*self.lexer.cur_line.back().unwrap(),
+                                               "expect types but reach EOF")
+                         })
                 .unwrap();
 
             if kind.is_none() && tok.kind == TokenKind::Identifier {
@@ -694,7 +699,7 @@ impl<'a> Parser<'a> {
                     self.read_expr();
                 }
                 decls.push(AST::new(ASTKind::VariableDecl(ty, name, StorageClass::Auto, None),
-                                    self.lexer.cur_line));
+                                    *self.lexer.cur_line.back().unwrap()));
                 if self.lexer.skip_symbol(Symbol::Comma) {
                     continue;
                 } else {
@@ -719,7 +724,7 @@ impl<'a> Parser<'a> {
             if let Some(maybe_enum) = self.tags.back_mut().unwrap().get(tag.as_str()) {
                 match maybe_enum {
                     &Type::Enum => {}
-                    _ => error::error_exit(self.lexer.cur_line, "undefined enum"),
+                    _ => error::error_exit(*self.lexer.cur_line.back().unwrap(), "undefined enum"),
                 }
             }
         }
@@ -730,7 +735,7 @@ impl<'a> Parser<'a> {
                     .back_mut()
                     .unwrap()
                     .contains_key(tag.as_str()) {
-                error::error_exit(self.lexer.cur_line, "defined enum");
+                error::error_exit(*self.lexer.cur_line.back().unwrap(), "defined enum");
             }
             return Type::Int(Sign::Signed);
         }
@@ -748,7 +753,7 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Assign) {
                 val = self.read_assign().eval_constexpr();
             }
-            let constval = AST::new(ASTKind::Int(val), self.lexer.cur_line);
+            let constval = AST::new(ASTKind::Int(val), *self.lexer.cur_line.back().unwrap());
             val += 1;
             self.env.back_mut().unwrap().insert(name, constval);
             if self.lexer.skip_symbol(Symbol::Comma) {
@@ -775,7 +780,7 @@ impl<'a> Parser<'a> {
         while self.lexer.skip_symbol(Symbol::Comma) {
             let rhs = self.read_assign();
             lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Comma),
-                           self.lexer.cur_line)
+                           *self.lexer.cur_line.back().unwrap())
         }
         lhs
     }
@@ -794,23 +799,25 @@ impl<'a> Parser<'a> {
             let tok = self.lexer.get_e();
             match tok.kind {
                 TokenKind::Symbol(Symbol::Assign) => {
-                    lhs = assign(lhs, self.read_assign(), self.lexer.cur_line);
+                    lhs = assign(lhs,
+                                 self.read_assign(),
+                                 *self.lexer.cur_line.back().unwrap());
                 }
                 TokenKind::Symbol(Symbol::AssignAdd) => {
                     lhs = assign(lhs.clone(),
                                  AST::new(ASTKind::BinaryOp(Rc::new(lhs),
                                                             Rc::new(self.read_assign()),
                                                             node::CBinOps::Add),
-                                          self.lexer.cur_line),
-                                 self.lexer.cur_line);
+                                          *self.lexer.cur_line.back().unwrap()),
+                                 *self.lexer.cur_line.back().unwrap());
                 }
                 TokenKind::Symbol(Symbol::AssignSub) => {
                     lhs = assign(lhs.clone(),
                                  AST::new(ASTKind::BinaryOp(Rc::new(lhs),
                                                             Rc::new(self.read_assign()),
                                                             node::CBinOps::Sub),
-                                          self.lexer.cur_line),
-                                 self.lexer.cur_line);
+                                          *self.lexer.cur_line.back().unwrap()),
+                                 *self.lexer.cur_line.back().unwrap());
                 }
                 _ => {
                     self.lexer.unget(tok);
@@ -825,14 +832,14 @@ impl<'a> Parser<'a> {
         self.lexer.expect_skip_symbol(Symbol::Colon);
         let else_expr = self.read_assign();
         AST::new(ASTKind::TernaryOp(Rc::new(cond), Rc::new(then_expr), Rc::new(else_expr)),
-                 self.lexer.cur_line)
+                 *self.lexer.cur_line.back().unwrap())
     }
     fn read_logor(&mut self) -> AST {
         let mut lhs = self.read_logand();
         while self.lexer.skip_symbol(Symbol::LOr) {
             let rhs = self.read_logand();
             lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LOr),
-                           self.lexer.cur_line);
+                           *self.lexer.cur_line.back().unwrap());
         }
         lhs
     }
@@ -841,7 +848,7 @@ impl<'a> Parser<'a> {
         while self.lexer.skip_symbol(Symbol::LAnd) {
             let rhs = self.read_or();
             lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LAnd),
-                           self.lexer.cur_line);
+                           *self.lexer.cur_line.back().unwrap());
         }
         lhs
     }
@@ -850,7 +857,7 @@ impl<'a> Parser<'a> {
         while self.lexer.skip_symbol(Symbol::Or) {
             let rhs = self.read_xor();
             lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Or),
-                           self.lexer.cur_line);
+                           *self.lexer.cur_line.back().unwrap());
         }
         lhs
     }
@@ -859,7 +866,7 @@ impl<'a> Parser<'a> {
         while self.lexer.skip_symbol(Symbol::Xor) {
             let rhs = self.read_and();
             lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Xor),
-                           self.lexer.cur_line);
+                           *self.lexer.cur_line.back().unwrap());
         }
         lhs
     }
@@ -868,7 +875,7 @@ impl<'a> Parser<'a> {
         while self.lexer.skip_symbol(Symbol::Ampersand) {
             let rhs = self.read_eq_ne();
             lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::And),
-                           self.lexer.cur_line);
+                           *self.lexer.cur_line.back().unwrap());
         }
         lhs
     }
@@ -878,11 +885,11 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Eq) {
                 let rhs = self.read_relation();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Eq),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Ne) {
                 let rhs = self.read_relation();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ne),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else {
                 break;
             }
@@ -895,19 +902,19 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Lt) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Lt),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Le) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Le),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Gt) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Gt),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Ge) {
                 let rhs = self.read_shl_shr();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ge),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else {
                 break;
             }
@@ -920,11 +927,11 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Shl) {
                 let rhs = self.read_add_sub();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shl),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Shr) {
                 let rhs = self.read_add_sub();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shr),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else {
                 break;
             }
@@ -937,11 +944,11 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Add) {
                 let rhs = self.read_mul_div_rem();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Add),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Sub) {
                 let rhs = self.read_mul_div_rem();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Sub),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else {
                 break;
             }
@@ -954,15 +961,15 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Asterisk) {
                 let rhs = self.read_cast();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Mul),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Div) {
                 let rhs = self.read_cast();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Div),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else if self.lexer.skip_symbol(Symbol::Mod) {
                 let rhs = self.read_cast();
                 lhs = AST::new(ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Rem),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             } else {
                 break;
             }
@@ -977,7 +984,7 @@ impl<'a> Parser<'a> {
             let ty = self.read_declarator(basety).0;
             self.lexer.expect_skip_symbol(Symbol::ClosingParen);
             return AST::new(ASTKind::TypeCast(Rc::new(self.read_cast()), ty),
-                            self.lexer.cur_line);
+                            *self.lexer.cur_line.back().unwrap());
         } else {
             self.lexer.unget(tok);
         }
@@ -986,36 +993,39 @@ impl<'a> Parser<'a> {
     fn read_unary(&mut self) -> AST {
         let tok = self.lexer
             .get()
-            .or_else(|| error::error_exit(self.lexer.cur_line, "expected unary op"))
+            .or_else(|| {
+                         error::error_exit(*self.lexer.cur_line.back().unwrap(),
+                                           "expected unary op")
+                     })
             .unwrap();
         match tok.kind { 
             TokenKind::Symbol(Symbol::Not) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::LNot),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::BitwiseNot) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::BNot),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Add) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Plus),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Sub) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Minus),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Inc) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Dec) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Asterisk) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
-                                self.lexer.cur_line)
+                                *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Ampersand) => return retrieve_from_load(&self.read_cast()),
             TokenKind::Symbol(Symbol::Sizeof) => {
@@ -1026,7 +1036,8 @@ impl<'a> Parser<'a> {
                 let (basety, _) = self.read_type_spec();
                 let (ty, _, _) = self.read_declarator(basety);
                 self.lexer.expect_skip_symbol(Symbol::ClosingParen);
-                return AST::new(ASTKind::Int(ty.calc_size() as i32), self.lexer.cur_line);
+                return AST::new(ASTKind::Int(ty.calc_size() as i32),
+                                *self.lexer.cur_line.back().unwrap());
             }
             _ => {}
         }
@@ -1042,15 +1053,15 @@ impl<'a> Parser<'a> {
             }
             if self.lexer.skip_symbol(Symbol::OpeningBoxBracket) {
                 ast = AST::new(ASTKind::Load(Rc::new(self.read_index(ast))),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
                 continue;
             }
             if self.lexer.skip_symbol(Symbol::Point) {
                 ast = AST::new(ASTKind::Load(Rc::new(self.read_field(retrieve_from_load(&ast)))),
-                               self.lexer.cur_line);
+                               *self.lexer.cur_line.back().unwrap());
             }
             if self.lexer.skip_symbol(Symbol::Arrow) {
-                let line = self.lexer.cur_line;
+                let line = *self.lexer.cur_line.back().unwrap();
                 let field =
                     self.read_field(AST::new(ASTKind::UnaryOp(Rc::new(retrieve_from_load(&ast)),
                                                               node::CUnaryOps::Deref),
@@ -1075,24 +1086,25 @@ impl<'a> Parser<'a> {
                 self.lexer.expect_skip_symbol(Symbol::Comma);
             }
         }
-        AST::new(ASTKind::FuncCall(Rc::new(f), args), self.lexer.cur_line)
+        AST::new(ASTKind::FuncCall(Rc::new(f), args),
+                 *self.lexer.cur_line.back().unwrap())
     }
     fn read_index(&mut self, ast: AST) -> AST {
         let idx = self.read_expr();
         self.lexer.expect_skip_symbol(Symbol::ClosingBoxBracket);
         AST::new(ASTKind::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add),
-                 self.lexer.cur_line)
+                 *self.lexer.cur_line.back().unwrap())
     }
 
     fn read_field(&mut self, ast: AST) -> AST {
         let field = self.lexer.get_e();
         if field.kind != TokenKind::Identifier {
-            error::error_exit(self.lexer.cur_line, "expected field name");
+            error::error_exit(*self.lexer.cur_line.back().unwrap(), "expected field name");
         }
 
         let field_name = field.val;
         AST::new(ASTKind::StructRef(Rc::new(ast), field_name),
-                 self.lexer.cur_line)
+                 *self.lexer.cur_line.back().unwrap())
     }
 
     fn read_const_array(&mut self) -> AST {
@@ -1104,43 +1116,48 @@ impl<'a> Parser<'a> {
             }
             self.lexer.expect_skip_symbol(Symbol::Comma);
         }
-        AST::new(ASTKind::ConstArray(elems), self.lexer.cur_line)
+        AST::new(ASTKind::ConstArray(elems),
+                 *self.lexer.cur_line.back().unwrap())
     }
     fn read_primary(&mut self) -> AST {
         let tok = self.lexer
             .get()
-            .or_else(|| error::error_exit(self.lexer.cur_line, "expected primary"))
+            .or_else(|| {
+                         error::error_exit(*self.lexer.cur_line.back().unwrap(), "expected primary")
+                     })
             .unwrap();
         match tok.kind.clone() {
             TokenKind::IntNumber => {
                 let num_literal = tok.val;
                 if num_literal.len() > 2 && num_literal.chars().nth(1).unwrap() == 'x' {
                     AST::new(ASTKind::Int(self.read_hex_num(&num_literal[2..])),
-                             self.lexer.cur_line)
+                             *self.lexer.cur_line.back().unwrap())
                 } else {
                     AST::new(ASTKind::Int(self.read_dec_num(num_literal.as_str())),
-                             self.lexer.cur_line)
+                             *self.lexer.cur_line.back().unwrap())
                 }
             }
             TokenKind::FloatNumber => {
                 let num_literal = &tok.val;
                 let f: f64 = num_literal.parse().unwrap();
-                AST::new(ASTKind::Float(f), self.lexer.cur_line)
+                AST::new(ASTKind::Float(f), *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Identifier => {
                 if let Some(ast) = self.env.back_mut().unwrap().get(tok.val.as_str()) {
                     ast.clone()
                 } else {
                     AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(tok.val),
-                                                            self.lexer.cur_line))),
-                             self.lexer.cur_line)
+                                                            *self.lexer.cur_line.back().unwrap()))),
+                             *self.lexer.cur_line.back().unwrap())
                 }
             }
-            TokenKind::String(s) => AST::new(ASTKind::String(s), self.lexer.cur_line),
+            TokenKind::String(s) => {
+                AST::new(ASTKind::String(s), *self.lexer.cur_line.back().unwrap())
+            }
             TokenKind::Char => {
                 let ch = tok.val.bytes().nth(0);
                 AST::new(ASTKind::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32),
-                         self.lexer.cur_line)
+                         *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(sym) => {
                 match sym {
@@ -1152,13 +1169,14 @@ impl<'a> Parser<'a> {
                     Symbol::OpeningBrace => self.read_const_array(),
                     _ => {
                         self.lexer.unget(tok);
-                        AST::new(ASTKind::Compound(Vec::new()), self.lexer.cur_line)
+                        AST::new(ASTKind::Compound(Vec::new()),
+                                 *self.lexer.cur_line.back().unwrap())
                     }
                 }
             }
             // TokenKind::Newline => None,
             _ => {
-                error::error_exit(self.lexer.cur_line,
+                error::error_exit(*self.lexer.cur_line.back().unwrap(),
                                   format!("read_primary unknown token {:?}", tok.kind).as_str())
             }
         }

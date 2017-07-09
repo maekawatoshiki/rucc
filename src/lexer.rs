@@ -7,9 +7,8 @@ use std::process;
 use std::collections::{HashSet, HashMap};
 use error;
 use parser;
-use MACRO_MAP;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Macro {
     // Vec<Token> -> macro body
     Object(Vec<Token>),
@@ -138,8 +137,9 @@ impl Token {
 
 #[derive(Clone)]
 pub struct Lexer {
-    pub cur_line: i32,
+    pub cur_line: VecDeque<i32>,
     filename: VecDeque<String>,
+    macro_map: HashMap<String, Macro>,
     peek: VecDeque<Vec<u8>>,
     peek_pos: VecDeque<usize>,
     buf: VecDeque<VecDeque<Token>>,
@@ -184,9 +184,14 @@ impl Lexer {
         filenames.push_back(filename);
         filenames.push_back("rucc.h".to_string());
 
+        let mut cur_line = VecDeque::new();
+        cur_line.push_back(1);
+        cur_line.push_back(1);
+
         Lexer {
-            cur_line: 1,
+            cur_line: cur_line,
             filename: filenames,
+            macro_map: HashMap::new(),
             peek: peek,
             peek_pos: peek_pos,
             buf: buf,
@@ -216,7 +221,7 @@ impl Lexer {
         nextc == ch
     }
     fn peek_char_is(&mut self, ch: char) -> bool {
-        let line = self.cur_line;
+        let line = *self.cur_line.back_mut().unwrap();
         let errf =
             || -> Option<char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
         let peekc = self.peek_get().or_else(errf).unwrap();
@@ -270,7 +275,7 @@ impl Lexer {
                 }
             }
             None => {
-                error::error_exit(self.cur_line,
+                error::error_exit(*self.cur_line.back_mut().unwrap(),
                                   format!("expect '{:?}' but reach EOF", keyword).as_str())
             }
         }
@@ -286,21 +291,21 @@ impl Lexer {
                 }
             }
             None => {
-                error::error_exit(self.cur_line,
+                error::error_exit(*self.cur_line.back_mut().unwrap(),
                                   format!("expect '{:?}' but reach EOF", sym).as_str())
             }
         }
     }
     pub fn expect_skip_keyword(&mut self, expect: Keyword) -> bool {
         if !self.skip_keyword(expect.clone()) {
-            error::error_exit(self.cur_line,
+            error::error_exit(*self.cur_line.back_mut().unwrap(),
                               format!("expected the keyword '{:?}'", expect).as_str());
         }
         true
     }
     pub fn expect_skip_symbol(&mut self, expect: Symbol) -> bool {
         if !self.skip_symbol(expect.clone()) {
-            error::error_exit(self.cur_line,
+            error::error_exit(*self.cur_line.back_mut().unwrap(),
                               format!("expected the keyword '{:?}'", expect).as_str());
         }
         true
@@ -325,7 +330,10 @@ impl Lexer {
             };
         }
         *self.peek_pos.back_mut().unwrap() -= 1;
-        Token::new(TokenKind::Identifier, ident.as_str(), 0, self.cur_line)
+        Token::new(TokenKind::Identifier,
+                   ident.as_str(),
+                   0,
+                   *self.cur_line.back_mut().unwrap())
     }
     fn read_number_literal(&mut self) -> Token {
         let mut num = String::new();
@@ -348,15 +356,24 @@ impl Lexer {
             self.peek_next();
         }
         if is_float {
-            Token::new(TokenKind::FloatNumber, num.as_str(), 0, self.cur_line)
+            Token::new(TokenKind::FloatNumber,
+                       num.as_str(),
+                       0,
+                       *self.cur_line.back_mut().unwrap())
         } else {
-            Token::new(TokenKind::IntNumber, num.as_str(), 0, self.cur_line)
+            Token::new(TokenKind::IntNumber,
+                       num.as_str(),
+                       0,
+                       *self.cur_line.back_mut().unwrap())
         }
     }
     pub fn read_newline(&mut self) -> Token {
         self.peek_next();
-        self.cur_line += 1;
-        Token::new(TokenKind::Newline, "", 0, self.cur_line)
+        *self.cur_line.back_mut().unwrap() += 1;
+        Token::new(TokenKind::Newline,
+                   "",
+                   0,
+                   *self.cur_line.back_mut().unwrap())
     }
     pub fn read_symbol(&mut self) -> Token {
         let c = self.peek_next();
@@ -390,7 +407,10 @@ impl Lexer {
             }
             _ => {}
         };
-        Token::new(TokenKind::Identifier, sym.as_str(), 0, self.cur_line)
+        Token::new(TokenKind::Identifier,
+                   sym.as_str(),
+                   0,
+                   *self.cur_line.back_mut().unwrap())
     }
     fn read_string_literal(&mut self) -> Token {
         self.peek_next();
@@ -399,7 +419,10 @@ impl Lexer {
             s.push(self.peek_next());
         }
         self.peek_next();
-        Token::new(TokenKind::String(s), "", 0, self.cur_line)
+        Token::new(TokenKind::String(s),
+                   "",
+                   0,
+                   *self.cur_line.back_mut().unwrap())
     }
     fn read_char_literal(&mut self) -> Token {
         self.peek_next();
@@ -408,7 +431,10 @@ impl Lexer {
             s.push(self.peek_next());
         }
         self.peek_next();
-        Token::new(TokenKind::Char, s.as_str(), 0, self.cur_line)
+        Token::new(TokenKind::Char,
+                   s.as_str(),
+                   0,
+                   *self.cur_line.back_mut().unwrap())
     }
 
     pub fn do_read_token(&mut self) -> Option<Token> {
@@ -468,6 +494,7 @@ impl Lexer {
                     self.peek.pop_back();
                     self.peek_pos.pop_back();
                     self.filename.pop_back();
+                    self.cur_line.pop_back();
                     self.do_read_token()
                 } else {
                     None as Option<Token>
@@ -485,111 +512,456 @@ impl Lexer {
     }
     fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
         match token.val.as_str() {
-            "typedef" => Token::new(TokenKind::Keyword(Keyword::Typedef), "", 0, self.cur_line),
-            "extern" => Token::new(TokenKind::Keyword(Keyword::Extern), "", 0, self.cur_line),
-            "auto" => Token::new(TokenKind::Keyword(Keyword::Auto), "", 0, self.cur_line),
-            "register" => Token::new(TokenKind::Keyword(Keyword::Register), "", 0, self.cur_line),
-            "static" => Token::new(TokenKind::Keyword(Keyword::Static), "", 0, self.cur_line),
-            "restrict" => Token::new(TokenKind::Keyword(Keyword::Restrict), "", 0, self.cur_line),
-            "const" => Token::new(TokenKind::Keyword(Keyword::Const), "", 0, self.cur_line),
-            "volatile" => Token::new(TokenKind::Keyword(Keyword::Volatile), "", 0, self.cur_line),
-            "void" => Token::new(TokenKind::Keyword(Keyword::Void), "", 0, self.cur_line),
-            "signed" => Token::new(TokenKind::Keyword(Keyword::Signed), "", 0, self.cur_line),
-            "unsigned" => Token::new(TokenKind::Keyword(Keyword::Unsigned), "", 0, self.cur_line),
-            "char" => Token::new(TokenKind::Keyword(Keyword::Char), "", 0, self.cur_line),
-            "int" => Token::new(TokenKind::Keyword(Keyword::Int), "", 0, self.cur_line),
-            "short" => Token::new(TokenKind::Keyword(Keyword::Short), "", 0, self.cur_line),
-            "long" => Token::new(TokenKind::Keyword(Keyword::Long), "", 0, self.cur_line),
-            "float" => Token::new(TokenKind::Keyword(Keyword::Float), "", 0, self.cur_line),
-            "double" => Token::new(TokenKind::Keyword(Keyword::Double), "", 0, self.cur_line),
-            "struct" => Token::new(TokenKind::Keyword(Keyword::Struct), "", 0, self.cur_line),
-            "union" => Token::new(TokenKind::Keyword(Keyword::Union), "", 0, self.cur_line),
-            "enum" => Token::new(TokenKind::Keyword(Keyword::Enum), "", 0, self.cur_line),
-            "inline" => Token::new(TokenKind::Keyword(Keyword::Inline), "", 0, self.cur_line),
-            "noreturn" => Token::new(TokenKind::Keyword(Keyword::Noreturn), "", 0, self.cur_line),
-            "if" => Token::new(TokenKind::Keyword(Keyword::If), "", 0, self.cur_line),
-            "else" => Token::new(TokenKind::Keyword(Keyword::Else), "", 0, self.cur_line),
-            "for" => Token::new(TokenKind::Keyword(Keyword::For), "", 0, self.cur_line),
-            "while" => Token::new(TokenKind::Keyword(Keyword::While), "", 0, self.cur_line),
-            "return" => Token::new(TokenKind::Keyword(Keyword::Return), "", 0, self.cur_line),
-            "++" => Token::new(TokenKind::Symbol(Symbol::Inc), "", 0, self.cur_line), 
-            "--" => Token::new(TokenKind::Symbol(Symbol::Dec), "", 0, self.cur_line),
+            "typedef" => {
+                Token::new(TokenKind::Keyword(Keyword::Typedef),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "extern" => {
+                Token::new(TokenKind::Keyword(Keyword::Extern),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "auto" => {
+                Token::new(TokenKind::Keyword(Keyword::Auto),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "register" => {
+                Token::new(TokenKind::Keyword(Keyword::Register),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "static" => {
+                Token::new(TokenKind::Keyword(Keyword::Static),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "restrict" => {
+                Token::new(TokenKind::Keyword(Keyword::Restrict),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "const" => {
+                Token::new(TokenKind::Keyword(Keyword::Const),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "volatile" => {
+                Token::new(TokenKind::Keyword(Keyword::Volatile),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "void" => {
+                Token::new(TokenKind::Keyword(Keyword::Void),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "signed" => {
+                Token::new(TokenKind::Keyword(Keyword::Signed),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "unsigned" => {
+                Token::new(TokenKind::Keyword(Keyword::Unsigned),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "char" => {
+                Token::new(TokenKind::Keyword(Keyword::Char),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "int" => {
+                Token::new(TokenKind::Keyword(Keyword::Int),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "short" => {
+                Token::new(TokenKind::Keyword(Keyword::Short),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "long" => {
+                Token::new(TokenKind::Keyword(Keyword::Long),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "float" => {
+                Token::new(TokenKind::Keyword(Keyword::Float),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "double" => {
+                Token::new(TokenKind::Keyword(Keyword::Double),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "struct" => {
+                Token::new(TokenKind::Keyword(Keyword::Struct),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "union" => {
+                Token::new(TokenKind::Keyword(Keyword::Union),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "enum" => {
+                Token::new(TokenKind::Keyword(Keyword::Enum),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "inline" => {
+                Token::new(TokenKind::Keyword(Keyword::Inline),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "noreturn" => {
+                Token::new(TokenKind::Keyword(Keyword::Noreturn),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "if" => {
+                Token::new(TokenKind::Keyword(Keyword::If),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "else" => {
+                Token::new(TokenKind::Keyword(Keyword::Else),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "for" => {
+                Token::new(TokenKind::Keyword(Keyword::For),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "while" => {
+                Token::new(TokenKind::Keyword(Keyword::While),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "return" => {
+                Token::new(TokenKind::Keyword(Keyword::Return),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "++" => {
+                Token::new(TokenKind::Symbol(Symbol::Inc),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            } 
+            "--" => {
+                Token::new(TokenKind::Symbol(Symbol::Dec),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
             "(" => {
                 Token::new(TokenKind::Symbol(Symbol::OpeningParen),
                            "",
                            0,
-                           self.cur_line)
+                           *self.cur_line.back_mut().unwrap())
             }
             ")" => {
                 Token::new(TokenKind::Symbol(Symbol::ClosingParen),
                            "",
                            0,
-                           self.cur_line)
+                           *self.cur_line.back_mut().unwrap())
             }
             "[" => {
                 Token::new(TokenKind::Symbol(Symbol::OpeningBoxBracket),
                            "",
                            0,
-                           self.cur_line)
+                           *self.cur_line.back_mut().unwrap())
             }
             "]" => {
                 Token::new(TokenKind::Symbol(Symbol::ClosingBoxBracket),
                            "",
                            0,
-                           self.cur_line)
+                           *self.cur_line.back_mut().unwrap())
             }
             "{" => {
                 Token::new(TokenKind::Symbol(Symbol::OpeningBrace),
                            "",
                            0,
-                           self.cur_line)
+                           *self.cur_line.back_mut().unwrap())
             }
             "}" => {
                 Token::new(TokenKind::Symbol(Symbol::ClosingBrace),
                            "",
                            0,
-                           self.cur_line)
+                           *self.cur_line.back_mut().unwrap())
             }
-            "." => Token::new(TokenKind::Symbol(Symbol::Point), "", 0, self.cur_line),
-            "," => Token::new(TokenKind::Symbol(Symbol::Comma), "", 0, self.cur_line),
-            ";" => Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, self.cur_line),
-            ":" => Token::new(TokenKind::Symbol(Symbol::Colon), "", 0, self.cur_line),
-            "->" => Token::new(TokenKind::Symbol(Symbol::Arrow), "", 0, self.cur_line),
-            "+" => Token::new(TokenKind::Symbol(Symbol::Add), "", 0, self.cur_line),
-            "-" => Token::new(TokenKind::Symbol(Symbol::Sub), "", 0, self.cur_line),
-            "!" => Token::new(TokenKind::Symbol(Symbol::Not), "", 0, self.cur_line),
-            "~" => Token::new(TokenKind::Symbol(Symbol::BitwiseNot), "", 0, self.cur_line),
-            "*" => Token::new(TokenKind::Symbol(Symbol::Asterisk), "", 0, self.cur_line),
-            "&" => Token::new(TokenKind::Symbol(Symbol::Ampersand), "", 0, self.cur_line),
-            "/" => Token::new(TokenKind::Symbol(Symbol::Div), "", 0, self.cur_line),
-            "%" => Token::new(TokenKind::Symbol(Symbol::Mod), "", 0, self.cur_line),
-            "<<" => Token::new(TokenKind::Symbol(Symbol::Shl), "", 0, self.cur_line),
-            ">>" => Token::new(TokenKind::Symbol(Symbol::Shr), "", 0, self.cur_line),
-            "<" => Token::new(TokenKind::Symbol(Symbol::Lt), "", 0, self.cur_line),
-            "<=" => Token::new(TokenKind::Symbol(Symbol::Le), "", 0, self.cur_line),
-            ">" => Token::new(TokenKind::Symbol(Symbol::Gt), "", 0, self.cur_line),
-            ">=" => Token::new(TokenKind::Symbol(Symbol::Ge), "", 0, self.cur_line),
-            "==" => Token::new(TokenKind::Symbol(Symbol::Eq), "", 0, self.cur_line),
-            "!=" => Token::new(TokenKind::Symbol(Symbol::Ne), "", 0, self.cur_line),
-            "^" => Token::new(TokenKind::Symbol(Symbol::Xor), "", 0, self.cur_line),
-            "|" => Token::new(TokenKind::Symbol(Symbol::Or), "", 0, self.cur_line),
-            "&&" => Token::new(TokenKind::Symbol(Symbol::LAnd), "", 0, self.cur_line),
-            "||" => Token::new(TokenKind::Symbol(Symbol::LOr), "", 0, self.cur_line),
-            "?" => Token::new(TokenKind::Symbol(Symbol::Question), "", 0, self.cur_line),
-            "=" => Token::new(TokenKind::Symbol(Symbol::Assign), "", 0, self.cur_line),
-            "+=" => Token::new(TokenKind::Symbol(Symbol::AssignAdd), "", 0, self.cur_line),
-            "-=" => Token::new(TokenKind::Symbol(Symbol::AssignSub), "", 0, self.cur_line),
-            "*=" => Token::new(TokenKind::Symbol(Symbol::AssignMul), "", 0, self.cur_line),
-            "/=" => Token::new(TokenKind::Symbol(Symbol::AssignDiv), "", 0, self.cur_line),
-            "%=" => Token::new(TokenKind::Symbol(Symbol::AssignMod), "", 0, self.cur_line),
-            "<<=" => Token::new(TokenKind::Symbol(Symbol::AssignShl), "", 0, self.cur_line),
-            ">>=" => Token::new(TokenKind::Symbol(Symbol::AssignShr), "", 0, self.cur_line),
-            "&=" => Token::new(TokenKind::Symbol(Symbol::AssignAnd), "", 0, self.cur_line),
-            "^=" => Token::new(TokenKind::Symbol(Symbol::AssignXor), "", 0, self.cur_line),
-            "|=" => Token::new(TokenKind::Symbol(Symbol::AssignOr), "", 0, self.cur_line),
-            "#" => Token::new(TokenKind::Symbol(Symbol::Hash), "", 0, self.cur_line),
-            "..." => Token::new(TokenKind::Symbol(Symbol::Vararg), "", 0, self.cur_line),
-            "sizeof" => Token::new(TokenKind::Symbol(Symbol::Sizeof), "", 0, self.cur_line),
+            "." => {
+                Token::new(TokenKind::Symbol(Symbol::Point),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "," => {
+                Token::new(TokenKind::Symbol(Symbol::Comma),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            ";" => {
+                Token::new(TokenKind::Symbol(Symbol::Semicolon),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            ":" => {
+                Token::new(TokenKind::Symbol(Symbol::Colon),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "->" => {
+                Token::new(TokenKind::Symbol(Symbol::Arrow),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "+" => {
+                Token::new(TokenKind::Symbol(Symbol::Add),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "-" => {
+                Token::new(TokenKind::Symbol(Symbol::Sub),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "!" => {
+                Token::new(TokenKind::Symbol(Symbol::Not),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "~" => {
+                Token::new(TokenKind::Symbol(Symbol::BitwiseNot),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "*" => {
+                Token::new(TokenKind::Symbol(Symbol::Asterisk),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "&" => {
+                Token::new(TokenKind::Symbol(Symbol::Ampersand),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "/" => {
+                Token::new(TokenKind::Symbol(Symbol::Div),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "%" => {
+                Token::new(TokenKind::Symbol(Symbol::Mod),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "<<" => {
+                Token::new(TokenKind::Symbol(Symbol::Shl),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            ">>" => {
+                Token::new(TokenKind::Symbol(Symbol::Shr),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "<" => {
+                Token::new(TokenKind::Symbol(Symbol::Lt),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "<=" => {
+                Token::new(TokenKind::Symbol(Symbol::Le),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            ">" => {
+                Token::new(TokenKind::Symbol(Symbol::Gt),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            ">=" => {
+                Token::new(TokenKind::Symbol(Symbol::Ge),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "==" => {
+                Token::new(TokenKind::Symbol(Symbol::Eq),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "!=" => {
+                Token::new(TokenKind::Symbol(Symbol::Ne),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "^" => {
+                Token::new(TokenKind::Symbol(Symbol::Xor),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "|" => {
+                Token::new(TokenKind::Symbol(Symbol::Or),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "&&" => {
+                Token::new(TokenKind::Symbol(Symbol::LAnd),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "||" => {
+                Token::new(TokenKind::Symbol(Symbol::LOr),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "?" => {
+                Token::new(TokenKind::Symbol(Symbol::Question),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "=" => {
+                Token::new(TokenKind::Symbol(Symbol::Assign),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "+=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignAdd),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "-=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignSub),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "*=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignMul),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "/=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignDiv),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "%=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignMod),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "<<=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignShl),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            ">>=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignShr),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "&=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignAnd),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "^=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignXor),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "|=" => {
+                Token::new(TokenKind::Symbol(Symbol::AssignOr),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "#" => {
+                Token::new(TokenKind::Symbol(Symbol::Hash),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "..." => {
+                Token::new(TokenKind::Symbol(Symbol::Vararg),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
+            "sizeof" => {
+                Token::new(TokenKind::Symbol(Symbol::Sizeof),
+                           "",
+                           0,
+                           *self.cur_line.back_mut().unwrap())
+            }
             _ => token,
         }
     }
@@ -610,7 +982,10 @@ impl Lexer {
         let mut arg: Vec<Token> = Vec::new();
         loop {
             let tok = self.do_read_token()
-                .or_else(|| error::error_exit(self.cur_line, "expected macro args but reach EOF"))
+                .or_else(|| {
+                             error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                               "expected macro args but reach EOF")
+                         })
                 .unwrap();
             if n == 0 {
                 if tok.val == ")" {
@@ -640,22 +1015,31 @@ impl Lexer {
                               })
                     .as_str();
         }
-        Token::new(TokenKind::String(string), "", 0, self.cur_line)
+        Token::new(TokenKind::String(string),
+                   "",
+                   0,
+                   *self.cur_line.back_mut().unwrap())
     }
     fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) {
         // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
         let expect_bracket = self.read_token()
-            .or_else(|| error::error_exit(self.cur_line, "expected '(' but reach EOF"))
+            .or_else(|| {
+                         error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                           "expected '(' but reach EOF")
+                     })
             .unwrap();
         if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
-            error::error_exit(self.cur_line, "expected '('");
+            error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '('");
         }
 
         let mut args: Vec<Vec<Token>> = Vec::new();
         // read macro arguments
         loop {
             let maybe_bracket = self.do_read_token()
-                .or_else(|| error::error_exit(self.cur_line, "expected ')' but reach EOF"))
+                .or_else(|| {
+                             error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                               "expected ')' but reach EOF")
+                         })
                 .unwrap();
             if maybe_bracket.val == ")" {
                 break;
@@ -712,14 +1096,13 @@ impl Lexer {
         token.and_then(|tok| {
             let name = tok.val.to_string();
 
-            if tok.hideset.contains(name.as_str()) ||
-               !MACRO_MAP.lock().unwrap().contains_key(name.as_str()) {
+            if tok.hideset.contains(name.as_str()) || !self.macro_map.contains_key(name.as_str()) {
                 Some(tok)
             } else {
                 // if cur token is macro:
-                match MACRO_MAP.lock().unwrap().get(name.as_str()).unwrap() {
-                    &Macro::Object(ref body) => self.expand_obj_macro(name, body),
-                    &Macro::FuncLike(ref body) => self.expand_func_macro(name, body),
+                match self.macro_map.get(name.as_str()).unwrap().clone() {
+                    Macro::Object(ref body) => self.expand_obj_macro(name, body),
+                    Macro::FuncLike(ref body) => self.expand_func_macro(name, body),
                 }
                 self.get()
             }
@@ -757,7 +1140,8 @@ impl Lexer {
     pub fn get_e(&mut self) -> Token {
         let tok = self.get();
         if tok.is_none() {
-            error::error_exit(self.cur_line, "expected a token, but reach EOF");
+            error::error_exit(*self.cur_line.back_mut().unwrap(),
+                              "expected a token, but reach EOF");
         }
         tok.unwrap()
     }
@@ -773,7 +1157,8 @@ impl Lexer {
     pub fn peek_e(&mut self) -> Token {
         let tok = self.peek();
         if tok.is_none() {
-            error::error_exit(self.cur_line, "expected a token, but reach EOF");
+            error::error_exit(*self.cur_line.back_mut().unwrap(),
+                              "expected a token, but reach EOF");
         }
         tok.unwrap()
     }
@@ -823,12 +1208,15 @@ impl Lexer {
             self.peek_next(); // >
         } else {
             let tok = self.do_read_token()
-                .or_else(|| { error::error_exit(self.cur_line, "expcted macro args"); })
+                .or_else(|| {
+                             error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                               "expcted macro args");
+                         })
                 .unwrap();
             if let TokenKind::String(s) = tok.kind {
                 name = s;
             } else {
-                error::error_exit(self.cur_line, "expected '<' or '\"'");
+                error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '<' or '\"'");
             }
         }
         name
@@ -839,7 +1227,9 @@ impl Lexer {
         let real_filename = match self.try_include(filename.as_str()) {
             Some(f) => f,
             _ => {
-                println!("error: {}: not found '{}'", self.cur_line, filename);
+                println!("error: {}: not found '{}'",
+                         *self.cur_line.back_mut().unwrap(),
+                         filename);
                 process::exit(-1)
             }
         };
@@ -855,6 +1245,7 @@ impl Lexer {
             self.peek.push_back(body.as_mut_vec().clone());
         }
         self.peek_pos.push_back(0);
+        self.cur_line.push_back(1);
     }
 
     fn read_define_obj_macro(&mut self, name: String) {
@@ -879,7 +1270,10 @@ impl Lexer {
         let mut count = 0usize;
         loop {
             let arg = self.get()
-                .or_else(|| { error::error_exit(self.cur_line, "expcted macro args"); })
+                .or_else(|| {
+                             error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                               "expcted macro args");
+                         })
                 .unwrap()
                 .val;
             args.insert(arg, count);
@@ -927,20 +1321,14 @@ impl Lexer {
     fn read_undef(&mut self) {
         let mcro = self.do_read_token().unwrap();
         assert_eq!(mcro.kind, TokenKind::Identifier);
-        MACRO_MAP.lock().unwrap().remove(mcro.val.as_str());
+        self.macro_map.remove(mcro.val.as_str());
     }
 
     fn register_obj_macro(&mut self, name: String, body: Vec<Token>) {
-        MACRO_MAP
-            .lock()
-            .unwrap()
-            .insert(name, Macro::Object(body));
+        self.macro_map.insert(name, Macro::Object(body));
     }
     fn register_funclike_macro(&mut self, name: String, body: Vec<Token>) {
-        MACRO_MAP
-            .lock()
-            .unwrap()
-            .insert(name, Macro::FuncLike(body));
+        self.macro_map.insert(name, Macro::FuncLike(body));
     }
 
     fn read_defined_op(&mut self) -> Token {
@@ -950,17 +1338,26 @@ impl Lexer {
             tok = self.do_read_token().unwrap();
             self.expect_skip_symbol(Symbol::ClosingParen);
         }
-        if MACRO_MAP.lock().unwrap().contains_key(tok.val.as_str()) {
-            Token::new(TokenKind::IntNumber, "1", 0, self.cur_line)
+        if self.macro_map.contains_key(tok.val.as_str()) {
+            Token::new(TokenKind::IntNumber,
+                       "1",
+                       0,
+                       *self.cur_line.back_mut().unwrap())
         } else {
-            Token::new(TokenKind::IntNumber, "0", 0, self.cur_line)
+            Token::new(TokenKind::IntNumber,
+                       "0",
+                       0,
+                       *self.cur_line.back_mut().unwrap())
         }
     }
     fn read_intexpr_line(&mut self) -> Vec<Token> {
         let mut v: Vec<Token> = Vec::new();
         loop {
             let mut tok = self.do_read_token()
-                .or_else(|| error::error_exit(self.cur_line, "expect a token, but reach EOF"))
+                .or_else(|| {
+                             error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                               "expect a token, but reach EOF")
+                         })
                 .unwrap();
             tok = self.expand(Some(tok)).unwrap();
             if tok.kind == TokenKind::Newline {
@@ -971,7 +1368,10 @@ impl Lexer {
                     v.push(self.read_defined_op());
                 } else if tok.kind == TokenKind::Identifier {
                     // identifier in expr line is replaced with 0i
-                    v.push(Token::new(TokenKind::IntNumber, "0", 0, self.cur_line));
+                    v.push(Token::new(TokenKind::IntNumber,
+                                      "0",
+                                      0,
+                                      *self.cur_line.back_mut().unwrap()));
                 } else {
                     v.push(tok);
                 }
@@ -1007,17 +1407,19 @@ impl Lexer {
     }
     fn read_ifdef(&mut self) {
         let mcro_name = self.do_read_token()
-            .or_else(|| error::error_exit(self.cur_line, "expected macro"))
+            .or_else(|| error::error_exit(*self.cur_line.back_mut().unwrap(), "expected macro"))
             .unwrap()
             .val;
-        self.do_read_if((*MACRO_MAP.lock().unwrap()).contains_key(mcro_name.as_str()));
+        let macro_is_defined = self.macro_map.contains_key(mcro_name.as_str());
+        self.do_read_if(macro_is_defined);
     }
     fn read_ifndef(&mut self) {
         let mcro_name = self.do_read_token()
-            .or_else(|| error::error_exit(self.cur_line, "expected macro"))
+            .or_else(|| error::error_exit(*self.cur_line.back_mut().unwrap(), "expected macro"))
             .unwrap()
             .val;
-        self.do_read_if(!(*MACRO_MAP.lock().unwrap()).contains_key(mcro_name.as_str()));
+        let macro_is_undefined = !self.macro_map.contains_key(mcro_name.as_str());
+        self.do_read_if(macro_is_undefined);
     }
     fn read_elif(&mut self) {
         if self.cond_stack[self.cond_stack.len() - 1] || !self.read_constexpr() {
@@ -1037,7 +1439,7 @@ impl Lexer {
         let mut nest = 0;
         let get_tok = |lex: &mut Lexer| -> Token {
             lex.do_read_token()
-                .or_else(|| error::error_exit(lex.cur_line, "reach EOF"))
+                .or_else(|| error::error_exit(*lex.cur_line.back_mut().unwrap(), "reach EOF"))
                 .unwrap()
         };
         loop {
@@ -1049,7 +1451,7 @@ impl Lexer {
             if nest == 0 {
                 match tok.val.as_str() {
                     "else" | "elif" | "endif" => {
-                        let line = self.cur_line;
+                        let line = *self.cur_line.back_mut().unwrap();
                         self.unget(tok);
                         self.unget(Token::new(TokenKind::Identifier, "#", 0, line));
                         return;
