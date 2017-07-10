@@ -76,11 +76,38 @@ impl Codegen {
     pub unsafe fn new(mod_name: &str) -> Codegen {
         let c_mod_name = CString::new(mod_name).unwrap();
         let module = LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), LLVMContextCreate());
+        let mut global_varmap = HashMap::new();
+
+        let llvm_memcpy_ty = Type::Func(Rc::new(Type::Void),
+                                        vec![Type::Ptr(Rc::new(Type::Char(Sign::Signed))),
+                                             Type::Ptr(Rc::new(Type::Char(Sign::Signed))),
+                                             Type::Int(Sign::Signed),
+                                             Type::Int(Sign::Signed),
+                                             Type::Int(Sign::Signed)],
+                                        false);
+        let llvm_memcpy_llvm_ty = LLVMFunctionType(LLVMVoidType(),
+                                                   vec![LLVMPointerType(LLVMInt8Type(), 0),
+                                                        LLVMPointerType(LLVMInt8Type(), 0),
+                                                        LLVMInt32Type(),
+                                                        LLVMInt32Type(),
+                                                        LLVMInt1Type()]
+                                                           .as_mut_slice()
+                                                           .as_mut_ptr(),
+                                                   5,
+                                                   0);
+        let llvm_memcpy = LLVMAddFunction(module,
+                                          CString::new("llvm.memcpy.p0i8.p0i8.i32")
+                                              .unwrap()
+                                              .as_ptr(),
+                                          llvm_memcpy_llvm_ty);
+        global_varmap.insert("llvm.memcpy.p0i8.p0i8.i32".to_string(),
+                             VarInfo::new(llvm_memcpy_ty, llvm_memcpy_llvm_ty, llvm_memcpy));
+
         Codegen {
             context: LLVMContextCreate(),
             module: module,
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
-            global_varmap: HashMap::new(),
+            global_varmap: global_varmap,
             local_varmap: Vec::new(),
             llvm_struct_map: HashMap::new(),
             _data_layout: LLVMGetDataLayout(module),
@@ -324,13 +351,15 @@ impl Codegen {
     }
     unsafe fn gen_const_array(&mut self, elems_ast: &Vec<node::AST>) -> CodegenResult {
         let mut elems = Vec::new();
-        for e in elems_ast {
+        let (elem_val, elem_ty) = try!(self.gen(&elems_ast[0]));
+        elems.push(elem_val);
+        for e in elems_ast[1..].iter() {
             elems.push(try!(self.gen(e)).0);
         }
         Ok((LLVMConstArray(LLVMTypeOf(elems[0]),
                            elems.as_mut_slice().as_mut_ptr(),
                            elems.len() as u32),
-            None))
+            Some(Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32))))
     }
     unsafe fn gen_local_var_decl(&mut self,
                                  ty: &Type,
@@ -368,11 +397,37 @@ impl Codegen {
     }
     unsafe fn set_local_var_initializer(&mut self,
                                         var: LLVMValueRef,
-                                        _varty: &Type,
+                                        varty: &Type,
                                         init: &node::AST)
                                         -> CodegenResult {
         let init_val = try!(self.gen(init)).0;
-        Ok((LLVMBuildStore(self.builder, init_val, var), None))
+        match *varty {
+            Type::Array(_, _) => {
+                let llvm_memcpy = self.global_varmap
+                    .get("llvm.memcpy.p0i8.p0i8.i32")
+                    .unwrap();
+                let init_ary = LLVMAddGlobal(self.module,
+                                             LLVMGetElementType(LLVMTypeOf(var)),
+                                             CString::new("constary").unwrap().as_ptr());
+                LLVMSetInitializer(init_ary, init_val);
+                Ok((LLVMBuildCall(self.builder,
+                                  llvm_memcpy.llvm_val,
+                                  vec![self.typecast(var, LLVMPointerType(LLVMInt8Type(), 0)),
+                                       self.typecast(init_ary,
+                                                     LLVMPointerType(LLVMInt8Type(), 0)),
+                                       LLVMConstInt(LLVMInt32Type(),
+                                                    varty.calc_size() as u64,
+                                                    0),
+                                       LLVMConstInt(LLVMInt32Type(), 4, 0),
+                                       LLVMConstInt(LLVMInt1Type(), 0, 0)]
+                                          .as_mut_slice()
+                                          .as_mut_ptr(),
+                                  5,
+                                  CString::new("").unwrap().as_ptr()),
+                    None))
+            }
+            _ => Ok((LLVMBuildStore(self.builder, init_val, var), None)),
+        }
     }
 
     unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> CodegenResult {
@@ -511,20 +566,7 @@ impl Codegen {
 
     unsafe fn gen_unary_op(&mut self, expr: &node::AST, op: &node::CUnaryOps) -> CodegenResult {
         match *op {
-            node::CUnaryOps::Deref => {
-                self.gen_load(expr)
-                // let (expr_val, val_ty) = self.gen(expr);
-                // let ty = match val_ty.unwrap() {
-                //     Type::Array(t, _) |
-                //     Type::Ptr(t) => (*t).clone(),
-                //     Type::Func(a, b, c) => return (expr_val, Some(Type::Func(a, b, c))),
-                //     _ => error::error_exit(0, "gen_unary_op: never reach"),
-                // };
-                // (LLVMBuildLoad(self.builder,
-                //                expr_val,
-                //                CString::new("deref").unwrap().as_ptr()),
-                //  Some(ty))
-            }
+            node::CUnaryOps::Deref => self.gen_load(expr),
             _ => Ok((ptr::null_mut(), None)),
         }
     }
