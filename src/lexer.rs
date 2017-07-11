@@ -412,25 +412,60 @@ impl Lexer {
                    0,
                    *self.cur_line.back_mut().unwrap())
     }
-    fn read_string_literal(&mut self) -> Token {
-        self.peek_next();
-        let mut s = String::new();
-        while !self.peek_char_is('\"') {
-            s.push(self.peek_next());
+    fn read_escaped_char(&mut self) -> char {
+        let c = self.peek_next();
+        match c {
+            '\'' | '"' | '?' | '\\' => c,
+            'a' => '\x07',
+            'b' => '\x08',
+            'f' => '\x0c',
+            'n' => '\x0a',
+            'r' => '\x0d',
+            't' => '\x09',
+            'v' => '\x0b',
+            'x' => {
+                loop {
+                    match self.peek_get().unwrap() {
+                        '0'...'9' | 'a'...'f' | 'A'...'F' => {}
+                        _ => break,
+                    }
+                    self.peek_next();
+                }
+                'A'
+            }
+            _ => c,
         }
-        self.peek_next();
+    }
+    fn read_string_literal(&mut self) -> Token {
+        self.peek_next(); // '"'
+        let mut s = String::new();
+        loop {
+            let c = self.peek_next();
+            match c {
+                '"' => break,
+                '\\' => s.push(self.read_escaped_char()),
+                _ => s.push(c),
+            }
+        }
         Token::new(TokenKind::String(s),
                    "",
                    0,
                    *self.cur_line.back_mut().unwrap())
     }
     fn read_char_literal(&mut self) -> Token {
-        self.peek_next();
+        self.peek_next(); // '\''
+        let c = self.peek_next();
         let mut s = String::new();
-        while !self.peek_char_is('\'') {
-            s.push(self.peek_next());
+        s.push(if c == '\\' {
+                   self.read_escaped_char()
+               } else {
+                   c
+               });
+        println!("{}", self.peek_get().unwrap());
+        if self.peek_next() != '\'' {
+            error::error_exit(*self.cur_line.back().unwrap(),
+                              "missing terminating \' char");
         }
-        self.peek_next();
         Token::new(TokenKind::Char,
                    s.as_str(),
                    0,
@@ -1055,8 +1090,8 @@ impl Lexer {
         for macro_tok in macro_body {
             // TODO: refine code
             if macro_tok.val == "#" {
-                // means ##
                 if is_stringize {
+                    // means ##
                     is_stringize = false;
                     is_combine = true;
                 } else {
