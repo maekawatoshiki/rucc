@@ -356,7 +356,6 @@ impl Lexer {
             self.peek_next();
         }
         if is_float {
-            println!("{}", num);
             let f: f64 = num.parse().unwrap();
             Token::new(TokenKind::FloatNumber(f),
                        "",
@@ -365,6 +364,8 @@ impl Lexer {
         } else {
             let i = if num.len() > 2 && num.chars().nth(1).unwrap() == 'x' {
                 self.read_hex_num(&num[2..])
+            } else if num.chars().nth(0).unwrap() == '0' {
+                self.read_oct_num(&num[1..])
             } else {
                 self.read_dec_num(num.as_str())
             };
@@ -379,6 +380,16 @@ impl Lexer {
         for c in num_literal.chars() {
             match c {
                 '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i64,
+                _ => {} // TODO: suffix
+            }
+        }
+        n
+    }
+    fn read_oct_num(&mut self, num_literal: &str) -> i64 {
+        let mut n = 0i64;
+        for c in num_literal.chars() {
+            match c {
+                '0'...'7' => n = n * 8 + c.to_digit(8).unwrap() as i64,
                 _ => {} // TODO: suffix
             }
         }
