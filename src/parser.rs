@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
         self.env.push_back(localenv);
         self.tags.push_back(localtags);
         let retty = self.read_type_spec().0;
-        let (functy, name, param_names) = self.read_declarator(retty);
+        let (functy, name, param_names) = self.read_declarator(&retty);
         println!("functy: {:?}", functy);
 
         self.lexer.expect_skip_symbol(Symbol::OpeningBrace);
@@ -178,7 +178,7 @@ impl<'a> Parser<'a> {
         }
     }
     fn is_function_def(&mut self) -> bool {
-        let mut buf: Vec<Token> = Vec::new();
+        let mut buf = Vec::new();
         let mut is_funcdef = false;
 
         loop {
@@ -231,9 +231,11 @@ impl<'a> Parser<'a> {
     }
 
     fn get_typedef(&mut self, name: &str) -> Option<Type> {
-        let env = self.env.back_mut().unwrap();
-        match env.get(name) {
-            Some(ast) => {
+        self.env
+            .back()
+            .unwrap()
+            .get(name)
+            .and_then(|ast| {
                 Some(match ast.kind {
                          ASTKind::Typedef(ref from, ref _to) => (*from).clone(),
                          _ => {
@@ -241,9 +243,7 @@ impl<'a> Parser<'a> {
                                                format!("not found type '{}'", name).as_str())
                          }
                      })
-            } 
-            None => None,
-        }
+            })
     }
     fn is_type(&mut self, token: &Token) -> bool {
         if let TokenKind::Keyword(ref keyw) = token.kind {
@@ -285,7 +285,6 @@ impl<'a> Parser<'a> {
         if let &mut Type::Array(ref mut _elem_ty, ref mut len) = ty {
             let is_flexible = *len < 0;
             let mut elems = Vec::new();
-            let mut count = 0;
             loop {
                 if self.lexer.skip_symbol(Symbol::ClosingBrace) {
                     break;
@@ -293,10 +292,9 @@ impl<'a> Parser<'a> {
                 let elem = self.read_assign();
                 elems.push(elem);
                 self.lexer.skip_symbol(Symbol::Comma);
-                count += 1;
             }
             if is_flexible {
-                *len = count;
+                *len = elems.len() as i32;
             }
             AST::new(ASTKind::ConstArray(elems),
                      *self.lexer.cur_line.back().unwrap())
@@ -323,7 +321,7 @@ impl<'a> Parser<'a> {
         }
 
         loop {
-            let (mut ty, name, _) = self.read_declarator(basety.clone());
+            let (mut ty, name, _) = self.read_declarator(&basety);
 
             if is_typedef {
                 let typedef = AST::new(ASTKind::Typedef(basety, name.to_string()),
@@ -364,7 +362,7 @@ impl<'a> Parser<'a> {
         }
     }
     // returns (declarator type, name, params{for function})
-    fn read_declarator(&mut self, basety: Type) -> (Type, String, Option<Vec<String>>) {
+    fn read_declarator(&mut self, basety: &Type) -> (Type, String, Option<Vec<String>>) {
         if self.lexer.skip_symbol(Symbol::OpeningParen) {
             let peek_tok = self.lexer.peek_e();
             if self.is_type(&peek_tok) {
@@ -379,12 +377,12 @@ impl<'a> Parser<'a> {
             }
             let t = self.read_declarator_tail(basety);
             self.lexer.unget_all(buf);
-            return self.read_declarator(t.0);
+            return self.read_declarator(&t.0);
         }
 
         if self.lexer.skip_symbol(Symbol::Asterisk) {
             self.skip_type_qualifiers();
-            return self.read_declarator(Type::Ptr(Rc::new(basety)));
+            return self.read_declarator(&Type::Ptr(Rc::new(basety.clone())));
         }
 
         let tok = self.lexer.get().unwrap();
@@ -399,40 +397,40 @@ impl<'a> Parser<'a> {
         let (ty, params) = self.read_declarator_tail(basety);
         (ty, "".to_string(), params)
     }
-    fn read_declarator_tail(&mut self, basety: Type) -> (Type, Option<Vec<String>>) {
+    fn read_declarator_tail(&mut self, basety: &Type) -> (Type, Option<Vec<String>>) {
         if self.lexer.skip_symbol(Symbol::OpeningBoxBracket) {
             return (self.read_declarator_array(basety), None);
         }
         if self.lexer.skip_symbol(Symbol::OpeningParen) {
             return self.read_declarator_func(basety);
         }
-        (basety, None)
+        (basety.clone(), None)
     }
 
-    fn read_declarator_array(&mut self, basety: Type) -> Type {
+    fn read_declarator_array(&mut self, basety: &Type) -> Type {
         let len: i32;
         if self.lexer.skip_symbol(Symbol::ClosingBoxBracket) {
             len = -1;
         } else {
-            len = self.read_expr().eval_constexpr();
+            len = self.read_expr().eval_constexpr() as i32;
             self.lexer.expect_skip_symbol(Symbol::ClosingBoxBracket);
         }
         let ty = self.read_declarator_tail(basety).0;
         Type::Array(Rc::new(ty), len)
     }
-    fn read_declarator_func(&mut self, retty: Type) -> (Type, Option<Vec<String>>) {
+    fn read_declarator_func(&mut self, retty: &Type) -> (Type, Option<Vec<String>>) {
         if self.lexer.peek_keyword_token_is(Keyword::Void) &&
            self.lexer.next_symbol_token_is(Symbol::ClosingParen) {
             self.lexer.expect_skip_keyword(Keyword::Void);
             self.lexer.expect_skip_symbol(Symbol::ClosingParen);
-            return (Type::Func(Rc::new(retty), Vec::new(), false), None);
+            return (Type::Func(Rc::new(retty.clone()), Vec::new(), false), None);
         }
         if self.lexer.skip_symbol(Symbol::ClosingParen) {
-            return (Type::Func(Rc::new(retty), Vec::new(), false), None);
+            return (Type::Func(Rc::new(retty.clone()), Vec::new(), false), None);
         }
 
         let (paramtypes, paramnames, vararg) = self.read_declarator_params();
-        (Type::Func(Rc::new(retty), paramtypes.clone(), vararg), Some(paramnames))
+        (Type::Func(Rc::new(retty.clone()), paramtypes.clone(), vararg), Some(paramnames))
     }
     // returns (param types, param names, vararg?)
     fn read_declarator_params(&mut self) -> (Vec<Type>, Vec<String>, bool) {
@@ -459,7 +457,7 @@ impl<'a> Parser<'a> {
     }
     fn read_func_param(&mut self) -> (Type, String) {
         let basety = self.read_type_spec().0;
-        let (ty, name, _) = self.read_declarator(basety);
+        let (ty, name, _) = self.read_declarator(&basety);
         match ty {
             Type::Array(subst, _) => return (Type::Ptr(subst), name),
             Type::Func(_, _, _) => return (Type::Ptr(Rc::new(ty)), name),
@@ -586,30 +584,24 @@ impl<'a> Parser<'a> {
             return (userty.unwrap(), sclass);
         }
 
-        let mut ty: Option<Type> = None;
-        // e.g. kind is None => 'signed var;' or 'unsigned var;'
         if kind.is_some() {
             match kind.unwrap() {
-                PrimitiveType::Void => ty = Some(Type::Void),
-                PrimitiveType::Char => ty = Some(Type::Char(sign.clone().unwrap())),
-                PrimitiveType::Float => ty = Some(Type::Float),
-                PrimitiveType::Double => ty = Some(Type::Double),
+                PrimitiveType::Void => return (Type::Void, sclass),
+                PrimitiveType::Char => return (Type::Char(sign.clone().unwrap()), sclass),
+                PrimitiveType::Float => return (Type::Float, sclass),
+                PrimitiveType::Double => return (Type::Double, sclass),
                 _ => {}
             }
-            if ty.is_some() {
-                return (ty.unwrap(), sclass);
-            }
         }
 
-        match size {
-            Size::Short => ty = Some(Type::Short(sign.clone().unwrap())),
-            Size::Normal => ty = Some(Type::Int(sign.clone().unwrap())),
-            Size::Long => ty = Some(Type::Long(sign.clone().unwrap())),
-            Size::LLong => ty = Some(Type::LLong(sign.clone().unwrap())),
-        }
+        let ty = match size {
+            Size::Short => Type::Short(sign.clone().unwrap()),
+            Size::Normal => Type::Int(sign.clone().unwrap()),
+            Size::Long => Type::Long(sign.clone().unwrap()),
+            Size::LLong => Type::LLong(sign.clone().unwrap()),
+        };
 
-        assert!(ty.is_some(), "ty is None!");
-        (ty.unwrap(), sclass)
+        (ty, sclass)
     }
 
     fn read_struct_def(&mut self) -> Type {
@@ -693,7 +685,7 @@ impl<'a> Parser<'a> {
             }
             let (basety, _) = self.read_type_spec();
             loop {
-                let (ty, name, _) = self.read_declarator(basety.clone());
+                let (ty, name, _) = self.read_declarator(&basety.clone());
                 if self.lexer.skip_symbol(Symbol::Colon) {
                     // TODO: for now, designated bitwidth ignore
                     self.read_expr();
@@ -774,7 +766,6 @@ impl<'a> Parser<'a> {
     pub fn read_opt_expr(&mut self) -> AST {
         self.read_expr()
     }
-    ////////// operators start from here
     fn read_comma(&mut self) -> AST {
         let mut lhs = self.read_assign();
         while self.lexer.skip_symbol(Symbol::Comma) {
@@ -981,7 +972,7 @@ impl<'a> Parser<'a> {
         let peek = self.lexer.peek_e();
         if tok.kind == TokenKind::Symbol(Symbol::OpeningParen) && self.is_type(&peek) {
             let basety = self.read_type_spec().0;
-            let ty = self.read_declarator(basety).0;
+            let ty = self.read_declarator(&basety).0;
             self.lexer.expect_skip_symbol(Symbol::ClosingParen);
             return AST::new(ASTKind::TypeCast(Rc::new(self.read_cast()), ty),
                             *self.lexer.cur_line.back().unwrap());
@@ -1034,9 +1025,9 @@ impl<'a> Parser<'a> {
                 let tok = self.lexer.peek_e();
                 assert!(self.is_type(&tok));
                 let (basety, _) = self.read_type_spec();
-                let (ty, _, _) = self.read_declarator(basety);
+                let (ty, _, _) = self.read_declarator(&basety);
                 self.lexer.expect_skip_symbol(Symbol::ClosingParen);
-                return AST::new(ASTKind::Int(ty.calc_size() as i32),
+                return AST::new(ASTKind::Int(ty.calc_size() as i64),
                                 *self.lexer.cur_line.back().unwrap());
             }
             _ => {}
@@ -1127,19 +1118,10 @@ impl<'a> Parser<'a> {
                      })
             .unwrap();
         match tok.kind.clone() {
-            TokenKind::IntNumber => {
-                let num_literal = tok.val;
-                if num_literal.len() > 2 && num_literal.chars().nth(1).unwrap() == 'x' {
-                    AST::new(ASTKind::Int(self.read_hex_num(&num_literal[2..])),
-                             *self.lexer.cur_line.back().unwrap())
-                } else {
-                    AST::new(ASTKind::Int(self.read_dec_num(num_literal.as_str())),
-                             *self.lexer.cur_line.back().unwrap())
-                }
+            TokenKind::IntNumber(n) => {
+                AST::new(ASTKind::Int(n), *self.lexer.cur_line.back().unwrap())
             }
-            TokenKind::FloatNumber => {
-                let num_literal = &tok.val;
-                let f: f64 = num_literal.parse().unwrap();
+            TokenKind::FloatNumber(f) => {
                 AST::new(ASTKind::Float(f), *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Identifier => {
@@ -1181,27 +1163,4 @@ impl<'a> Parser<'a> {
             }
         }
     }
-    fn read_dec_num(&mut self, num_literal: &str) -> i32 {
-        let mut n = 0;
-        for c in num_literal.chars() {
-            match c {
-                '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i32, 
-                _ => {} // TODO: suffix
-            }
-        }
-        n
-    }
-    fn read_hex_num(&mut self, num_literal: &str) -> i32 {
-        let mut n = 0u64;
-        for c in num_literal.chars() {
-            match c {
-                '0'...'9' | 'A'...'F' | 'a'...'f' => {
-                    n = n * 16 + c.to_digit(16).unwrap() as u64;
-                }
-                _ => {} // TODO: suffix
-            }
-        }
-        n as i32
-    }
-    ////////// operators end here
 }

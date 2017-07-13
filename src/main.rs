@@ -13,6 +13,7 @@ fn main() {
     if args.len() < 2 {
         version_info::show_version();
         version_info::show_usage();
+        let ast = parser::Parser::run_file("a.c".to_string());
     } else {
         let ref input_file_name = args[1];
         let ast = parser::Parser::run_file(input_file_name.to_string());

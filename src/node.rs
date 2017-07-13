@@ -19,7 +19,7 @@ impl AST {
 
 #[derive(Debug, Clone)]
 pub enum ASTKind {
-    Int(i32),
+    Int(i64),
     Float(f64),
     Char(i32),
     String(String),
@@ -83,15 +83,15 @@ pub enum CUnaryOps {
 }
 
 impl AST {
-    pub fn eval_constexpr(&self) -> i32 {
+    pub fn eval_constexpr(&self) -> i64 {
         self.eval()
     }
 
-    fn eval(&self) -> i32 {
+    fn eval(&self) -> i64 {
         match self.kind {
             ASTKind::Int(n) => n,
             ASTKind::TypeCast(ref e, _) => e.eval(),
-            ASTKind::UnaryOp(ref e, CUnaryOps::LNot) => (e.eval() == 0) as i32,
+            ASTKind::UnaryOp(ref e, CUnaryOps::LNot) => (e.eval() == 0) as i64,
             ASTKind::UnaryOp(ref e, CUnaryOps::BNot) => !e.eval(),
             ASTKind::UnaryOp(ref e, CUnaryOps::Plus) => e.eval(),
             ASTKind::UnaryOp(ref e, CUnaryOps::Minus) => -e.eval(),
@@ -109,12 +109,12 @@ impl AST {
             ASTKind::BinaryOp(ref l, ref r, CBinOps::Xor) => l.eval() ^ r.eval(),
             ASTKind::BinaryOp(ref l, ref r, CBinOps::LAnd) => l.eval() & r.eval(),
             ASTKind::BinaryOp(ref l, ref r, CBinOps::LOr) => l.eval() | r.eval(),
-            ASTKind::BinaryOp(ref l, ref r, CBinOps::Eq) => (l.eval() == r.eval()) as i32,
-            ASTKind::BinaryOp(ref l, ref r, CBinOps::Ne) => (l.eval() != r.eval()) as i32,
-            ASTKind::BinaryOp(ref l, ref r, CBinOps::Lt) => (l.eval() < r.eval()) as i32,
-            ASTKind::BinaryOp(ref l, ref r, CBinOps::Gt) => (l.eval() > r.eval()) as i32,
-            ASTKind::BinaryOp(ref l, ref r, CBinOps::Le) => (l.eval() <= r.eval()) as i32,
-            ASTKind::BinaryOp(ref l, ref r, CBinOps::Ge) => (l.eval() >= r.eval()) as i32,
+            ASTKind::BinaryOp(ref l, ref r, CBinOps::Eq) => (l.eval() == r.eval()) as i64,
+            ASTKind::BinaryOp(ref l, ref r, CBinOps::Ne) => (l.eval() != r.eval()) as i64,
+            ASTKind::BinaryOp(ref l, ref r, CBinOps::Lt) => (l.eval() < r.eval()) as i64,
+            ASTKind::BinaryOp(ref l, ref r, CBinOps::Gt) => (l.eval() > r.eval()) as i64,
+            ASTKind::BinaryOp(ref l, ref r, CBinOps::Le) => (l.eval() <= r.eval()) as i64,
+            ASTKind::BinaryOp(ref l, ref r, CBinOps::Ge) => (l.eval() >= r.eval()) as i64,
             ASTKind::BinaryOp(ref l, ref r, CBinOps::Shl) => l.eval() << r.eval(),
             ASTKind::BinaryOp(ref l, ref r, CBinOps::Shr) => l.eval() >> r.eval(),
             ASTKind::BinaryOp(ref l, ref r, CBinOps::Comma) => {

@@ -104,8 +104,8 @@ pub enum TokenKind {
     MacroParam,
     Keyword(Keyword),
     Identifier,
-    IntNumber,
-    FloatNumber,
+    IntNumber(i64),
+    FloatNumber(f64),
     String(String),
     Char,
     Symbol(Symbol),
@@ -243,26 +243,26 @@ impl Lexer {
     pub fn next_token_is(&mut self, expect: &str) -> bool {
         let peek = self.get_e();
         let next = self.get_e();
-        let n = next.clone();
+        let next_token_is_expect = next.val == expect && next.kind != TokenKind::Char;
         self.unget(next);
         self.unget(peek);
-        n.val == expect && n.kind != TokenKind::Char
+        next_token_is_expect
     }
     pub fn next_keyword_token_is(&mut self, expect: Keyword) -> bool {
         let peek = self.get_e();
         let next = self.get_e();
-        let n = next.clone();
+        let next_token_is_expect = next.kind == TokenKind::Keyword(expect);
         self.unget(next);
         self.unget(peek);
-        n.kind == TokenKind::Keyword(expect)
+        next_token_is_expect
     }
     pub fn next_symbol_token_is(&mut self, expect: Symbol) -> bool {
         let peek = self.get_e();
         let next = self.get_e();
-        let n = next.clone();
+        let next_token_is_expect = next.kind == TokenKind::Symbol(expect);
         self.unget(next);
         self.unget(peek);
-        n.kind == TokenKind::Symbol(expect)
+        next_token_is_expect
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> bool {
         match self.get() {
@@ -321,7 +321,7 @@ impl Lexer {
     }
 
     pub fn read_identifier(&mut self) -> Token {
-        let mut ident = String::new();
+        let mut ident = String::with_capacity(16);
         loop {
             let c = self.peek_next();
             match c {
@@ -336,7 +336,7 @@ impl Lexer {
                    *self.cur_line.back_mut().unwrap())
     }
     fn read_number_literal(&mut self) -> Token {
-        let mut num = String::new();
+        let mut num = String::with_capacity(8);
         let mut is_float = false;
         loop {
             match self.peek_get() {
@@ -356,16 +356,43 @@ impl Lexer {
             self.peek_next();
         }
         if is_float {
-            Token::new(TokenKind::FloatNumber,
-                       num.as_str(),
+            println!("{}", num);
+            let f: f64 = num.parse().unwrap();
+            Token::new(TokenKind::FloatNumber(f),
+                       "",
                        0,
                        *self.cur_line.back_mut().unwrap())
         } else {
-            Token::new(TokenKind::IntNumber,
-                       num.as_str(),
+            let i = if num.len() > 2 && num.chars().nth(1).unwrap() == 'x' {
+                self.read_hex_num(&num[2..])
+            } else {
+                self.read_dec_num(num.as_str())
+            };
+            Token::new(TokenKind::IntNumber(i),
+                       "",
                        0,
                        *self.cur_line.back_mut().unwrap())
         }
+    }
+    fn read_dec_num(&mut self, num_literal: &str) -> i64 {
+        let mut n = 0i64;
+        for c in num_literal.chars() {
+            match c {
+                '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i64,
+                _ => {} // TODO: suffix
+            }
+        }
+        n
+    }
+    fn read_hex_num(&mut self, num_literal: &str) -> i64 {
+        let mut n = 0u64;
+        for c in num_literal.chars() {
+            match c {
+                '0'...'9' | 'A'...'F' | 'a'...'f' => n = n * 16 + c.to_digit(16).unwrap() as u64,
+                _ => {} // TODO: suffix
+            }
+        }
+        n as i64
     }
     pub fn read_newline(&mut self) -> Token {
         self.peek_next();
@@ -1145,30 +1172,29 @@ impl Lexer {
     }
 
     pub fn get(&mut self) -> Option<Token> {
-        let t = self.read_token();
-        let tok = match t {
-            Some(tok) => {
-                if tok.kind == TokenKind::Symbol(Symbol::Hash) {
+        let token = self.read_token();
+        let tok = token.and_then(|tok| {
+            match &tok.kind {
+                &TokenKind::Symbol(Symbol::Hash) => {
                     self.read_cpp_directive();
                     self.get()
-                } else if let TokenKind::String(s) = tok.kind.clone() {
+                }
+                &TokenKind::String(ref s) => {
                     if let TokenKind::String(s2) = self.peek_e().kind {
                         // TODO: makes no sense...
                         self.get_e();
-                        let mut ntok = tok;
-                        let mut ns = s.clone();
-                        ns.push_str(s2.as_str());
-                        ntok.kind = TokenKind::String(ns);
-                        Some(ntok)
+                        let mut new_tok = tok.clone();
+                        let mut concat_str = s.clone();
+                        concat_str.push_str(s2.as_str());
+                        new_tok.kind = TokenKind::String(concat_str);
+                        Some(new_tok)
                     } else {
-                        Some(tok)
+                        Some(tok.clone())
                     }
-                } else {
-                    Some(tok)
                 }
+                _ => Some(tok.clone()),
             }
-            _ => return t,
-        };
+        });
         self.expand(tok)
     }
 
@@ -1269,12 +1295,13 @@ impl Lexer {
             }
         };
         println!("include filename: {}", real_filename);
-        let mut file = OpenOptions::new()
+
+        let mut include_file = OpenOptions::new()
             .read(true)
             .open(real_filename.to_string())
             .unwrap();
-        let mut body = String::new();
-        file.read_to_string(&mut body);
+        let mut body = String::with_capacity(512);
+        include_file.read_to_string(&mut body);
         self.filename.push_back(real_filename);
         unsafe {
             self.peek.push_back(body.as_mut_vec().clone());
@@ -1374,13 +1401,13 @@ impl Lexer {
             self.expect_skip_symbol(Symbol::ClosingParen);
         }
         if self.macro_map.contains_key(tok.val.as_str()) {
-            Token::new(TokenKind::IntNumber,
-                       "1",
+            Token::new(TokenKind::IntNumber(1),
+                       "",
                        0,
                        *self.cur_line.back_mut().unwrap())
         } else {
-            Token::new(TokenKind::IntNumber,
-                       "0",
+            Token::new(TokenKind::IntNumber(0),
+                       "",
                        0,
                        *self.cur_line.back_mut().unwrap())
         }
@@ -1403,8 +1430,8 @@ impl Lexer {
                     v.push(self.read_defined_op());
                 } else if tok.kind == TokenKind::Identifier {
                     // identifier in expr line is replaced with 0i
-                    v.push(Token::new(TokenKind::IntNumber,
-                                      "0",
+                    v.push(Token::new(TokenKind::IntNumber(0),
+                                      "",
                                       0,
                                       *self.cur_line.back_mut().unwrap()));
                 } else {
@@ -1478,7 +1505,7 @@ impl Lexer {
                 .unwrap()
         };
         loop {
-            if get_tok(self).val != "#" {
+            if self.peek_next() != '#' {
                 continue;
             }
 
