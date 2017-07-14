@@ -324,7 +324,7 @@ impl<'a> Parser<'a> {
             let (mut ty, name, _) = self.read_declarator(&basety);
 
             if is_typedef {
-                let typedef = AST::new(ASTKind::Typedef(basety, name.to_string()),
+                let typedef = AST::new(ASTKind::Typedef(ty, name.to_string()),
                                        *self.lexer.cur_line.back().unwrap());
                 self.env.back_mut().unwrap().insert(name, typedef);
                 return;
@@ -810,6 +810,31 @@ impl<'a> Parser<'a> {
                                           *self.lexer.cur_line.back().unwrap()),
                                  *self.lexer.cur_line.back().unwrap());
                 }
+                TokenKind::Symbol(Symbol::AssignMul) => {
+                    lhs = assign(lhs.clone(),
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(self.read_assign()),
+                                                            node::CBinOps::Mul),
+                                          *self.lexer.cur_line.back().unwrap()),
+                                 *self.lexer.cur_line.back().unwrap());
+                }
+                TokenKind::Symbol(Symbol::AssignDiv) => {
+                    lhs = assign(lhs.clone(),
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(self.read_assign()),
+                                                            node::CBinOps::Div),
+                                          *self.lexer.cur_line.back().unwrap()),
+                                 *self.lexer.cur_line.back().unwrap());
+                }
+                TokenKind::Symbol(Symbol::AssignMod) => {
+                    lhs = assign(lhs.clone(),
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(self.read_assign()),
+                                                            node::CBinOps::Rem),
+                                          *self.lexer.cur_line.back().unwrap()),
+                                 *self.lexer.cur_line.back().unwrap());
+                }
+                // TODO: implement more op
                 _ => {
                     self.lexer.unget(tok);
                     break;

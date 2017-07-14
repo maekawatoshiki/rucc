@@ -1084,6 +1084,8 @@ impl Lexer {
                               (if token.space { " " } else { "" }),
                               match token.kind {
                                   TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
+                                  TokenKind::IntNumber(ref i) => format!("{}", *i),
+                                  TokenKind::FloatNumber(ref f) => format!("{}", *f),
                                   _ => token.val.to_string(),
                               })
                     .as_str();
@@ -1312,7 +1314,10 @@ impl Lexer {
             .open(real_filename.to_string())
             .unwrap();
         let mut body = String::with_capacity(512);
-        include_file.read_to_string(&mut body);
+        include_file
+            .read_to_string(&mut body)
+            .ok()
+            .expect("not found file");
         self.filename.push_back(real_filename);
         unsafe {
             self.peek.push_back(body.as_mut_vec().clone());

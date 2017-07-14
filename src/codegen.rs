@@ -4,7 +4,7 @@ use std;
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map};
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
@@ -209,12 +209,17 @@ impl Codegen {
             &Type::Func(ref retty, ref args_types, ref is_vararg) => (retty, args_types, is_vararg),
             _ => return Err(Error::Msg("gen_func_def: never reach!".to_string())),
         };
-        let func = LLVMAddFunction(self.module,
-                                   CString::new(name.as_str()).unwrap().as_ptr(),
-                                   func_ty);
-        self.global_varmap
-            .insert(name.to_string(),
-                    VarInfo::new(functy.clone(), func_ty, func));
+        let func = match self.global_varmap.entry(name.to_string()) {
+            hash_map::Entry::Occupied(o) => o.into_mut().llvm_val,
+            hash_map::Entry::Vacant(v) => {
+                let func = LLVMAddFunction(self.module,
+                                           CString::new(name.as_str()).unwrap().as_ptr(),
+                                           func_ty);
+                v.insert(VarInfo::new(functy.clone(), func_ty, func));
+                func
+            }
+        };
+
         self.cur_func = Some(func);
         self.local_varmap.push(HashMap::new());
 
@@ -236,11 +241,16 @@ impl Codegen {
 
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
         while iter_bb != ptr::null_mut() {
-            if LLVMGetBasicBlockTerminator(iter_bb) == ptr::null_mut() {
+            if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
-                LLVMBuildRet(terminator_builder,
-                             LLVMConstNull(self.type_to_llvmty(func_retty)));
+                match **func_retty {
+                    Type::Void => LLVMBuildRetVoid(terminator_builder),
+                    _ => {
+                        LLVMBuildRet(terminator_builder,
+                                     LLVMConstNull(self.type_to_llvmty(func_retty)))
+                    }
+                };
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
         }
@@ -426,7 +436,12 @@ impl Codegen {
                                   CString::new("").unwrap().as_ptr()),
                     None))
             }
-            _ => Ok((LLVMBuildStore(self.builder, init_val, var), None)),
+            _ => {
+                Ok((LLVMBuildStore(self.builder,
+                                   self.typecast(init_val, (LLVMGetElementType(LLVMTypeOf(var)))),
+                                   var),
+                    None))
+            }
         }
     }
 
@@ -472,12 +487,21 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
         try!(self.gen(then_stmt));
-        LLVMBuildBr(self.builder, bb_merge);
+        // if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) is
+        // not ptr::null_mut(), it means the current basic block has terminator(s). So we don't
+        // add the inst 'br' not to conflict.
+        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
+           ptr::null_mut() {
+            LLVMBuildBr(self.builder, bb_merge);
+        }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_else);
         // else block
         try!(self.gen(else_stmt));
-        LLVMBuildBr(self.builder, bb_merge);
+        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
+           ptr::null_mut() {
+            LLVMBuildBr(self.builder, bb_merge);
+        }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_merge);
 
@@ -510,7 +534,10 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
         // loop block
         try!(self.gen(body));
-        LLVMBuildBr(self.builder, bb_before_loop);
+        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
+           ptr::null_mut() {
+            LLVMBuildBr(self.builder, bb_before_loop);
+        }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
 
@@ -557,7 +584,10 @@ impl Codegen {
         // loop block
         try!(self.gen(body));
         try!(self.gen(step));
-        LLVMBuildBr(self.builder, bb_before_loop);
+        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
+           ptr::null_mut() {
+            LLVMBuildBr(self.builder, bb_before_loop);
+        }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
 
@@ -578,7 +608,7 @@ impl Codegen {
                             -> CodegenResult {
         match *op {
             // logical operators
-            node::CBinOps::LAnd => {}
+            node::CBinOps::LAnd => return self.gen_logand_op(lhsast, rhsast),
             node::CBinOps::LOr => {}
             // assignment
             node::CBinOps::Assign => {
@@ -630,6 +660,56 @@ impl Codegen {
             _ => {}
         }
         Err(Error::MsgWithLine("unsupported operation".to_string(), lhsast.line))
+    }
+
+    unsafe fn gen_logand_op(&mut self, lhsast: &node::AST, rhsast: &node::AST) -> CodegenResult {
+        let lhs_val = {
+            let val = try!(self.gen(lhsast)).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        };
+
+
+        let func = self.cur_func.unwrap();
+
+        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
+        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+        let x = LLVMGetInsertBlock(self.builder);
+
+        LLVMBuildCondBr(self.builder, lhs_val, bb_then, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_then);
+        // then block
+        let rhs_val = {
+            let val = try!(self.gen(rhsast)).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        };
+        LLVMBuildBr(self.builder, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_merge);
+
+        let phi = LLVMBuildPhi(self.builder,
+                               LLVMTypeOf(rhs_val),
+                               CString::new("logand").unwrap().as_ptr());
+        LLVMAddIncoming(phi,
+                        vec![LLVMConstInt(LLVMInt1Type(), 0, 0)]
+                            .as_mut_slice()
+                            .as_mut_ptr(),
+                        vec![x].as_mut_slice().as_mut_ptr(),
+                        1);
+        LLVMAddIncoming(phi,
+                        vec![rhs_val].as_mut_slice().as_mut_ptr(),
+                        vec![bb_then].as_mut_slice().as_mut_ptr(),
+                        1);
+
+        Ok((phi, Some(Type::Int(Sign::Signed))))
     }
 
     unsafe fn gen_assign(&mut self, lhsast: &node::AST, rhsast: &node::AST) -> CodegenResult {
@@ -1044,7 +1124,7 @@ impl Codegen {
     // Functions Related to Types
     pub unsafe fn typecast(&self, val: LLVMValueRef, to: LLVMTypeRef) -> LLVMValueRef {
         let v_ty = LLVMTypeOf(val);
-        let inst_name = CString::new("cast").unwrap().as_ptr();
+        let inst_name = CString::new("").unwrap().as_ptr();
 
         match LLVMGetTypeKind(v_ty) {
             llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
