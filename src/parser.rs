@@ -1032,12 +1032,24 @@ impl<'a> Parser<'a> {
                                 *self.lexer.cur_line.back().unwrap())
             }
             TokenKind::Symbol(Symbol::Inc) => {
-                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Inc),
-                                *self.lexer.cur_line.back().unwrap())
+                let line = *self.lexer.cur_line.back().unwrap();
+                let var = self.read_cast();
+                return AST::new(ASTKind::BinaryOp(Rc::new(retrieve_from_load(&var)),
+                                                  Rc::new(
+                                                      AST::new(
+                                                          ASTKind::BinaryOp(Rc::new(var), Rc::new(AST::new(ASTKind::Int(1), line)), node::CBinOps::Add), line)),
+                                                  node::CBinOps::Assign),
+                                line);
             }
             TokenKind::Symbol(Symbol::Dec) => {
-                return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Dec),
-                                *self.lexer.cur_line.back().unwrap())
+                let line = *self.lexer.cur_line.back().unwrap();
+                let var = self.read_cast();
+                return AST::new(ASTKind::BinaryOp(Rc::new(retrieve_from_load(&var)),
+                                                  Rc::new(
+                                                      AST::new(
+                                                          ASTKind::BinaryOp(Rc::new(var), Rc::new(AST::new(ASTKind::Int(1), line)), node::CBinOps::Sub), line)),
+                                                  node::CBinOps::Assign),
+                                line);
             }
             TokenKind::Symbol(Symbol::Asterisk) => {
                 return AST::new(ASTKind::UnaryOp(Rc::new(self.read_cast()), node::CUnaryOps::Deref),
@@ -1075,6 +1087,7 @@ impl<'a> Parser<'a> {
             if self.lexer.skip_symbol(Symbol::Point) {
                 ast = AST::new(ASTKind::Load(Rc::new(self.read_field(retrieve_from_load(&ast)))),
                                *self.lexer.cur_line.back().unwrap());
+                continue;
             }
             if self.lexer.skip_symbol(Symbol::Arrow) {
                 let line = *self.lexer.cur_line.back().unwrap();
@@ -1083,8 +1096,16 @@ impl<'a> Parser<'a> {
                                                               node::CUnaryOps::Deref),
                                              line));
                 ast = AST::new(ASTKind::Load(Rc::new(field)), line);
+                continue;
             }
-            // TODO: impelment inc and dec
+            if self.lexer.skip_symbol(Symbol::Inc) {
+                return AST::new(ASTKind::UnaryOp(Rc::new(ast), node::CUnaryOps::Inc),
+                                *self.lexer.cur_line.back().unwrap());
+            }
+            if self.lexer.skip_symbol(Symbol::Dec) {
+                return AST::new(ASTKind::UnaryOp(Rc::new(ast), node::CUnaryOps::Dec),
+                                *self.lexer.cur_line.back().unwrap());
+            }
             break;
         }
         ast

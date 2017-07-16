@@ -75,6 +75,7 @@ pub enum CUnaryOps {
     BNot,
     Plus,
     Minus,
+    // TODO: Inc and Dec is actually POSTFIX.
     Inc,
     Dec,
     Deref,
