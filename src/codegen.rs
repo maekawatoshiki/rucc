@@ -595,24 +595,24 @@ impl Codegen {
     }
 
     unsafe fn gen_unary_op(&mut self, expr: &node::AST, op: &node::CUnaryOps) -> CodegenResult {
-        let retrieve_from_load = |ast: &node::AST| -> node::AST {
+        fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
             match ast.kind {
-                node::ASTKind::Load(ref var) => (**var).clone(),
-                _ => ast.clone(),
+                node::ASTKind::Load(ref var) => var, 
+                _ => ast,
             }
-        };
+        }
         match *op {
             node::CUnaryOps::Deref => self.gen_load(expr),
             node::CUnaryOps::Inc => {
                 let before_inc = try!(self.gen(expr));
-                try!(self.gen_assign(&retrieve_from_load(expr),
+                try!(self.gen_assign(retrieve_from_load(expr),
                     &node::AST::new(node::ASTKind::BinaryOp(Rc::new(expr.clone()), Rc::new(
                         node::AST::new(node::ASTKind::Int(1), 0)), node::CBinOps::Add),0)));
                 Ok(before_inc)
             }
             node::CUnaryOps::Dec => {
                 let before_dec = try!(self.gen(expr));
-                try!(self.gen_assign(&retrieve_from_load(expr),
+                try!(self.gen_assign(retrieve_from_load(expr),
                     &node::AST::new(node::ASTKind::BinaryOp(Rc::new(expr.clone()), Rc::new(
                         node::AST::new(node::ASTKind::Int(1), 0)), node::CBinOps::Sub),0)));
                 Ok(before_dec)
