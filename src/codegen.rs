@@ -609,7 +609,7 @@ impl Codegen {
         match *op {
             // logical operators
             node::CBinOps::LAnd => return self.gen_logand_op(lhsast, rhsast),
-            node::CBinOps::LOr => {}
+            node::CBinOps::LOr => return self.gen_logor_op(lhsast, rhsast),
             // assignment
             node::CBinOps::Assign => {
                 return self.gen_assign(lhsast, rhsast);
@@ -662,6 +662,7 @@ impl Codegen {
         Err(Error::MsgWithLine("unsupported operation".to_string(), lhsast.line))
     }
 
+    // TODO: refine code
     unsafe fn gen_logand_op(&mut self, lhsast: &node::AST, rhsast: &node::AST) -> CodegenResult {
         let lhs_val = {
             let val = try!(self.gen(lhsast)).0;
@@ -700,6 +701,55 @@ impl Codegen {
                                CString::new("logand").unwrap().as_ptr());
         LLVMAddIncoming(phi,
                         vec![LLVMConstInt(LLVMInt1Type(), 0, 0)]
+                            .as_mut_slice()
+                            .as_mut_ptr(),
+                        vec![x].as_mut_slice().as_mut_ptr(),
+                        1);
+        LLVMAddIncoming(phi,
+                        vec![rhs_val].as_mut_slice().as_mut_ptr(),
+                        vec![bb_then].as_mut_slice().as_mut_ptr(),
+                        1);
+
+        Ok((phi, Some(Type::Int(Sign::Signed))))
+    }
+    unsafe fn gen_logor_op(&mut self, lhsast: &node::AST, rhsast: &node::AST) -> CodegenResult {
+        let lhs_val = {
+            let val = try!(self.gen(lhsast)).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        };
+
+
+        let func = self.cur_func.unwrap();
+
+        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
+        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+        let x = LLVMGetInsertBlock(self.builder);
+
+        LLVMBuildCondBr(self.builder, lhs_val, bb_merge, bb_then);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_then);
+        // then block
+        let rhs_val = {
+            let val = try!(self.gen(rhsast)).0;
+            LLVMBuildICmp(self.builder,
+                          llvm::LLVMIntPredicate::LLVMIntNE,
+                          val,
+                          LLVMConstNull(LLVMTypeOf(val)),
+                          CString::new("eql").unwrap().as_ptr())
+        };
+        LLVMBuildBr(self.builder, bb_merge);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_merge);
+
+        let phi = LLVMBuildPhi(self.builder,
+                               LLVMTypeOf(rhs_val),
+                               CString::new("logor").unwrap().as_ptr());
+        LLVMAddIncoming(phi,
+                        vec![LLVMConstInt(LLVMInt1Type(), 1, 0)]
                             .as_mut_slice()
                             .as_mut_ptr(),
                         vec![x].as_mut_slice().as_mut_ptr(),
