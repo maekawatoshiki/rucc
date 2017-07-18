@@ -119,17 +119,19 @@ pub struct Token {
     pub val: String,
     pub macro_position: usize,
     pub hideset: HashSet<String>,
+    pub pos: usize,
     pub line: i32,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, val: &str, macro_position: usize, line: i32) -> Token {
+    pub fn new(kind: TokenKind, val: &str, macro_position: usize, pos: usize, line: i32) -> Token {
         Token {
             kind: kind,
             space: false,
             val: val.to_string(),
             macro_position: macro_position,
             hideset: HashSet::new(),
+            pos: pos,
             line: line,
         }
     }
@@ -140,8 +142,8 @@ pub struct Lexer {
     pub cur_line: VecDeque<i32>,
     filename: VecDeque<String>,
     macro_map: HashMap<String, Macro>,
-    peek: VecDeque<Vec<u8>>,
-    peek_pos: VecDeque<usize>,
+    pub peek: VecDeque<Vec<u8>>,
+    pub peek_pos: VecDeque<usize>,
     buf: VecDeque<VecDeque<Token>>,
     cond_stack: Vec<bool>,
 }
@@ -158,7 +160,6 @@ impl Lexer {
         let mut file_body = String::new();
         file.read_to_string(&mut file_body)
             .ok()
-            // TODO: fix
             .expect("cannot open file");
 
         let mut rucc_header = OpenOptions::new()
@@ -166,9 +167,9 @@ impl Lexer {
             .open("./include/rucc.h")
             .unwrap();
         let mut rucc_header_body = String::new();
-        rucc_header.read_to_string(&mut rucc_header_body)
+        rucc_header
+            .read_to_string(&mut rucc_header_body)
             .ok()
-            // TODO: fix
             .expect("cannot open file");
         let mut peek = VecDeque::new();
         unsafe {
@@ -199,7 +200,7 @@ impl Lexer {
         }
     }
     pub fn get_filename(self) -> String {
-        self.filename.back().unwrap().clone()
+        self.filename.back().unwrap().to_owned()
     }
     fn peek_get(&mut self) -> Option<char> {
         let peek = self.peek.back_mut().unwrap();
@@ -274,10 +275,7 @@ impl Lexer {
                     false
                 }
             }
-            None => {
-                error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                  format!("expect '{:?}' but reach EOF", keyword).as_str())
-            }
+            None => false,
         }
     }
     pub fn skip_symbol(&mut self, sym: Symbol) -> bool {
@@ -290,10 +288,7 @@ impl Lexer {
                     false
                 }
             }
-            None => {
-                error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                  format!("expect '{:?}' but reach EOF", sym).as_str())
-            }
+            None => false,
         }
     }
     pub fn expect_skip_keyword(&mut self, expect: Keyword) -> bool {
@@ -322,6 +317,7 @@ impl Lexer {
 
     pub fn read_identifier(&mut self) -> Token {
         let mut ident = String::with_capacity(16);
+        let pos = *self.peek_pos.back().unwrap();
         loop {
             let c = self.peek_next();
             match c {
@@ -333,11 +329,13 @@ impl Lexer {
         Token::new(TokenKind::Identifier,
                    ident.as_str(),
                    0,
+                   pos,
                    *self.cur_line.back_mut().unwrap())
     }
     fn read_number_literal(&mut self) -> Token {
         let mut num = String::with_capacity(8);
         let mut is_float = false;
+        let pos = *self.peek_pos.back().unwrap();
         loop {
             match self.peek_get() {
                 Some(c) => {
@@ -360,6 +358,7 @@ impl Lexer {
             Token::new(TokenKind::FloatNumber(f),
                        "",
                        0,
+                       pos,
                        *self.cur_line.back_mut().unwrap())
         } else {
             let i = if num.len() > 2 && num.chars().nth(1).unwrap() == 'x' {
@@ -372,6 +371,7 @@ impl Lexer {
             Token::new(TokenKind::IntNumber(i),
                        "",
                        0,
+                       pos,
                        *self.cur_line.back_mut().unwrap())
         }
     }
@@ -406,14 +406,17 @@ impl Lexer {
         n as i64
     }
     pub fn read_newline(&mut self) -> Token {
+        let pos = *self.peek_pos.back().unwrap();
         self.peek_next();
         *self.cur_line.back_mut().unwrap() += 1;
         Token::new(TokenKind::Newline,
                    "",
                    0,
+                   pos,
                    *self.cur_line.back_mut().unwrap())
     }
     pub fn read_symbol(&mut self) -> Token {
+        let pos = *self.peek_pos.back().unwrap();
         let c = self.peek_next();
         let mut sym = String::new();
         sym.push(c);
@@ -448,6 +451,7 @@ impl Lexer {
         Token::new(TokenKind::Identifier,
                    sym.as_str(),
                    0,
+                   pos,
                    *self.cur_line.back_mut().unwrap())
     }
     fn read_escaped_char(&mut self) -> char {
@@ -475,6 +479,7 @@ impl Lexer {
         }
     }
     fn read_string_literal(&mut self) -> Token {
+        let pos = *self.peek_pos.back().unwrap();
         self.peek_next(); // '"'
         let mut s = String::new();
         loop {
@@ -488,9 +493,11 @@ impl Lexer {
         Token::new(TokenKind::String(s),
                    "",
                    0,
+                   pos,
                    *self.cur_line.back_mut().unwrap())
     }
     fn read_char_literal(&mut self) -> Token {
+        let pos = *self.peek_pos.back().unwrap();
         self.peek_next(); // '\''
         let c = self.peek_next();
         let mut s = String::new();
@@ -499,7 +506,6 @@ impl Lexer {
                } else {
                    c
                });
-        println!("{}", self.peek_get().unwrap());
         if self.peek_next() != '\'' {
             error::error_exit(*self.cur_line.back().unwrap(),
                               "missing terminating \' char");
@@ -507,6 +513,7 @@ impl Lexer {
         Token::new(TokenKind::Char,
                    s.as_str(),
                    0,
+                   pos,
                    *self.cur_line.back_mut().unwrap())
     }
 
@@ -584,455 +591,531 @@ impl Lexer {
                        })
     }
     fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
+        let pos = token.pos;
         match token.val.as_str() {
             "typedef" => {
                 Token::new(TokenKind::Keyword(Keyword::Typedef),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "extern" => {
                 Token::new(TokenKind::Keyword(Keyword::Extern),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "auto" => {
                 Token::new(TokenKind::Keyword(Keyword::Auto),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "register" => {
                 Token::new(TokenKind::Keyword(Keyword::Register),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "static" => {
                 Token::new(TokenKind::Keyword(Keyword::Static),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "restrict" => {
                 Token::new(TokenKind::Keyword(Keyword::Restrict),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "const" => {
                 Token::new(TokenKind::Keyword(Keyword::Const),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "volatile" => {
                 Token::new(TokenKind::Keyword(Keyword::Volatile),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "void" => {
                 Token::new(TokenKind::Keyword(Keyword::Void),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "signed" => {
                 Token::new(TokenKind::Keyword(Keyword::Signed),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "unsigned" => {
                 Token::new(TokenKind::Keyword(Keyword::Unsigned),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "char" => {
                 Token::new(TokenKind::Keyword(Keyword::Char),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "int" => {
                 Token::new(TokenKind::Keyword(Keyword::Int),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "short" => {
                 Token::new(TokenKind::Keyword(Keyword::Short),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "long" => {
                 Token::new(TokenKind::Keyword(Keyword::Long),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "float" => {
                 Token::new(TokenKind::Keyword(Keyword::Float),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "double" => {
                 Token::new(TokenKind::Keyword(Keyword::Double),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "struct" => {
                 Token::new(TokenKind::Keyword(Keyword::Struct),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "union" => {
                 Token::new(TokenKind::Keyword(Keyword::Union),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "enum" => {
                 Token::new(TokenKind::Keyword(Keyword::Enum),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "inline" => {
                 Token::new(TokenKind::Keyword(Keyword::Inline),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "noreturn" => {
                 Token::new(TokenKind::Keyword(Keyword::Noreturn),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "if" => {
                 Token::new(TokenKind::Keyword(Keyword::If),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "else" => {
                 Token::new(TokenKind::Keyword(Keyword::Else),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "for" => {
                 Token::new(TokenKind::Keyword(Keyword::For),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "while" => {
                 Token::new(TokenKind::Keyword(Keyword::While),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "return" => {
                 Token::new(TokenKind::Keyword(Keyword::Return),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "++" => {
                 Token::new(TokenKind::Symbol(Symbol::Inc),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             } 
             "--" => {
                 Token::new(TokenKind::Symbol(Symbol::Dec),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "(" => {
                 Token::new(TokenKind::Symbol(Symbol::OpeningParen),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ")" => {
                 Token::new(TokenKind::Symbol(Symbol::ClosingParen),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "[" => {
                 Token::new(TokenKind::Symbol(Symbol::OpeningBoxBracket),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "]" => {
                 Token::new(TokenKind::Symbol(Symbol::ClosingBoxBracket),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "{" => {
                 Token::new(TokenKind::Symbol(Symbol::OpeningBrace),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "}" => {
                 Token::new(TokenKind::Symbol(Symbol::ClosingBrace),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "." => {
                 Token::new(TokenKind::Symbol(Symbol::Point),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "," => {
                 Token::new(TokenKind::Symbol(Symbol::Comma),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ";" => {
                 Token::new(TokenKind::Symbol(Symbol::Semicolon),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ":" => {
                 Token::new(TokenKind::Symbol(Symbol::Colon),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "->" => {
                 Token::new(TokenKind::Symbol(Symbol::Arrow),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "+" => {
                 Token::new(TokenKind::Symbol(Symbol::Add),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "-" => {
                 Token::new(TokenKind::Symbol(Symbol::Sub),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "!" => {
                 Token::new(TokenKind::Symbol(Symbol::Not),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "~" => {
                 Token::new(TokenKind::Symbol(Symbol::BitwiseNot),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "*" => {
                 Token::new(TokenKind::Symbol(Symbol::Asterisk),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "&" => {
                 Token::new(TokenKind::Symbol(Symbol::Ampersand),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "/" => {
                 Token::new(TokenKind::Symbol(Symbol::Div),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "%" => {
                 Token::new(TokenKind::Symbol(Symbol::Mod),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "<<" => {
                 Token::new(TokenKind::Symbol(Symbol::Shl),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ">>" => {
                 Token::new(TokenKind::Symbol(Symbol::Shr),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "<" => {
                 Token::new(TokenKind::Symbol(Symbol::Lt),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "<=" => {
                 Token::new(TokenKind::Symbol(Symbol::Le),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ">" => {
                 Token::new(TokenKind::Symbol(Symbol::Gt),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ">=" => {
                 Token::new(TokenKind::Symbol(Symbol::Ge),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "==" => {
                 Token::new(TokenKind::Symbol(Symbol::Eq),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "!=" => {
                 Token::new(TokenKind::Symbol(Symbol::Ne),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "^" => {
                 Token::new(TokenKind::Symbol(Symbol::Xor),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "|" => {
                 Token::new(TokenKind::Symbol(Symbol::Or),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "&&" => {
                 Token::new(TokenKind::Symbol(Symbol::LAnd),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "||" => {
                 Token::new(TokenKind::Symbol(Symbol::LOr),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "?" => {
                 Token::new(TokenKind::Symbol(Symbol::Question),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "=" => {
                 Token::new(TokenKind::Symbol(Symbol::Assign),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "+=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignAdd),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "-=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignSub),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "*=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignMul),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "/=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignDiv),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "%=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignMod),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "<<=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignShl),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             ">>=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignShr),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "&=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignAnd),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "^=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignXor),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "|=" => {
                 Token::new(TokenKind::Symbol(Symbol::AssignOr),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "#" => {
                 Token::new(TokenKind::Symbol(Symbol::Hash),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "..." => {
                 Token::new(TokenKind::Symbol(Symbol::Vararg),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             "sizeof" => {
                 Token::new(TokenKind::Symbol(Symbol::Sizeof),
                            "",
                            0,
+                           pos,
                            *self.cur_line.back_mut().unwrap())
             }
             _ => token,
@@ -1092,6 +1175,7 @@ impl Lexer {
         }
         Token::new(TokenKind::String(string),
                    "",
+                   0,
                    0,
                    *self.cur_line.back_mut().unwrap())
     }
@@ -1420,10 +1504,12 @@ impl Lexer {
             Token::new(TokenKind::IntNumber(1),
                        "",
                        0,
+                       0,
                        *self.cur_line.back_mut().unwrap())
         } else {
             Token::new(TokenKind::IntNumber(0),
                        "",
+                       0,
                        0,
                        *self.cur_line.back_mut().unwrap())
         }
@@ -1449,6 +1535,7 @@ impl Lexer {
                     v.push(Token::new(TokenKind::IntNumber(0),
                                       "",
                                       0,
+                                      0,
                                       *self.cur_line.back_mut().unwrap()));
                 } else {
                     v.push(tok);
@@ -1461,15 +1548,13 @@ impl Lexer {
         let expr_line = self.read_intexpr_line();
         self.buf.push_back(VecDeque::new());
 
-        self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, 0));
+        self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, 0, 0));
         self.unget_all(expr_line);
 
-        let node = parser::Parser::new(self).run_as_expr();
+        let node = parser::Parser::new(self).run_as_expr().ok().unwrap();
 
         self.buf.pop_back();
 
-        node.show();
-        println!();
         node.eval_constexpr() != 0
     }
 
@@ -1531,7 +1616,7 @@ impl Lexer {
                     "else" | "elif" | "endif" => {
                         let line = *self.cur_line.back_mut().unwrap();
                         self.unget(tok);
-                        self.unget(Token::new(TokenKind::Identifier, "#", 0, line));
+                        self.unget(Token::new(TokenKind::Identifier, "#", 0, 0, line));
                         return;
                     }
                     _ => {}
@@ -1545,5 +1630,34 @@ impl Lexer {
             }
             // TODO: if nest < 0 then?
         }
+    }
+
+    pub fn get_surrounding_code_with_err_point(&mut self, pos: usize) -> String {
+        let code = self.peek.back().unwrap();
+        let peek_pos = pos;
+        let start_pos = {
+            let mut p = peek_pos as i32;
+            while p >= 0 && code[p as usize] as char != '\n' {
+                p -= 1;
+            }
+            p += 1; // '\n'
+            p as usize
+        };
+        let end_pos = {
+            let mut p = peek_pos as i32;
+            while p < code.len() as i32 && code[p as usize] as char != '\n' {
+                p += 1;
+            }
+            p as usize
+        };
+        let surrounding_code = String::from_utf8(code[start_pos..end_pos].to_vec())
+            .unwrap()
+            .to_string();
+        let mut err_point = String::new();
+        for _ in 0..(peek_pos - start_pos) {
+            err_point.push(' ');
+        }
+        err_point.push('^');
+        surrounding_code + "\n" + err_point.as_str()
     }
 }

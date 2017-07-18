@@ -17,9 +17,9 @@ fn main() {
         let ref input_file_name = args[1];
         let ast = parser::Parser::run_file(input_file_name.to_string());
 
-        for node in &ast {
-            node.show();
-        }
+        // for node in &ast {
+        //     node.show();
+        // }
 
         println!("\nllvm-ir test output:");
         unsafe {

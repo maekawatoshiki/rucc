@@ -11,3 +11,5 @@ lazy_static = "0.2.6"
 regex = "0.2.1"
 
 rand = "0.3"
+
+ansi_term = "0.9.0"

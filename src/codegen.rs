@@ -1058,9 +1058,6 @@ impl Codegen {
     unsafe fn gen_load(&mut self, var: &node::AST) -> CodegenResult {
         let (val, ty) = try!(self.gen(var));
 
-        println!("{:?}", ty);
-        LLVMDumpValue(val);
-
         if let Some(Type::Ptr(ref elem_ty)) = ty {
             match **elem_ty {
                 Type::Func(_, _, _) => return Ok((val, Some(Type::Ptr((*elem_ty).clone())))),
