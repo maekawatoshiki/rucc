@@ -3,8 +3,8 @@
 [![](https://img.shields.io/travis/maekawatoshiki/rucc.svg?style=flat-square)](https://travis-ci.org/maekawatoshiki/rucc)
 [![](http://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
 
-- rucc is a tiny & toy C compiler implemented in Rust
-- developing to leran Rust(for me)
+- rucc is a small toy C compiler implemented in Rust
+- developing to leran Rust
 
 # requirements
 
