@@ -7,6 +7,7 @@ use std::process;
 use std::collections::{HashSet, HashMap};
 use error;
 use parser;
+use parser::{ParseR, Error};
 
 #[derive(Debug, Clone)]
 pub enum Macro {
@@ -218,11 +219,11 @@ impl Lexer {
         ret
     }
     fn peek_next_char_is(&mut self, ch: char) -> bool {
-        let nextc = self.peek.back_mut().unwrap()[*self.peek_pos.back_mut().unwrap() + 1] as char;
+        let nextc = self.peek.back().unwrap()[*self.peek_pos.back_mut().unwrap() + 1] as char;
         nextc == ch
     }
     fn peek_char_is(&mut self, ch: char) -> bool {
-        let line = *self.cur_line.back_mut().unwrap();
+        let line = *self.cur_line.back().unwrap();
         let errf =
             || -> Option<char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
         let peekc = self.peek_get().or_else(errf).unwrap();
@@ -265,45 +266,37 @@ impl Lexer {
         self.unget(peek);
         next_token_is_expect
     }
-    pub fn skip_keyword(&mut self, keyword: Keyword) -> bool {
+    pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
         match self.get() {
-            Some(n) => {
-                if n.kind == TokenKind::Keyword(keyword) {
-                    true
-                } else {
-                    self.buf.back_mut().unwrap().push_back(n);
-                    false
-                }
+            Ok(tok) => {
+                Ok(if tok.kind == TokenKind::Keyword(keyword) {
+                       true
+                   } else {
+                       self.buf.back_mut().unwrap().push_back(tok);
+                       false
+                   })
             }
-            None => false,
+            Err(e) => Err(e),
         }
     }
-    pub fn skip_symbol(&mut self, sym: Symbol) -> bool {
+    pub fn skip_symbol(&mut self, sym: Symbol) -> ParseR<bool> {
         match self.get() {
-            Some(tok) => {
-                if tok.kind == TokenKind::Symbol(sym) {
-                    true
-                } else {
-                    self.buf.back_mut().unwrap().push_back(tok);
-                    false
-                }
+            Ok(tok) => {
+                Ok(if tok.kind == TokenKind::Symbol(sym) {
+                       true
+                   } else {
+                       self.buf.back_mut().unwrap().push_back(tok);
+                       false
+                   })
             }
-            None => false,
+            Err(e) => Err(e),
         }
     }
-    pub fn expect_skip_keyword(&mut self, expect: Keyword) -> bool {
-        if !self.skip_keyword(expect.clone()) {
-            error::error_exit(*self.cur_line.back_mut().unwrap(),
-                              format!("expected the keyword '{:?}'", expect).as_str());
-        }
-        true
+    pub fn expect_skip_keyword(&mut self, expect: Keyword) -> ParseR<bool> {
+        self.skip_keyword(expect.clone())
     }
-    pub fn expect_skip_symbol(&mut self, expect: Symbol) -> bool {
-        if !self.skip_symbol(expect.clone()) {
-            error::error_exit(*self.cur_line.back_mut().unwrap(),
-                              format!("expected the keyword '{:?}'", expect).as_str());
-        }
-        true
+    pub fn expect_skip_symbol(&mut self, expect: Symbol) -> ParseR<bool> {
+        self.skip_symbol(expect.clone())
     }
     pub fn unget(&mut self, t: Token) {
         self.buf.back_mut().unwrap().push_back(t);
@@ -517,29 +510,32 @@ impl Lexer {
                    *self.cur_line.back_mut().unwrap())
     }
 
-    pub fn do_read_token(&mut self) -> Option<Token> {
+    pub fn do_read_token(&mut self) -> ParseR<Token> {
         if !self.buf.back_mut().unwrap().is_empty() {
-            return self.buf.back_mut().unwrap().pop_back();
+            return match self.buf.back_mut().unwrap().pop_back() {
+                       Some(tok) => Ok(tok),
+                       None => Err(Error::EOF),
+                   };
         }
 
         match self.peek_get() {
             Some(c) => {
                 match c {
-                    'a'...'z' | 'A'...'Z' | '_' => Some(self.read_identifier()),
+                    'a'...'z' | 'A'...'Z' | '_' => Ok(self.read_identifier()),
                     ' ' | '\t' => {
                         self.peek_next();
                         self.do_read_token()
-                        // set a leading space
+                            // set a leading space
                             .and_then(|tok| {
-                                          let mut t = tok;
-                                          t.space = true;
-                                          Some(t)
-                                      })
+                                let mut t = tok;
+                                t.space = true;
+                                Ok(t)
+                            })
                     }
-                    '0'...'9' => Some(self.read_number_literal()),
-                    '\"' => Some(self.read_string_literal()),
-                    '\'' => Some(self.read_char_literal()),
-                    '\n' => Some(self.read_newline()),
+                    '0'...'9' => Ok(self.read_number_literal()),
+                    '\"' => Ok(self.read_string_literal()),
+                    '\'' => Ok(self.read_char_literal()),
+                    '\n' => Ok(self.read_newline()),
                     '\\' => {
                         while self.peek_next() != '\n' {}
                         self.do_read_token()
@@ -563,10 +559,10 @@ impl Lexer {
                             // self.peek_next(); // \n
                             self.do_read_token()
                         } else {
-                            Some(self.read_symbol())
+                            Ok(self.read_symbol())
                         }
                     }
-                    _ => Some(self.read_symbol()),
+                    _ => Ok(self.read_symbol()),
                 }
             }
             None => {
@@ -577,552 +573,116 @@ impl Lexer {
                     self.cur_line.pop_back();
                     self.do_read_token()
                 } else {
-                    None as Option<Token>
+                    Err(Error::EOF)
                 }
             }
         }
     }
-    pub fn read_token(&mut self) -> Option<Token> {
+    pub fn read_token(&mut self) -> ParseR<Token> {
         let token = self.do_read_token();
         token.and_then(|tok| match tok.kind {
                            TokenKind::Newline => self.read_token(),
-                           TokenKind::Identifier => Some(self.convert_to_keyword_or_symbol(tok)),
-                           _ => Some(tok),
+                           TokenKind::Identifier => Ok(self.convert_to_keyword_or_symbol(tok)),
+                           _ => Ok(tok),
                        })
     }
     fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
         let pos = token.pos;
-        match token.val.as_str() {
-            "typedef" => {
-                Token::new(TokenKind::Keyword(Keyword::Typedef),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "extern" => {
-                Token::new(TokenKind::Keyword(Keyword::Extern),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "auto" => {
-                Token::new(TokenKind::Keyword(Keyword::Auto),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "register" => {
-                Token::new(TokenKind::Keyword(Keyword::Register),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "static" => {
-                Token::new(TokenKind::Keyword(Keyword::Static),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "restrict" => {
-                Token::new(TokenKind::Keyword(Keyword::Restrict),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "const" => {
-                Token::new(TokenKind::Keyword(Keyword::Const),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "volatile" => {
-                Token::new(TokenKind::Keyword(Keyword::Volatile),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "void" => {
-                Token::new(TokenKind::Keyword(Keyword::Void),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "signed" => {
-                Token::new(TokenKind::Keyword(Keyword::Signed),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "unsigned" => {
-                Token::new(TokenKind::Keyword(Keyword::Unsigned),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "char" => {
-                Token::new(TokenKind::Keyword(Keyword::Char),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "int" => {
-                Token::new(TokenKind::Keyword(Keyword::Int),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "short" => {
-                Token::new(TokenKind::Keyword(Keyword::Short),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "long" => {
-                Token::new(TokenKind::Keyword(Keyword::Long),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "float" => {
-                Token::new(TokenKind::Keyword(Keyword::Float),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "double" => {
-                Token::new(TokenKind::Keyword(Keyword::Double),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "struct" => {
-                Token::new(TokenKind::Keyword(Keyword::Struct),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "union" => {
-                Token::new(TokenKind::Keyword(Keyword::Union),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "enum" => {
-                Token::new(TokenKind::Keyword(Keyword::Enum),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "inline" => {
-                Token::new(TokenKind::Keyword(Keyword::Inline),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "noreturn" => {
-                Token::new(TokenKind::Keyword(Keyword::Noreturn),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "if" => {
-                Token::new(TokenKind::Keyword(Keyword::If),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "else" => {
-                Token::new(TokenKind::Keyword(Keyword::Else),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "for" => {
-                Token::new(TokenKind::Keyword(Keyword::For),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "while" => {
-                Token::new(TokenKind::Keyword(Keyword::While),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "return" => {
-                Token::new(TokenKind::Keyword(Keyword::Return),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "++" => {
-                Token::new(TokenKind::Symbol(Symbol::Inc),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            } 
-            "--" => {
-                Token::new(TokenKind::Symbol(Symbol::Dec),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "(" => {
-                Token::new(TokenKind::Symbol(Symbol::OpeningParen),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ")" => {
-                Token::new(TokenKind::Symbol(Symbol::ClosingParen),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "[" => {
-                Token::new(TokenKind::Symbol(Symbol::OpeningBoxBracket),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "]" => {
-                Token::new(TokenKind::Symbol(Symbol::ClosingBoxBracket),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "{" => {
-                Token::new(TokenKind::Symbol(Symbol::OpeningBrace),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "}" => {
-                Token::new(TokenKind::Symbol(Symbol::ClosingBrace),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "." => {
-                Token::new(TokenKind::Symbol(Symbol::Point),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "," => {
-                Token::new(TokenKind::Symbol(Symbol::Comma),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ";" => {
-                Token::new(TokenKind::Symbol(Symbol::Semicolon),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ":" => {
-                Token::new(TokenKind::Symbol(Symbol::Colon),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "->" => {
-                Token::new(TokenKind::Symbol(Symbol::Arrow),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "+" => {
-                Token::new(TokenKind::Symbol(Symbol::Add),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "-" => {
-                Token::new(TokenKind::Symbol(Symbol::Sub),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "!" => {
-                Token::new(TokenKind::Symbol(Symbol::Not),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "~" => {
-                Token::new(TokenKind::Symbol(Symbol::BitwiseNot),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "*" => {
-                Token::new(TokenKind::Symbol(Symbol::Asterisk),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "&" => {
-                Token::new(TokenKind::Symbol(Symbol::Ampersand),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "/" => {
-                Token::new(TokenKind::Symbol(Symbol::Div),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "%" => {
-                Token::new(TokenKind::Symbol(Symbol::Mod),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "<<" => {
-                Token::new(TokenKind::Symbol(Symbol::Shl),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ">>" => {
-                Token::new(TokenKind::Symbol(Symbol::Shr),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "<" => {
-                Token::new(TokenKind::Symbol(Symbol::Lt),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "<=" => {
-                Token::new(TokenKind::Symbol(Symbol::Le),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ">" => {
-                Token::new(TokenKind::Symbol(Symbol::Gt),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ">=" => {
-                Token::new(TokenKind::Symbol(Symbol::Ge),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "==" => {
-                Token::new(TokenKind::Symbol(Symbol::Eq),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "!=" => {
-                Token::new(TokenKind::Symbol(Symbol::Ne),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "^" => {
-                Token::new(TokenKind::Symbol(Symbol::Xor),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "|" => {
-                Token::new(TokenKind::Symbol(Symbol::Or),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "&&" => {
-                Token::new(TokenKind::Symbol(Symbol::LAnd),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "||" => {
-                Token::new(TokenKind::Symbol(Symbol::LOr),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "?" => {
-                Token::new(TokenKind::Symbol(Symbol::Question),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "=" => {
-                Token::new(TokenKind::Symbol(Symbol::Assign),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "+=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignAdd),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "-=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignSub),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "*=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignMul),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "/=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignDiv),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "%=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignMod),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "<<=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignShl),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            ">>=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignShr),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "&=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignAnd),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "^=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignXor),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "|=" => {
-                Token::new(TokenKind::Symbol(Symbol::AssignOr),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "#" => {
-                Token::new(TokenKind::Symbol(Symbol::Hash),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "..." => {
-                Token::new(TokenKind::Symbol(Symbol::Vararg),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            "sizeof" => {
-                Token::new(TokenKind::Symbol(Symbol::Sizeof),
-                           "",
-                           0,
-                           pos,
-                           *self.cur_line.back_mut().unwrap())
-            }
-            _ => token,
+        let line = token.line;
+
+        if token.val == "sizeof" {
+            return Token::new(TokenKind::Symbol(Symbol::Sizeof), "", 0, pos, line);
         }
+
+        if token.val.len() > 0 && token.val.chars().nth(0).unwrap().is_alphanumeric() {
+            let keyw = match token.val.as_str() {
+                "typedef" => TokenKind::Keyword(Keyword::Typedef),
+                "extern" => TokenKind::Keyword(Keyword::Extern),
+                "auto" => TokenKind::Keyword(Keyword::Auto),
+                "register" => TokenKind::Keyword(Keyword::Register),
+                "static" => TokenKind::Keyword(Keyword::Static),
+                "restrict" => TokenKind::Keyword(Keyword::Restrict),
+                "const" => TokenKind::Keyword(Keyword::Const),
+                "volatile" => TokenKind::Keyword(Keyword::Volatile),
+                "void" => TokenKind::Keyword(Keyword::Void),
+                "signed" => TokenKind::Keyword(Keyword::Signed),
+                "unsigned" => TokenKind::Keyword(Keyword::Unsigned),
+                "char" => TokenKind::Keyword(Keyword::Char),
+                "int" => TokenKind::Keyword(Keyword::Int),
+                "short" => TokenKind::Keyword(Keyword::Short),
+                "long" => TokenKind::Keyword(Keyword::Long),
+                "float" => TokenKind::Keyword(Keyword::Float),
+                "double" => TokenKind::Keyword(Keyword::Double),
+                "struct" => TokenKind::Keyword(Keyword::Struct),
+                "union" => TokenKind::Keyword(Keyword::Union),
+                "enum" => TokenKind::Keyword(Keyword::Enum),
+                "inline" => TokenKind::Keyword(Keyword::Inline),
+                "noreturn" => TokenKind::Keyword(Keyword::Noreturn),
+                "if" => TokenKind::Keyword(Keyword::If),
+                "else" => TokenKind::Keyword(Keyword::Else),
+                "for" => TokenKind::Keyword(Keyword::For),
+                "while" => TokenKind::Keyword(Keyword::While),
+                "return" => TokenKind::Keyword(Keyword::Return),
+                _ => return token,
+            };
+            return Token::new(keyw, "", 0, pos, line);
+        }
+
+        let symbol = match token.val.as_str() {
+            "++" => TokenKind::Symbol(Symbol::Inc), 
+            "--" => TokenKind::Symbol(Symbol::Dec),
+            "(" => TokenKind::Symbol(Symbol::OpeningParen),
+            ")" => TokenKind::Symbol(Symbol::ClosingParen),
+            "[" => TokenKind::Symbol(Symbol::OpeningBoxBracket),
+            "]" => TokenKind::Symbol(Symbol::ClosingBoxBracket),
+            "{" => TokenKind::Symbol(Symbol::OpeningBrace),
+            "}" => TokenKind::Symbol(Symbol::ClosingBrace),
+            "." => TokenKind::Symbol(Symbol::Point),
+            "," => TokenKind::Symbol(Symbol::Comma),
+            ";" => TokenKind::Symbol(Symbol::Semicolon),
+            ":" => TokenKind::Symbol(Symbol::Colon),
+            "->" => TokenKind::Symbol(Symbol::Arrow),
+            "+" => TokenKind::Symbol(Symbol::Add),
+            "-" => TokenKind::Symbol(Symbol::Sub),
+            "!" => TokenKind::Symbol(Symbol::Not),
+            "~" => TokenKind::Symbol(Symbol::BitwiseNot),
+            "*" => TokenKind::Symbol(Symbol::Asterisk),
+            "&" => TokenKind::Symbol(Symbol::Ampersand),
+            "/" => TokenKind::Symbol(Symbol::Div),
+            "%" => TokenKind::Symbol(Symbol::Mod),
+            "<<" => TokenKind::Symbol(Symbol::Shl),
+            ">>" => TokenKind::Symbol(Symbol::Shr),
+            "<" => TokenKind::Symbol(Symbol::Lt),
+            "<=" => TokenKind::Symbol(Symbol::Le),
+            ">" => TokenKind::Symbol(Symbol::Gt),
+            ">=" => TokenKind::Symbol(Symbol::Ge),
+            "==" => TokenKind::Symbol(Symbol::Eq),
+            "!=" => TokenKind::Symbol(Symbol::Ne),
+            "^" => TokenKind::Symbol(Symbol::Xor),
+            "|" => TokenKind::Symbol(Symbol::Or),
+            "&&" => TokenKind::Symbol(Symbol::LAnd),
+            "||" => TokenKind::Symbol(Symbol::LOr),
+            "?" => TokenKind::Symbol(Symbol::Question),
+            "=" => TokenKind::Symbol(Symbol::Assign),
+            "+=" => TokenKind::Symbol(Symbol::AssignAdd),
+            "-=" => TokenKind::Symbol(Symbol::AssignSub),
+            "*=" => TokenKind::Symbol(Symbol::AssignMul),
+            "/=" => TokenKind::Symbol(Symbol::AssignDiv),
+            "%=" => TokenKind::Symbol(Symbol::AssignMod),
+            "<<=" => TokenKind::Symbol(Symbol::AssignShl),
+            ">>=" => TokenKind::Symbol(Symbol::AssignShr),
+            "&=" => TokenKind::Symbol(Symbol::AssignAnd),
+            "^=" => TokenKind::Symbol(Symbol::AssignXor),
+            "|=" => TokenKind::Symbol(Symbol::AssignOr),
+            "#" => TokenKind::Symbol(Symbol::Hash),
+            "..." => TokenKind::Symbol(Symbol::Vararg),
+            _ => return token,
+        };
+
+        Token::new(symbol, "", 0, pos, line)
     }
 
-    fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) {
+    fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
         let mut body: Vec<Token> = Vec::new();
         for tok in macro_body {
             body.push(|| -> Token {
@@ -1132,17 +692,13 @@ impl Lexer {
                       }());
         }
         self.unget_all(body);
+        Ok(())
     }
-    fn read_one_arg(&mut self) -> Vec<Token> {
+    fn read_one_arg(&mut self) -> ParseR<Vec<Token>> {
         let mut n = 0;
-        let mut arg: Vec<Token> = Vec::new();
+        let mut arg = Vec::new();
         loop {
-            let tok = self.do_read_token()
-                .or_else(|| {
-                             error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                               "expected macro args but reach EOF")
-                         })
-                .unwrap();
+            let tok = try!(self.do_read_token());
             if n == 0 {
                 if tok.val == ")" {
                     self.unget(tok);
@@ -1158,7 +714,7 @@ impl Lexer {
             }
             arg.push(tok);
         }
-        arg
+        Ok(arg)
     }
     fn stringize(&mut self, tokens: &Vec<Token>) -> Token {
         let mut string = String::new();
@@ -1179,14 +735,9 @@ impl Lexer {
                    0,
                    *self.cur_line.back_mut().unwrap())
     }
-    fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) {
+    fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
         // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
-        let expect_bracket = self.read_token()
-            .or_else(|| {
-                         error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                           "expected '(' but reach EOF")
-                     })
-            .unwrap();
+        let expect_bracket = try!(self.read_token());
         if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
             error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '('");
         }
@@ -1194,18 +745,13 @@ impl Lexer {
         let mut args: Vec<Vec<Token>> = Vec::new();
         // read macro arguments
         loop {
-            let maybe_bracket = self.do_read_token()
-                .or_else(|| {
-                             error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                               "expected ')' but reach EOF")
-                         })
-                .unwrap();
+            let maybe_bracket = try!(self.do_read_token());
             if maybe_bracket.val == ")" {
                 break;
             } else {
                 self.unget(maybe_bracket);
             }
-            args.push(self.read_one_arg());
+            args.push(try!(self.read_one_arg()));
         }
 
         let mut expanded: Vec<Token> = Vec::new();
@@ -1250,91 +796,101 @@ impl Lexer {
             }
         }
         self.unget_all(expanded);
+        Ok(())
     }
-    fn expand(&mut self, token: Option<Token>) -> Option<Token> {
+    fn expand(&mut self, token: ParseR<Token>) -> ParseR<Token> {
         token.and_then(|tok| {
             let name = tok.val.to_string();
 
             if tok.hideset.contains(name.as_str()) || !self.macro_map.contains_key(name.as_str()) {
-                Some(tok)
+                Ok(tok)
             } else {
                 // if cur token is macro:
-                match self.macro_map.get(name.as_str()).unwrap().clone() {
-                    Macro::Object(ref body) => self.expand_obj_macro(name, body),
-                    Macro::FuncLike(ref body) => self.expand_func_macro(name, body),
-                }
+                try!(match self.macro_map.get(name.as_str()).unwrap().clone() {
+                         Macro::Object(ref body) => self.expand_obj_macro(name, body),
+                         Macro::FuncLike(ref body) => self.expand_func_macro(name, body),
+                     });
                 self.get()
             }
         })
     }
 
-    pub fn get(&mut self) -> Option<Token> {
-        let token = self.read_token();
-        let tok = token.and_then(|tok| {
-            match &tok.kind {
-                &TokenKind::Symbol(Symbol::Hash) => {
-                    self.read_cpp_directive();
-                    self.get()
-                }
-                &TokenKind::String(ref s) => {
-                    if let TokenKind::String(s2) = self.peek_e().kind {
-                        // TODO: makes no sense...
-                        self.get_e();
-                        let mut new_tok = tok.clone();
-                        let mut concat_str = s.clone();
-                        concat_str.push_str(s2.as_str());
-                        new_tok.kind = TokenKind::String(concat_str);
-                        Some(new_tok)
-                    } else {
-                        Some(tok.clone())
+    pub fn get(&mut self) -> ParseR<Token> {
+        let tok = self.read_token()
+            .and_then(|tok| {
+                match &tok.kind {
+                    &TokenKind::Symbol(Symbol::Hash) => {
+                        try!(self.read_cpp_directive());
+                        self.get()
                     }
+                    &TokenKind::String(ref s) => {
+                        if let TokenKind::String(s2) = self.peek_e().kind {
+                            // TODO: makes no sense...
+                            self.get_e();
+                            let mut new_tok = tok.clone();
+                            let mut concat_str = s.clone();
+                            concat_str.push_str(s2.as_str());
+                            new_tok.kind = TokenKind::String(concat_str);
+                            Ok(new_tok)
+                        } else {
+                            Ok(tok.clone())
+                        }
+                    }
+                    _ => Ok(tok.clone()),
                 }
-                _ => Some(tok.clone()),
-            }
-        });
+            });
         self.expand(tok)
     }
 
     pub fn get_e(&mut self) -> Token {
         let tok = self.get();
-        if tok.is_none() {
-            error::error_exit(*self.cur_line.back_mut().unwrap(),
-                              "expected a token, but reach EOF");
+        match tok {
+            Ok(ok) => ok,
+            Err(_) => {
+                error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                  "expected a token, but reach EOF");
+            }
         }
-        tok.unwrap()
     }
 
-    pub fn peek(&mut self) -> Option<Token> {
-        let tok = self.get();
-        if tok.is_some() {
-            self.unget(tok.clone().unwrap());
-        }
-        tok
+    pub fn peek(&mut self) -> ParseR<Token> {
+        self.get()
+            .and_then(|tok| {
+                          self.unget(tok.clone());
+                          Ok(tok)
+                      })
     }
 
     pub fn peek_e(&mut self) -> Token {
         let tok = self.peek();
-        if tok.is_none() {
-            error::error_exit(*self.cur_line.back_mut().unwrap(),
-                              "expected a token, but reach EOF");
+        match tok {
+            Ok(ok) => ok,
+            Err(_) => {
+                error::error_exit(*self.cur_line.back_mut().unwrap(),
+                                  "expected a token, but reach EOF");
+            }
         }
-        tok.unwrap()
     }
 
     // for c preprocessor
 
-    fn read_cpp_directive(&mut self) {
-        let t = self.do_read_token(); // cpp directive
-        match t.ok_or("error").unwrap().val.as_str() {
-            "include" => self.read_include(),
-            "define" => self.read_define(),
-            "undef" => self.read_undef(),
-            "if" => self.read_if(),
-            "ifdef" => self.read_ifdef(),
-            "ifndef" => self.read_ifndef(),
-            "elif" => self.read_elif(),
-            "else" => self.read_else(),
-            _ => {}
+    fn read_cpp_directive(&mut self) -> ParseR<()> {
+        let tok = self.do_read_token(); // cpp directive
+        match tok { 
+            Ok(t) => {
+                match t.val.as_str() {
+                    "include" => self.read_include(),
+                    "define" => self.read_define(),
+                    "undef" => self.read_undef(),
+                    "if" => self.read_if(),
+                    "ifdef" => self.read_ifdef(),
+                    "ifndef" => self.read_ifndef(),
+                    "elif" => self.read_elif(),
+                    "else" => self.read_else(),
+                    _ => Ok(()),
+                }
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -1357,31 +913,26 @@ impl Lexer {
         }
         if found { Some(real_filename) } else { None }
     }
-    fn read_headerfile_name(&mut self) -> String {
+    fn read_headerfile_name(&mut self) -> ParseR<String> {
         let mut name = "".to_string();
-        if self.skip_symbol(Symbol::Lt) {
+        if try!(self.skip_symbol(Symbol::Lt)) {
             while !self.peek_char_is('>') {
                 name.push(self.peek_next());
             }
             self.peek_next(); // >
         } else {
-            let tok = self.do_read_token()
-                .or_else(|| {
-                             error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                               "expcted macro args");
-                         })
-                .unwrap();
+            let tok = try!(self.do_read_token());
             if let TokenKind::String(s) = tok.kind {
                 name = s;
             } else {
                 error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '<' or '\"'");
             }
         }
-        name
+        Ok(name)
     }
-    fn read_include(&mut self) {
+    fn read_include(&mut self) -> ParseR<()> {
         // this will be a function
-        let filename = self.read_headerfile_name();
+        let filename = try!(self.read_headerfile_name());
         let real_filename = match self.try_include(filename.as_str()) {
             Some(f) => f,
             _ => {
@@ -1408,15 +959,16 @@ impl Lexer {
         }
         self.peek_pos.push_back(0);
         self.cur_line.push_back(1);
+        Ok(())
     }
 
-    fn read_define_obj_macro(&mut self, name: String) {
+    fn read_define_obj_macro(&mut self, name: String) -> ParseR<()> {
         println!("\tmacro: {}", name);
 
         let mut body: Vec<Token> = Vec::new();
         print!("\tmacro body: ");
         loop {
-            let c = self.do_read_token().unwrap();
+            let c = try!(self.do_read_token());
             if c.kind == TokenKind::Newline {
                 break;
             }
@@ -1425,30 +977,25 @@ impl Lexer {
         }
         println!();
         self.register_obj_macro(name, body);
+        Ok(())
     }
-    fn read_define_func_macro(&mut self, name: String) {
+    fn read_define_func_macro(&mut self, name: String) -> ParseR<()> {
         // read macro arguments
         let mut args: HashMap<String, usize> = HashMap::new();
         let mut count = 0usize;
         loop {
-            let arg = self.get()
-                .or_else(|| {
-                             error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                               "expcted macro args");
-                         })
-                .unwrap()
-                .val;
+            let arg = try!(self.get()).val;
             args.insert(arg, count);
-            if self.skip_symbol(Symbol::ClosingParen) {
+            if try!(self.skip_symbol(Symbol::ClosingParen)) {
                 break;
             }
-            self.expect_skip_symbol(Symbol::Comma);
+            try!(self.expect_skip_symbol(Symbol::Comma));
             count += 1;
         }
 
-        let mut body: Vec<Token> = Vec::new();
+        let mut body = Vec::new();
         loop {
-            let tok = self.do_read_token().unwrap();
+            let tok = try!(self.do_read_token());
             if tok.kind == TokenKind::Newline {
                 break;
             }
@@ -1467,23 +1014,25 @@ impl Lexer {
             }
         }
         self.register_funclike_macro(name, body);
+        Ok(())
     }
-    fn read_define(&mut self) {
-        let mcro = self.do_read_token().unwrap();
+    fn read_define(&mut self) -> ParseR<()> {
+        let mcro = try!(self.do_read_token());
         assert_eq!(mcro.kind, TokenKind::Identifier);
 
-        let t = self.do_read_token().unwrap();
+        let t = try!(self.do_read_token());
         if !t.space && t.val.as_str() == "(" {
-            self.read_define_func_macro(mcro.val);
+            self.read_define_func_macro(mcro.val)
         } else {
             self.unget(t);
-            self.read_define_obj_macro(mcro.val);
+            self.read_define_obj_macro(mcro.val)
         }
     }
-    fn read_undef(&mut self) {
-        let mcro = self.do_read_token().unwrap();
+    fn read_undef(&mut self) -> ParseR<()> {
+        let mcro = try!(self.do_read_token());
         assert_eq!(mcro.kind, TokenKind::Identifier);
         self.macro_map.remove(mcro.val.as_str());
+        Ok(())
     }
 
     fn register_obj_macro(&mut self, name: String, body: Vec<Token>) {
@@ -1493,43 +1042,38 @@ impl Lexer {
         self.macro_map.insert(name, Macro::FuncLike(body));
     }
 
-    fn read_defined_op(&mut self) -> Token {
+    fn read_defined_op(&mut self) -> ParseR<Token> {
         // TODO: add err handler
-        let mut tok = self.do_read_token().unwrap();
+        let mut tok = try!(self.do_read_token());
         if tok.val == "(" {
-            tok = self.do_read_token().unwrap();
-            self.expect_skip_symbol(Symbol::ClosingParen);
+            tok = try!(self.do_read_token());
+            try!(self.expect_skip_symbol(Symbol::ClosingParen));
         }
-        if self.macro_map.contains_key(tok.val.as_str()) {
-            Token::new(TokenKind::IntNumber(1),
-                       "",
-                       0,
-                       0,
-                       *self.cur_line.back_mut().unwrap())
-        } else {
-            Token::new(TokenKind::IntNumber(0),
-                       "",
-                       0,
-                       0,
-                       *self.cur_line.back_mut().unwrap())
-        }
+        Ok(if self.macro_map.contains_key(tok.val.as_str()) {
+               Token::new(TokenKind::IntNumber(1),
+                          "",
+                          0,
+                          0,
+                          *self.cur_line.back_mut().unwrap())
+           } else {
+               Token::new(TokenKind::IntNumber(0),
+                          "",
+                          0,
+                          0,
+                          *self.cur_line.back_mut().unwrap())
+           })
     }
-    fn read_intexpr_line(&mut self) -> Vec<Token> {
-        let mut v: Vec<Token> = Vec::new();
+    fn read_intexpr_line(&mut self) -> ParseR<Vec<Token>> {
+        let mut v = Vec::new();
         loop {
-            let mut tok = self.do_read_token()
-                .or_else(|| {
-                             error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                               "expect a token, but reach EOF")
-                         })
-                .unwrap();
-            tok = self.expand(Some(tok)).unwrap();
+            let mut tok = try!(self.do_read_token());
+            tok = try!(self.expand(Ok(tok)));
             if tok.kind == TokenKind::Newline {
                 break;
             } else {
                 tok = self.convert_to_keyword_or_symbol(tok);
                 if tok.val == "defined" {
-                    v.push(self.read_defined_op());
+                    v.push(try!(self.read_defined_op()));
                 } else if tok.kind == TokenKind::Identifier {
                     // identifier in expr line is replaced with 0i
                     v.push(Token::new(TokenKind::IntNumber(0),
@@ -1542,10 +1086,10 @@ impl Lexer {
                 }
             }
         }
-        v
+        Ok(v)
     }
-    fn read_constexpr(&mut self) -> bool {
-        let expr_line = self.read_intexpr_line();
+    fn read_constexpr(&mut self) -> ParseR<bool> {
+        let expr_line = try!(self.read_intexpr_line());
         self.buf.push_back(VecDeque::new());
 
         self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, 0, 0));
@@ -1555,69 +1099,61 @@ impl Lexer {
 
         self.buf.pop_back();
 
-        node.eval_constexpr() != 0
+        Ok(node.eval_constexpr() != 0)
     }
 
-    fn do_read_if(&mut self, cond: bool) {
+    fn do_read_if(&mut self, cond: bool) -> ParseR<()> {
         self.cond_stack.push(cond);
         if !cond {
-            self.skip_cond_include();
+            try!(self.skip_cond_include());
         }
+        Ok(())
     }
-    fn read_if(&mut self) {
-        let cond = self.read_constexpr();
-        self.do_read_if(cond);
+    fn read_if(&mut self) -> ParseR<()> {
+        let cond = try!(self.read_constexpr());
+        self.do_read_if(cond)
     }
-    fn read_ifdef(&mut self) {
-        let mcro_name = self.do_read_token()
-            .or_else(|| error::error_exit(*self.cur_line.back_mut().unwrap(), "expected macro"))
-            .unwrap()
-            .val;
+    fn read_ifdef(&mut self) -> ParseR<()> {
+        let mcro_name = try!(self.do_read_token()).val;
         let macro_is_defined = self.macro_map.contains_key(mcro_name.as_str());
-        self.do_read_if(macro_is_defined);
+        self.do_read_if(macro_is_defined)
     }
-    fn read_ifndef(&mut self) {
-        let mcro_name = self.do_read_token()
-            .or_else(|| error::error_exit(*self.cur_line.back_mut().unwrap(), "expected macro"))
-            .unwrap()
-            .val;
+    fn read_ifndef(&mut self) -> ParseR<()> {
+        let mcro_name = try!(self.do_read_token()).val;
         let macro_is_undefined = !self.macro_map.contains_key(mcro_name.as_str());
-        self.do_read_if(macro_is_undefined);
+        self.do_read_if(macro_is_undefined)
     }
-    fn read_elif(&mut self) {
-        if self.cond_stack[self.cond_stack.len() - 1] || !self.read_constexpr() {
-            self.skip_cond_include();
+    fn read_elif(&mut self) -> ParseR<()> {
+        if self.cond_stack[self.cond_stack.len() - 1] || !try!(self.read_constexpr()) {
+            try!(self.skip_cond_include());
         } else {
             self.cond_stack.pop();
             self.cond_stack.push(true);
         }
+        Ok(())
     }
-    fn read_else(&mut self) {
+    fn read_else(&mut self) -> ParseR<()> {
         if self.cond_stack[self.cond_stack.len() - 1] {
-            self.skip_cond_include();
+            try!(self.skip_cond_include());
         }
+        Ok(())
     }
 
-    fn skip_cond_include(&mut self) {
+    fn skip_cond_include(&mut self) -> ParseR<()> {
         let mut nest = 0;
-        let get_tok = |lex: &mut Lexer| -> Token {
-            lex.do_read_token()
-                .or_else(|| error::error_exit(*lex.cur_line.back_mut().unwrap(), "reach EOF"))
-                .unwrap()
-        };
         loop {
             if self.peek_next() != '#' {
                 continue;
             }
 
-            let tok = get_tok(self);
+            let tok = try!(self.do_read_token());
             if nest == 0 {
                 match tok.val.as_str() {
                     "else" | "elif" | "endif" => {
                         let line = *self.cur_line.back_mut().unwrap();
                         self.unget(tok);
                         self.unget(Token::new(TokenKind::Identifier, "#", 0, 0, line));
-                        return;
+                        return Ok(());
                     }
                     _ => {}
                 }
