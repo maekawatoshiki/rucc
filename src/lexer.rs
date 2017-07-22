@@ -459,14 +459,16 @@ impl Lexer {
             't' => '\x09',
             'v' => '\x0b',
             'x' => {
+                let mut hex = "".to_string();
                 loop {
-                    match self.peek_get().unwrap() {
-                        '0'...'9' | 'a'...'f' | 'A'...'F' => {}
+                    let c = self.peek_get().unwrap();
+                    match c {
+                        '0'...'9' | 'a'...'f' | 'A'...'F' => hex.push(c),
                         _ => break,
                     }
                     self.peek_next();
                 }
-                'A'
+                self.read_hex_num(hex.as_str()) as i32 as u8 as char
             }
             _ => c,
         }
