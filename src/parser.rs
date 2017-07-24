@@ -77,6 +77,8 @@ impl<'a> Parser<'a> {
                  "{}",
                  self.lexer.get_surrounding_code_with_err_point(token.pos))
                 .unwrap();
+
+        panic!();
     }
     fn peek_token(&mut self) -> ParseR<Token> {
         self.lexer.peek()
@@ -387,7 +389,7 @@ impl<'a> Parser<'a> {
     }
     fn read_decl_init(&mut self, ty: &mut Type) -> ParseR<AST> {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
-        if try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
+        if self.lexer.peek_symbol_token_is(Symbol::OpeningBrace) {
             self.read_initializer_list(ty)
         } else if let TokenKind::String(_) = try!(self.lexer.peek()).kind {
             self.read_initializer_list(ty)
@@ -397,7 +399,10 @@ impl<'a> Parser<'a> {
     }
     fn read_initializer_list(&mut self, ty: &mut Type) -> ParseR<AST> {
         match ty {
-            &mut Type::Array(_, _) => self.read_array_initializer(ty),
+            &mut Type::Array(_, _) => {
+                try!(self.lexer.skip_symbol(Symbol::OpeningBrace));
+                self.read_array_initializer(ty)
+            }
             _ => self.read_assign(),
         }
     }
@@ -464,8 +469,8 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
             if !try!(self.lexer.skip_symbol(Symbol::Comma)) {
-                let peek = self.peek_token();
-                self.show_error_token(&try!(peek), "expected ','");
+                let peek = try!(self.lexer.get());
+                self.show_error_token(&peek, "expected ','");
                 self.skip_until(Symbol::Semicolon);
                 return Err(Error::Something);
             }

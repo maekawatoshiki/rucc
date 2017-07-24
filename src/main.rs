@@ -17,11 +17,11 @@ fn main() {
         let ref input_file_name = args[1];
         let ast = parser::Parser::run_file(input_file_name.to_string());
 
-        // for node in &ast {
-        //     node.show();
-        // }
+        // DEBUG: for node in &ast {
+        // DEBUG:     node.show();
+        // DEBUG: }
 
-        println!("\nllvm-ir test output:");
+        // DEBUG: println!("\nllvm-ir test output:");
         unsafe {
             let mut codegen = codegen::Codegen::new("rucc");
             codegen.run(ast);

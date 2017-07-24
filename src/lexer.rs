@@ -200,7 +200,7 @@ impl Lexer {
             cond_stack: Vec::new(),
         }
     }
-    pub fn get_filename(self) -> String {
+    pub fn get_filename(&mut self) -> String {
         self.filename.back().unwrap().to_owned()
     }
     fn peek_get(&mut self) -> Option<char> {
@@ -328,25 +328,37 @@ impl Lexer {
     fn read_number_literal(&mut self) -> Token {
         let mut num = String::with_capacity(8);
         let mut is_float = false;
+        let mut last = self.peek_get().unwrap();
         let pos = *self.peek_pos.back().unwrap();
         loop {
             match self.peek_get() {
                 Some(c) => {
-                    match c {
-                        '.' | '0'...'9' | 'a'...'z' | 'A'...'Z' => {
-                            num.push(c);
-                            if c == '.' {
-                                is_float = true;
-                            }
-                        }
-                        _ => break,
+                    num.push(c);
+                    is_float = is_float || c == '.';
+                    let is_f = "eEpP".contains(last) && "+-".contains(c);
+                    if !c.is_alphanumeric() && c != '.' && !is_f {
+                        is_float = is_float || is_f;
+                        num.pop();
+                        break;
                     }
+                    last = c;
                 }
                 _ => break,
             };
             self.peek_next();
         }
         if is_float {
+            // TODO: this is to delete suffix like 'F', but not efficient
+            loop {
+                if let Some(last) = num.chars().last() {
+                    if last.is_alphabetic() {
+                        num.pop();
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             let f: f64 = num.parse().unwrap();
             Token::new(TokenKind::FloatNumber(f),
                        "",
@@ -696,14 +708,15 @@ impl Lexer {
         self.unget_all(body);
         Ok(())
     }
-    fn read_one_arg(&mut self) -> ParseR<Vec<Token>> {
+    fn read_one_arg(&mut self, end: &mut bool) -> ParseR<Vec<Token>> {
         let mut n = 0;
         let mut arg = Vec::new();
         loop {
             let tok = try!(self.do_read_token());
             if n == 0 {
                 if tok.val == ")" {
-                    self.unget(tok);
+                    *end = true;
+                    // self.unget(tok);
                     break;
                 } else if tok.val == "," {
                     break;
@@ -744,16 +757,10 @@ impl Lexer {
             error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '('");
         }
 
-        let mut args: Vec<Vec<Token>> = Vec::new();
-        // read macro arguments
-        loop {
-            let maybe_bracket = try!(self.do_read_token());
-            if maybe_bracket.val == ")" {
-                break;
-            } else {
-                self.unget(maybe_bracket);
-            }
-            args.push(try!(self.read_one_arg()));
+        let mut args = Vec::new();
+        let mut end = false;
+        while !end {
+            args.push(try!(self.read_one_arg(&mut end)));
         }
 
         let mut expanded: Vec<Token> = Vec::new();
@@ -775,7 +782,8 @@ impl Lexer {
                 let position = macro_tok.macro_position;
 
                 if is_stringize {
-                    expanded.push(self.stringize(&args[position]));
+                    let stringized = self.stringize(&args[position]);
+                    expanded.push(stringized);
                     is_stringize = false;
                 } else if is_combine {
                     let mut last = expanded.pop().unwrap();
@@ -785,18 +793,28 @@ impl Lexer {
                     expanded.push(last);
                     is_combine = false;
                 } else {
-                    for t in &args[position] {
-                        let mut a = t.clone();
-                        a.hideset.insert(name.to_string());
-                        expanded.push(a);
+                    let l = self.buf.back().unwrap().len();
+                    self.unget_all(args[position].clone());
+                    while self.buf.back().unwrap().len() > l {
+                        expanded.push(try!(self.get()));
                     }
                 }
             } else {
-                let mut a = macro_tok.clone();
-                a.hideset.insert(name.to_string());
-                expanded.push(a);
+                if is_combine {
+                    let mut last = expanded.pop().unwrap();
+                    let cur = macro_tok.clone();
+                    last.val += cur.val.as_str();
+                    expanded.push(last);
+                } else {
+                    expanded.push(macro_tok.clone());
+                }
             }
         }
+
+        for tok in &mut expanded {
+            tok.hideset.insert(name.to_string());
+        }
+
         self.unget_all(expanded);
         Ok(())
     }
@@ -944,7 +962,7 @@ impl Lexer {
                 process::exit(-1)
             }
         };
-        println!("include filename: {}", real_filename);
+        // DEBUG: println!("include filename: {}", real_filename);
 
         let mut include_file = OpenOptions::new()
             .read(true)
@@ -965,19 +983,19 @@ impl Lexer {
     }
 
     fn read_define_obj_macro(&mut self, name: String) -> ParseR<()> {
-        println!("\tmacro: {}", name);
+        // DEBUG: println!("\tmacro: {}", name);
 
         let mut body: Vec<Token> = Vec::new();
-        print!("\tmacro body: ");
+        // DEBUG: print!("\tmacro body: ");
         loop {
             let c = try!(self.do_read_token());
             if c.kind == TokenKind::Newline {
                 break;
             }
-            print!("{}{}", if c.space { " " } else { "" }, c.val);
+            // DEBUG: print!("{}{}", if c.space { " " } else { "" }, c.val);
             body.push(c);
         }
-        println!();
+        // DEBUG: println!();
         self.register_obj_macro(name, body);
         Ok(())
     }
@@ -996,6 +1014,7 @@ impl Lexer {
         }
 
         let mut body = Vec::new();
+        // print!("\tmacro body: ");
         loop {
             let tok = try!(self.do_read_token());
             if tok.kind == TokenKind::Newline {
@@ -1006,6 +1025,7 @@ impl Lexer {
             //  the kind of tok will be changed to MacroParam
             //  and set macro_position
             let maybe_macro_name = tok.val.as_str();
+            // print!("{}{}", if tok.space { " " } else { "" }, tok.val);
             if args.contains_key(maybe_macro_name) {
                 let mut macro_param = tok.clone();
                 macro_param.kind = TokenKind::MacroParam;
@@ -1021,6 +1041,7 @@ impl Lexer {
     fn read_define(&mut self) -> ParseR<()> {
         let mcro = try!(self.do_read_token());
         assert_eq!(mcro.kind, TokenKind::Identifier);
+        // println!("define: {}", mcro.val);
 
         let t = try!(self.do_read_token());
         if !t.space && t.val.as_str() == "(" {

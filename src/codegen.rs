@@ -127,7 +127,7 @@ impl Codegen {
                 }
             }
         }
-        LLVMDumpModule(self.module);
+        // LLVMDumpModule(self.module);
     }
 
     pub unsafe fn write_llvmir_to_file(&mut self, filename: &str) {
@@ -353,8 +353,16 @@ impl Codegen {
                 LLVMSetInitializer(gvar, try!(self.gen(init_ast)).0);
                 Ok((ptr::null_mut(), None))
             }
+            Type::Struct(_, _) |
+            Type::Union(_, _, _) => {
+                // TODO: implement asap
+                // panic!("sorry. this inst is not supported now.");
+                Ok((ptr::null_mut(), None))
+            }
             _ => {
-                LLVMSetInitializer(gvar, try!(self.gen(init_ast)).0);
+                let cast_ty = LLVMGetElementType(LLVMTypeOf(gvar));
+                let init_val = try!(self.gen(init_ast));
+                LLVMSetInitializer(gvar, self.typecast(init_val.0, cast_ty));
                 Ok((ptr::null_mut(), None))
             }
         }
@@ -461,20 +469,33 @@ impl Codegen {
         Ok((ptr::null_mut(), None))
     }
 
+    unsafe fn val_to_bool(&mut self, val: LLVMValueRef) -> LLVMValueRef {
+        match LLVMGetTypeKind(LLVMTypeOf(val)) {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealONE,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+            _ => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntNE,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+        }
+    }
+
     unsafe fn gen_if(&mut self,
                      cond: &node::AST,
                      then_stmt: &node::AST,
                      else_stmt: &node::AST)
                      -> CodegenResult {
-        let cond_val = {
-            let val = try!(self.gen(cond)).0;
-            LLVMBuildICmp(self.builder,
-                          llvm::LLVMIntPredicate::LLVMIntNE,
-                          val,
-                          LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("cond").unwrap().as_ptr())
-        };
-
+        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val = self.val_to_bool(cond_val_tmp);
 
         let func = self.cur_func.unwrap();
 
@@ -521,14 +542,8 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_before_loop);
         // before_loop block
-        let cond_val = {
-            let val = try!(self.gen(cond)).0;
-            LLVMBuildICmp(self.builder,
-                          llvm::LLVMIntPredicate::LLVMIntNE,
-                          val,
-                          LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("eql").unwrap().as_ptr())
-        };
+        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val = self.val_to_bool(cond_val_tmp);
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
@@ -572,11 +587,7 @@ impl Codegen {
                     v
                 }
             };
-            LLVMBuildICmp(self.builder,
-                          llvm::LLVMIntPredicate::LLVMIntNE,
-                          val,
-                          LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("eql").unwrap().as_ptr())
+            self.val_to_bool(val)
         };
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
@@ -603,6 +614,10 @@ impl Codegen {
         }
         match *op {
             node::CUnaryOps::Deref => self.gen_load(expr),
+            node::CUnaryOps::Minus => {
+                let (val, ty) = try!(self.gen(expr));
+                Ok((LLVMBuildNeg(self.builder, val, CString::new("minus").unwrap().as_ptr()), ty))
+            }
             node::CUnaryOps::Inc => {
                 let before_inc = try!(self.gen(expr));
                 try!(self.gen_assign(retrieve_from_load(expr),
@@ -676,6 +691,10 @@ impl Codegen {
                     let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
                     return Ok((self.gen_int_binary_op(lhs, castrhs, op), Some(lhsty)));
                 }
+            }
+            Type::Double => {
+                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
+                return Ok((self.gen_double_binary_op(lhs, castrhs, op), Some(lhsty)));
             }
             _ => {}
         }
@@ -931,6 +950,82 @@ impl Codegen {
                          1,
                          CString::new("add").unwrap().as_ptr()),
             Some(ty)))
+    }
+
+    unsafe fn gen_double_binary_op(&mut self,
+                                   lhs: LLVMValueRef,
+                                   rhs: LLVMValueRef,
+                                   op: &node::CBinOps)
+                                   -> LLVMValueRef {
+        match *op {
+            node::CBinOps::Add => {
+                LLVMBuildFAdd(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fadd").unwrap().as_ptr())
+            }
+            node::CBinOps::Sub => {
+                LLVMBuildFSub(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fsub").unwrap().as_ptr())
+            }
+            node::CBinOps::Mul => {
+                LLVMBuildFMul(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fmul").unwrap().as_ptr())
+            }
+            node::CBinOps::Div => {
+                LLVMBuildFDiv(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fdiv").unwrap().as_ptr())
+            }
+            node::CBinOps::Eq => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOEQ,
+                              lhs,
+                              rhs,
+                              CString::new("feql").unwrap().as_ptr())
+            }
+            node::CBinOps::Ne => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealONE,
+                              lhs,
+                              rhs,
+                              CString::new("fne").unwrap().as_ptr())
+            }
+            node::CBinOps::Lt => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOLT,
+                              lhs,
+                              rhs,
+                              CString::new("flt").unwrap().as_ptr())
+            }
+            node::CBinOps::Gt => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOGT,
+                              lhs,
+                              rhs,
+                              CString::new("fgt").unwrap().as_ptr())
+            }
+            node::CBinOps::Le => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOLE,
+                              lhs,
+                              rhs,
+                              CString::new("fle").unwrap().as_ptr())
+            }
+            node::CBinOps::Ge => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOGE,
+                              lhs,
+                              rhs,
+                              CString::new("fge").unwrap().as_ptr())
+            }
+            _ => ptr::null_mut(),
+        }
     }
 
     unsafe fn gen_ternary_op(&mut self,
