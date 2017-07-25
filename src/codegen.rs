@@ -650,7 +650,8 @@ impl Codegen {
     unsafe fn gen_unary_op(&mut self, expr: &node::AST, op: &node::CUnaryOps) -> CodegenResult {
         fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
             match ast.kind {
-                node::ASTKind::Load(ref var) => var, 
+                node::ASTKind::Load(ref var) |
+                node::ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => var, 
                 _ => ast,
             }
         }
