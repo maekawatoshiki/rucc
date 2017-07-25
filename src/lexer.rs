@@ -267,30 +267,22 @@ impl Lexer {
         next_token_is_expect
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
-        match self.get() {
-            Ok(tok) => {
-                Ok(if tok.kind == TokenKind::Keyword(keyword) {
-                       true
-                   } else {
-                       self.buf.back_mut().unwrap().push_back(tok);
-                       false
-                   })
-            }
-            Err(e) => Err(e),
-        }
+        let tok = try!(self.get());
+        Ok(if tok.kind == TokenKind::Keyword(keyword) {
+               true
+           } else {
+               self.buf.back_mut().unwrap().push_back(tok);
+               false
+           })
     }
     pub fn skip_symbol(&mut self, sym: Symbol) -> ParseR<bool> {
-        match self.get() {
-            Ok(tok) => {
-                Ok(if tok.kind == TokenKind::Symbol(sym) {
-                       true
-                   } else {
-                       self.buf.back_mut().unwrap().push_back(tok);
-                       false
-                   })
-            }
-            Err(e) => Err(e),
-        }
+        let tok = try!(self.get());
+        Ok(if tok.kind == TokenKind::Symbol(sym) {
+               true
+           } else {
+               self.buf.back_mut().unwrap().push_back(tok);
+               false
+           })
     }
     pub fn expect_skip_keyword(&mut self, expect: Keyword) -> ParseR<bool> {
         self.skip_keyword(expect.clone())
@@ -463,6 +455,7 @@ impl Lexer {
         let c = self.peek_next();
         match c {
             '\'' | '"' | '?' | '\\' => c,
+            '0' => '\x00',
             'a' => '\x07',
             'b' => '\x08',
             'f' => '\x0c',
@@ -697,13 +690,13 @@ impl Lexer {
     }
 
     fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
-        let mut body: Vec<Token> = Vec::new();
+        let mut body = Vec::new();
         for tok in macro_body {
-            body.push(|| -> Token {
+            body.push({
                           let mut t = (*tok).clone();
                           t.hideset.insert(name.to_string());
                           t
-                      }());
+                      });
         }
         self.unget_all(body);
         Ok(())
@@ -802,8 +795,7 @@ impl Lexer {
             } else {
                 if is_combine {
                     let mut last = expanded.pop().unwrap();
-                    let cur = macro_tok.clone();
-                    last.val += cur.val.as_str();
+                    last.val += macro_tok.val.as_str();
                     expanded.push(last);
                 } else {
                     expanded.push(macro_tok.clone());
@@ -844,9 +836,9 @@ impl Lexer {
                         self.get()
                     }
                     &TokenKind::String(ref s) => {
-                        if let TokenKind::String(s2) = self.peek_e().kind {
+                        if let TokenKind::String(s2) = try!(self.peek()).kind {
                             // TODO: makes no sense...
-                            self.get_e();
+                            try!(self.get());
                             let mut new_tok = tok.clone();
                             let mut concat_str = s.clone();
                             concat_str.push_str(s2.as_str());

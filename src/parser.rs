@@ -782,9 +782,18 @@ impl<'a> Parser<'a> {
                 rand::thread_rng().gen_ascii_chars().take(8).collect()
             }
         };
-        let fields = try!(self.read_rectype_fields());
 
-        let mut cur_tags = self.tags.back_mut().unwrap();
+        // if !cur_tags.contains_key(tag.as_str()) {
+        //     if is_struct {
+        //         cur_tags.insert(tag.to_string(), Type::Struct(tag.to_string(), Vec::new()));
+        //     } else {
+        //         cur_tags.insert(tag.to_string(), Type::Union(tag.to_string(), Vec::new(), 0));
+        //     }
+        // }
+
+        let fields = try!(self.read_rectype_fields());
+        let mut cur_tags = self.tags.back_mut().unwrap().clone();
+
         if fields.is_empty() {
             Ok(match cur_tags.entry(tag) {
                    hash_map::Entry::Occupied(o) => o.into_mut().clone(),

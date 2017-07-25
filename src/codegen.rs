@@ -371,6 +371,28 @@ impl Codegen {
                            elems.len() as u32),
             Some(Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32))))
     }
+    unsafe fn gen_const_array_for_init(&mut self,
+                                       elems_ast: &Vec<node::AST>,
+                                       ty: &Type)
+                                       -> CodegenResult {
+        let (elem_ty, len) = if let &Type::Array(ref elem_ty, len) = ty {
+            (&**elem_ty, len)
+        } else {
+            panic!("never reach");
+        };
+        let llvm_elem_ty = self.type_to_llvmty(elem_ty);
+        let mut elems = Vec::new();
+        let mut count = 0;
+        for e in elems_ast {
+            elems.push(try!(self.gen(e)).0);
+            count += 1;
+        }
+        for _ in 0..(len - count) {
+            elems.push(LLVMConstNull(llvm_elem_ty));
+        }
+        Ok((LLVMConstArray(llvm_elem_ty, elems.as_mut_slice().as_mut_ptr(), len as u32),
+            Some(ty.clone())))
+    }
     unsafe fn gen_local_var_decl(&mut self,
                                  ty: &Type,
                                  name: &String,
@@ -410,9 +432,17 @@ impl Codegen {
                                         varty: &Type,
                                         init: &node::AST)
                                         -> CodegenResult {
-        let init_val = try!(self.gen(init)).0;
         match *varty {
             Type::Array(_, _) => {
+                let init_val = match init.kind {
+                    node::ASTKind::ConstArray(ref elems) => {
+                        try!(self.gen_const_array_for_init(elems, varty)).0
+                    }
+                    _ => {
+                        println!("not supported");
+                        try!(self.gen(init)).0
+                    }
+                };
                 let llvm_memcpy = self.global_varmap
                     .get("llvm.memcpy.p0i8.p0i8.i32")
                     .unwrap();
@@ -437,6 +467,7 @@ impl Codegen {
                     None))
             }
             _ => {
+                let init_val = try!(self.gen(init)).0;
                 Ok((LLVMBuildStore(self.builder,
                                    self.typecast(init_val, (LLVMGetElementType(LLVMTypeOf(var)))),
                                    var),
@@ -474,6 +505,25 @@ impl Codegen {
             _ => {
                 LLVMBuildICmp(self.builder,
                               llvm::LLVMIntPredicate::LLVMIntNE,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+        }
+    }
+    unsafe fn val_to_bool_not(&mut self, val: LLVMValueRef) -> LLVMValueRef {
+        match LLVMGetTypeKind(LLVMTypeOf(val)) {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOEQ,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+            _ => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntEQ,
                               val,
                               LLVMConstNull(LLVMTypeOf(val)),
                               CString::new("to_bool").unwrap().as_ptr())
@@ -605,6 +655,10 @@ impl Codegen {
             }
         }
         match *op {
+            node::CUnaryOps::LNot => {
+                let (val, ty) = try!(self.gen(expr));
+                Ok((self.val_to_bool_not(val), ty))
+            }
             node::CUnaryOps::Deref => self.gen_load(expr),
             node::CUnaryOps::Minus => {
                 let (val, ty) = try!(self.gen(expr));
@@ -1246,12 +1300,15 @@ impl Codegen {
                           llvm_func,
                           args_val_ptr,
                           args_len as u32,
-                          CString::new("funccall").unwrap().as_ptr()),
+                          CString::new("").unwrap().as_ptr()),
             Some((*func_retty).clone())))
     }
 
     unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> CodegenResult {
-        Ok((LLVMBuildRet(self.builder, retval), None))
+        Ok((LLVMBuildRet(self.builder,
+                         self.typecast(retval,
+                                       LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(self.cur_func.unwrap()))))),
+            None))
     }
 
     pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> CodegenResult {
@@ -1353,7 +1410,8 @@ impl Codegen {
                                 fields: &Vec<node::AST>,
                                 fields_names_map: &mut HashMap<String, u32>,
                                 fields_llvm_types: &mut Vec<LLVMTypeRef>,
-                                fields_types: &mut Vec<Type>)
+                                fields_types: &mut Vec<Type>,
+                                is_struct: bool)
                                 -> (bool, LLVMTypeRef) {
         // returns (does_the_rectype_already_exists?, LLVMStructType)
         let new_struct: LLVMTypeRef = {
@@ -1369,6 +1427,14 @@ impl Codegen {
                 LLVMStructCreateNamed(self.context, CString::new(name.as_str()).unwrap().as_ptr())
             }
         };
+
+        self.llvm_struct_map
+            .insert(name.to_string(),
+                    RectypeInfo::new(HashMap::new(),
+                                     Vec::new(),
+                                     Vec::new(),
+                                     new_struct,
+                                     is_struct));
 
         // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
@@ -1387,12 +1453,12 @@ impl Codegen {
         let mut fields_names_map: HashMap<String, u32> = HashMap::new();
         let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
         let mut fields_types: Vec<Type> = Vec::new();
-        let (exist, new_struct) =
-            self.make_rectype_base(name,
-                                   fields,
-                                   &mut fields_names_map,
-                                   &mut fields_llvm_types,
-                                   &mut fields_types);
+        let (exist, new_struct) = self.make_rectype_base(name,
+                                                         fields,
+                                                         &mut fields_names_map,
+                                                         &mut fields_llvm_types,
+                                                         &mut fields_types,
+                                                         true);
         if exist {
             return new_struct;
         }
@@ -1418,12 +1484,12 @@ impl Codegen {
         let mut fields_names_map: HashMap<String, u32> = HashMap::new();
         let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
         let mut fields_types: Vec<Type> = Vec::new();
-        let (exist, new_struct) =
-            self.make_rectype_base(name,
-                                   fields,
-                                   &mut fields_names_map,
-                                   &mut fields_llvm_types,
-                                   &mut fields_types);
+        let (exist, new_struct) = self.make_rectype_base(name,
+                                                         fields,
+                                                         &mut fields_names_map,
+                                                         &mut fields_llvm_types,
+                                                         &mut fields_types,
+                                                         true);
         if exist {
             return new_struct;
         }
