@@ -311,7 +311,10 @@ impl Codegen {
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap())
         } else {
+            // default initialization
+
             match *ty {
+                // function is not initialized
                 Type::Func(_, _, _) => return Ok((ptr::null_mut(), None)),
                 _ => {}
             }
@@ -326,18 +329,7 @@ impl Codegen {
                            });
             // TODO: implement correctly
             if *sclass == StorageClass::Auto {
-                match *ty {
-                    Type::Array(ref elem_ty, _) => {
-                        LLVMSetInitializer(gvar,
-                                           LLVMConstArray(self.type_to_llvmty(elem_ty),
-                                                          ptr::null_mut(),
-                                                          0))
-                    }
-                    Type::Struct(_, _) => {
-                        LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0))
-                    }
-                    _ => {}
-                }
+                LLVMSetInitializer(gvar, LLVMConstNull(self.type_to_llvmty(ty)));
             }
             Ok((ptr::null_mut(), None))
         }
