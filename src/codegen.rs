@@ -1,6 +1,5 @@
 extern crate llvm_sys as llvm;
 
-use std;
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
@@ -130,17 +129,9 @@ impl Codegen {
         // LLVMDumpModule(self.module);
     }
 
-    pub unsafe fn write_llvmir_to_file(&mut self, filename: &str) {
-        let mut errmsg = ptr::null_mut();
-        if LLVMPrintModuleToFile(self.module,
-                                 CString::new(filename).unwrap().as_ptr(),
-                                 &mut errmsg) != 0 {
-            let _err = CString::from_raw(errmsg)
-                .to_owned()
-                .into_string()
-                .unwrap();
-            std::process::exit(-1);
-        }
+    pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
+        llvm::bit_writer::LLVMWriteBitcodeToFile(self.module,
+                                                 CString::new(filename).unwrap().as_ptr());
     }
 
     pub unsafe fn gen(&mut self, ast: &node::AST) -> CodegenResult {
@@ -342,7 +333,16 @@ impl Codegen {
         match *ty {
             // TODO: support only if const array size is the same as var's array size
             Type::Array(ref _ary_ty, ref _len) => {
-                LLVMSetInitializer(gvar, try!(self.gen(init_ast)).0);
+                let init_val = match init_ast.kind {
+                    node::ASTKind::ConstArray(ref elems) => {
+                        try!(self.gen_const_array_for_init(elems, ty)).0
+                    }
+                    _ => {
+                        println!("not supported");
+                        try!(self.gen(init_ast)).0
+                    }
+                };
+                LLVMSetInitializer(gvar, init_val);
                 Ok((ptr::null_mut(), None))
             }
             Type::Struct(_, _) |

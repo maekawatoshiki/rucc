@@ -29,8 +29,8 @@ fn main() {
 
             let output_file_name = Regex::new(r"\..*$")
                 .unwrap()
-                .replace_all(input_file_name, ".ll");
-            codegen.write_llvmir_to_file(output_file_name.to_string().as_str());
+                .replace_all(input_file_name, ".bc");
+            codegen.write_llvm_bitcode_to_file(output_file_name.to_string().as_str());
         }
     }
 }
