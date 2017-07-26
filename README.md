@@ -17,7 +17,7 @@ $ apt-get install llvm-3.8
 
 # RUN
 
-- You may well use ``./rucc.sh``
+- You had better use ``./rucc.sh``
 
 ```sh
 $ # slow(cargo build)
