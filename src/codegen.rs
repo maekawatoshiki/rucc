@@ -362,11 +362,13 @@ impl Codegen {
     unsafe fn gen_const_array(&mut self, elems_ast: &Vec<node::AST>) -> CodegenResult {
         let mut elems = Vec::new();
         let (elem_val, elem_ty) = try!(self.gen(&elems_ast[0]));
+        let llvm_elem_ty = LLVMTypeOf(elems[0]);
         elems.push(elem_val);
         for e in elems_ast[1..].iter() {
-            elems.push(try!(self.gen(e)).0);
+            let elem = try!(self.gen(e)).0;
+            elems.push(self.typecast(elem, llvm_elem_ty));
         }
-        Ok((LLVMConstArray(LLVMTypeOf(elems[0]),
+        Ok((LLVMConstArray(llvm_elem_ty,
                            elems.as_mut_slice().as_mut_ptr(),
                            elems.len() as u32),
             Some(Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32))))
@@ -382,12 +384,11 @@ impl Codegen {
         };
         let llvm_elem_ty = self.type_to_llvmty(elem_ty);
         let mut elems = Vec::new();
-        let mut count = 0;
         for e in elems_ast {
-            elems.push(try!(self.gen(e)).0);
-            count += 1;
+            let elem = try!(self.gen(e)).0;
+            elems.push(self.typecast(elem, llvm_elem_ty));
         }
-        for _ in 0..(len - count) {
+        for _ in 0..(len - elems_ast.len() as i32) {
             elems.push(LLVMConstNull(llvm_elem_ty));
         }
         Ok((LLVMConstArray(llvm_elem_ty, elems.as_mut_slice().as_mut_ptr(), len as u32),
