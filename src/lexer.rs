@@ -373,14 +373,14 @@ impl Lexer {
         }
     }
     fn read_dec_num(&mut self, num_literal: &str) -> i64 {
-        let mut n = 0i64;
+        let mut n = 0u64;
         for c in num_literal.chars() {
             match c {
-                '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as i64,
+                '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as u64,
                 _ => {} // TODO: suffix
             }
         }
-        n
+        n as i64
     }
     fn read_oct_num(&mut self, num_literal: &str) -> i64 {
         let mut n = 0i64;

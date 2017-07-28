@@ -717,19 +717,43 @@ impl Codegen {
         let lhsty_sz = lhsty.calc_size();
         let rhsty_sz = rhsty.calc_size();
 
-        match rhsty {
-            Type::Ptr(elem_ty) |
-            Type::Array(elem_ty, _) => {
+        match (lhsty.clone(), rhsty.clone()) {
+            (Type::Ptr(_), Type::Ptr(_)) |
+            (Type::Array(_, _), Type::Ptr(_)) |
+            (Type::Ptr(_), Type::Array(_, _)) |
+            (Type::Array(_, _), Type::Array(_, _)) => {
+                return Ok((self.gen_int_binary_op(castlhs, castrhs, op),
+                           Some(Type::LLong(Sign::Signed))));
+            }
+            (Type::Char(_), Type::Ptr(elem_ty)) |
+            (Type::Char(_), Type::Array(elem_ty, _)) |
+            (Type::Short(_), Type::Ptr(elem_ty)) |
+            (Type::Short(_), Type::Array(elem_ty, _)) |
+            (Type::Int(_), Type::Ptr(elem_ty)) |
+            (Type::Int(_), Type::Array(elem_ty, _)) |
+            (Type::Long(_), Type::Ptr(elem_ty)) |
+            (Type::Long(_), Type::Array(elem_ty, _)) |
+            (Type::LLong(_), Type::Ptr(elem_ty)) |
+            (Type::LLong(_), Type::Array(elem_ty, _)) => {
                 return self.gen_ptr_binary_op(rhs, lhs, Type::Ptr(elem_ty.clone()), op);
             }
-            _ => {}
-        }
-        match lhsty {
-            Type::Ptr(elem_ty) |
-            Type::Array(elem_ty, _) => {
+            (Type::Ptr(elem_ty), Type::Char(_)) |
+            (Type::Array(elem_ty, _), Type::Char(_)) |
+            (Type::Ptr(elem_ty), Type::Short(_)) |
+            (Type::Array(elem_ty, _), Type::Short(_)) |
+            (Type::Ptr(elem_ty), Type::Int(_)) |
+            (Type::Array(elem_ty, _), Type::Int(_)) |
+            (Type::Ptr(elem_ty), Type::Long(_)) |
+            (Type::Array(elem_ty, _), Type::Long(_)) |
+            (Type::Ptr(elem_ty), Type::LLong(_)) |
+            (Type::Array(elem_ty, _), Type::LLong(_)) => {
                 return self.gen_ptr_binary_op(lhs, rhs, Type::Ptr(elem_ty.clone()), op);
             }
-            Type::Char(_) | Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
+            (Type::Char(_), _) |
+            (Type::Short(_), _) |
+            (Type::Int(_), _) |
+            (Type::Long(_), _) |
+            (Type::LLong(_), _) => {
                 if lhsty_sz < rhsty_sz {
                     let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
                     return Ok((self.gen_int_binary_op(castlhs, rhs, op), Some(rhsty)));
@@ -740,7 +764,7 @@ impl Codegen {
                     return Ok((self.gen_int_binary_op(lhs, castrhs, op), Some(lhsty)));
                 }
             }
-            Type::Double => {
+            (Type::Double, _) => {
                 let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
                 return Ok((self.gen_double_binary_op(lhs, castrhs, op), Some(lhsty)));
             }
@@ -1360,6 +1384,14 @@ impl Codegen {
                 return LLVMBuildFPToSI(self.builder, val, to, inst_name);
             }
             llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => {
+                match LLVMGetTypeKind(to) {
+                    llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                        return LLVMBuildPtrToInt(self.builder, val, to, inst_name);
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
         LLVMBuildTruncOrBitCast(self.builder, val, to, inst_name)
@@ -1371,7 +1403,7 @@ impl Codegen {
             &Type::Char(_) => LLVMInt8Type(),
             &Type::Short(_) => LLVMInt16Type(),
             &Type::Int(_) => LLVMInt32Type(),
-            &Type::Long(_) => LLVMInt32Type(),
+            &Type::Long(_) => LLVMInt64Type(),
             &Type::LLong(_) => LLVMInt64Type(),
             &Type::Float => LLVMFloatType(),
             &Type::Double => LLVMDoubleType(),

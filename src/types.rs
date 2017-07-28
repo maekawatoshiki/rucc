@@ -50,7 +50,7 @@ impl Type {
             &Type::Char(_) => 1,
             &Type::Short(_) => 2,
             &Type::Int(_) => 4,
-            &Type::Long(_) => 4,
+            &Type::Long(_) => 8,
             &Type::LLong(_) => 8,
             &Type::Float => 4,
             &Type::Double => 8,
