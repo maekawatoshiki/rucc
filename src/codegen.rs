@@ -722,6 +722,8 @@ impl Codegen {
             (Type::Array(_, _), Type::Ptr(_)) |
             (Type::Ptr(_), Type::Array(_, _)) |
             (Type::Array(_, _), Type::Array(_, _)) => {
+                let castlhs = self.typecast(lhs, LLVMInt64Type());
+                let castrhs = self.typecast(rhs, LLVMInt64Type());
                 return Ok((self.gen_int_binary_op(castlhs, castrhs, op),
                            Some(Type::LLong(Sign::Signed))));
             }
