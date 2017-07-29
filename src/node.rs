@@ -40,6 +40,8 @@ pub enum ASTKind {
     While(Rc<AST>, Rc<AST>), // cond, body
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
+    Break,
+    Continue,
     Return(Option<Rc<AST>>),
 }
 
@@ -242,6 +244,12 @@ impl AST {
                 print!("(struct-ref ");
                 s.show();
                 print!(" {})", field);
+            }
+            ASTKind::Continue => {
+                print!("(continue)");
+            }
+            ASTKind::Break => {
+                print!("(break)");
             }
             ASTKind::Return(ref retval) => {
                 print!("(return ");

@@ -3,7 +3,7 @@ extern crate llvm_sys as llvm;
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
-use std::collections::{HashMap, hash_map};
+use std::collections::{HashMap, hash_map, VecDeque};
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
@@ -67,6 +67,8 @@ pub struct Codegen {
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
     llvm_struct_map: HashMap<String, RectypeInfo>,
+    break_labels: VecDeque<LLVMBasicBlockRef>,
+    continue_labels: VecDeque<LLVMBasicBlockRef>,
     _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
@@ -109,6 +111,8 @@ impl Codegen {
             global_varmap: global_varmap,
             local_varmap: Vec::new(),
             llvm_struct_map: HashMap::new(),
+            continue_labels: VecDeque::new(),
+            break_labels: VecDeque::new(),
             _data_layout: LLVMGetDataLayout(module),
             cur_func: None,
         }
@@ -166,6 +170,8 @@ impl Codegen {
             node::ASTKind::Variable(ref name) => self.gen_var(name),
             node::ASTKind::ConstArray(ref elems) => self.gen_const_array(elems),
             node::ASTKind::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
+            node::ASTKind::Continue => self.gen_continue(),
+            node::ASTKind::Break => self.gen_break(),
             node::ASTKind::Return(ref ret) => {
                 if ret.is_none() {
                     Ok((LLVMBuildRetVoid(self.builder), None))
@@ -580,6 +586,8 @@ impl Codegen {
         let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
         let bb_after_loop = LLVMAppendBasicBlock(func,
                                                  CString::new("after_loop").unwrap().as_ptr());
+        self.continue_labels.push_back(bb_loop);
+        self.break_labels.push_back(bb_after_loop);
 
         LLVMBuildBr(self.builder, bb_before_loop);
 
@@ -590,8 +598,8 @@ impl Codegen {
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
-        // loop block
         try!(self.gen(body));
+
         if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
            ptr::null_mut() {
             LLVMBuildBr(self.builder, bb_before_loop);
@@ -613,8 +621,11 @@ impl Codegen {
         let bb_before_loop = LLVMAppendBasicBlock(func,
                                                   CString::new("before_loop").unwrap().as_ptr());
         let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
+        let bb_step = LLVMAppendBasicBlock(func, CString::new("step").unwrap().as_ptr());
         let bb_after_loop = LLVMAppendBasicBlock(func,
                                                  CString::new("after_loop").unwrap().as_ptr());
+        self.continue_labels.push_back(bb_step);
+        self.break_labels.push_back(bb_after_loop);
         try!(self.gen(init));
 
         LLVMBuildBr(self.builder, bb_before_loop);
@@ -635,8 +646,11 @@ impl Codegen {
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
-        // loop block
+
         try!(self.gen(body));
+        LLVMBuildBr(self.builder, bb_step);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_step);
         try!(self.gen(step));
         if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
            ptr::null_mut() {
@@ -751,6 +765,16 @@ impl Codegen {
             (Type::Array(elem_ty, _), Type::LLong(_)) => {
                 return self.gen_ptr_binary_op(lhs, rhs, Type::Ptr(elem_ty.clone()), op);
             }
+            (Type::Double, _) |
+            (Type::Float, _) => {
+                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
+                return Ok((self.gen_double_binary_op(lhs, castrhs, op), Some(lhsty)));
+            }
+            (_, Type::Double) |
+            (_, Type::Float) => {
+                let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
+                return Ok((self.gen_double_binary_op(castlhs, rhs, op), Some(rhsty)));
+            }
             (Type::Char(_), _) |
             (Type::Short(_), _) |
             (Type::Int(_), _) |
@@ -765,10 +789,6 @@ impl Codegen {
                     let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
                     return Ok((self.gen_int_binary_op(lhs, castrhs, op), Some(lhsty)));
                 }
-            }
-            (Type::Double, _) => {
-                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
-                return Ok((self.gen_double_binary_op(lhs, castrhs, op), Some(lhsty)));
             }
             _ => {}
         }
@@ -1330,6 +1350,17 @@ impl Codegen {
                           args_len as u32,
                           CString::new("").unwrap().as_ptr()),
             Some((*func_retty).clone())))
+    }
+    unsafe fn gen_continue(&mut self) -> CodegenResult {
+        let continue_bb = *self.continue_labels.back().unwrap();
+        LLVMBuildBr(self.builder, continue_bb);
+        Ok((ptr::null_mut(), None))
+    }
+
+    unsafe fn gen_break(&mut self) -> CodegenResult {
+        let break_bb = *self.break_labels.back().unwrap();
+        LLVMBuildBr(self.builder, break_bb);
+        Ok((ptr::null_mut(), None))
     }
 
     unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> CodegenResult {

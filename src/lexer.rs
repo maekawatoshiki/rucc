@@ -45,6 +45,8 @@ pub enum Keyword {
     Else,
     For,
     While,
+    Break,
+    Continue,
     Return,
 }
 
@@ -629,6 +631,8 @@ impl Lexer {
                 "else" => TokenKind::Keyword(Keyword::Else),
                 "for" => TokenKind::Keyword(Keyword::For),
                 "while" => TokenKind::Keyword(Keyword::While),
+                "break" => TokenKind::Keyword(Keyword::Break),
+                "continue" => TokenKind::Keyword(Keyword::Continue),
                 "return" => TokenKind::Keyword(Keyword::Return),
                 _ => return token,
             };

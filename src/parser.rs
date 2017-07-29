@@ -199,6 +199,8 @@ impl<'a> Parser<'a> {
                 Keyword::If => return self.read_if_stmt(),
                 Keyword::For => return self.read_for_stmt(),
                 Keyword::While => return self.read_while_stmt(),
+                Keyword::Continue => return self.read_continue_stmt(),
+                Keyword::Break => return self.read_break_stmt(),
                 Keyword::Return => return self.read_return_stmt(),
                 _ => {}
             }
@@ -265,6 +267,22 @@ impl<'a> Parser<'a> {
         }
         let body = try!(self.read_stmt());
         Ok(AST::new(ASTKind::While(Rc::new(cond), Rc::new(body)), 0))
+    }
+    fn read_continue_stmt(&mut self) -> ParseR<AST> {
+        let line = *self.lexer.cur_line.back().unwrap();
+        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
+            let peek = self.peek_token();
+            self.show_error_token(&try!(peek), "expected ';'");
+        }
+        Ok(AST::new(ASTKind::Continue, line))
+    }
+    fn read_break_stmt(&mut self) -> ParseR<AST> {
+        let line = *self.lexer.cur_line.back().unwrap();
+        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
+            let peek = self.peek_token();
+            self.show_error_token(&try!(peek), "expected ';'");
+        }
+        Ok(AST::new(ASTKind::Break, line))
     }
     fn read_return_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.cur_line.back().unwrap();
