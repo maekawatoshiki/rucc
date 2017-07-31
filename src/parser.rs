@@ -56,7 +56,8 @@ impl<'a> Parser<'a> {
     fn show_error(&mut self, msg: &str) {
         self.err_counts += 1;
         writeln!(&mut stderr(),
-                 "{} {}: {}",
+                 "{}: {} {}: {}",
+                 self.lexer.get_filename(),
                  Colour::Red.bold().paint("error:"),
                  *self.lexer.cur_line.back().unwrap(),
                  msg)
@@ -69,7 +70,8 @@ impl<'a> Parser<'a> {
     fn show_error_token(&mut self, token: &Token, msg: &str) {
         self.err_counts += 1;
         writeln!(&mut stderr(),
-                 "{} {}: {}",
+                 "{}: {} {}: {}",
+                 self.lexer.get_filename(),
                  Colour::Red.bold().paint("error:"),
                  token.line,
                  msg)
