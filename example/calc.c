@@ -50,9 +50,8 @@ node_t *expr_number() {
   }
   if(!isdigit(*input)) return NULL; 
   char buf[16] = {0};
-  for(int i = 0; isdigit(*input) || *input == '.'; i++) {
+  for(int i = 0; isdigit(*input) || *input == '.'; i++) 
     buf[i] = *input++;
-  }
   return make_number(atof(buf));
 }
 
