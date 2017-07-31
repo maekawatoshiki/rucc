@@ -1,3 +1,5 @@
+
+
 # rucc
 
 [![](https://img.shields.io/travis/maekawatoshiki/rucc.svg?style=flat-square)](https://travis-ci.org/maekawatoshiki/rucc)
@@ -5,6 +7,8 @@
 
 - rucc is a small toy C compiler implemented in Rust
 - developing to leran Rust
+
+- **BASICALLY, DEVELOPING IN 'develop' BRANCH **
 
 # requirements
 
