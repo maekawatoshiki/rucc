@@ -1,9 +1,12 @@
-int printf(char *, ...);
+#include <stdio.h>
 
 int main() {
+  char s[][8] = {"hello", "rucc", "world"};
   int a[2];
   a[0] = 12;
   a[1] = 23;
   a[0] = a[0] + a[1];
-  printf("%d %d%c", a[0], 0[a], 0xa);
+  printf("%d %d\n", a[0], 0[a]);
+  for(int i = 0; i < 3; i++) 
+    puts(s[i]);
 }

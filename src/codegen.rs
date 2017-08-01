@@ -368,8 +368,8 @@ impl Codegen {
     unsafe fn gen_const_array(&mut self, elems_ast: &Vec<node::AST>) -> CodegenResult {
         let mut elems = Vec::new();
         let (elem_val, elem_ty) = try!(self.gen(&elems_ast[0]));
-        let llvm_elem_ty = LLVMTypeOf(elems[0]);
         elems.push(elem_val);
+        let llvm_elem_ty = LLVMTypeOf(elems[0]);
         for e in elems_ast[1..].iter() {
             let elem = try!(self.gen(e)).0;
             elems.push(self.typecast(elem, llvm_elem_ty));
@@ -388,10 +388,16 @@ impl Codegen {
         } else {
             panic!("never reach");
         };
+
         let llvm_elem_ty = self.type_to_llvmty(elem_ty);
         let mut elems = Vec::new();
         for e in elems_ast {
-            let elem = try!(self.gen(e)).0;
+            let elem = match e.kind {
+                node::ASTKind::ConstArray(ref elems) => {
+                    try!(self.gen_const_array_for_init(elems, elem_ty)).0
+                }
+                _ => try!(self.gen(e)).0,
+            };
             elems.push(self.typecast(elem, llvm_elem_ty));
         }
         for _ in 0..(len - elems_ast.len() as i32) {

@@ -412,8 +412,9 @@ impl<'a> Parser<'a> {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
         if self.lexer.peek_symbol_token_is(Symbol::OpeningBrace) {
             self.read_initializer_list(ty)
-        } else if let TokenKind::String(_) = try!(self.lexer.peek()).kind {
-            self.read_initializer_list(ty)
+        } else if let TokenKind::String(s) = try!(self.lexer.peek()).kind {
+            try!(self.lexer.get());
+            self.read_string_initializer(s)
         } else {
             self.read_assign()
         }
@@ -427,15 +428,24 @@ impl<'a> Parser<'a> {
             _ => self.read_assign(),
         }
     }
+    fn read_string_initializer(&mut self, string: String) -> ParseR<AST> {
+        let mut char_ary = Vec::new();
+        for c in string.chars() {
+            char_ary.push(AST::new(ASTKind::Char(c as i32), 0));
+        }
+        Ok(AST::new(ASTKind::ConstArray(char_ary),
+                    *self.lexer.cur_line.back().unwrap()))
+    }
     fn read_array_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
-        if let &mut Type::Array(ref mut _elem_ty, ref mut len) = ty {
+        if let &mut Type::Array(ref elem_ty, ref mut len) = ty {
             let is_flexible = *len < 0;
             let mut elems = Vec::new();
+            let mut ety = (**elem_ty).clone();
             loop {
                 if try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
                     break;
                 }
-                let elem = try!(self.read_assign());
+                let elem = try!(self.read_decl_init(&mut ety));
                 elems.push(elem);
                 try!(self.lexer.skip_symbol(Symbol::Comma));
             }
