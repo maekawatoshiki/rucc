@@ -106,13 +106,38 @@ pub enum Symbol {
 pub enum TokenKind {
     MacroParam,
     Keyword(Keyword),
-    Identifier,
+    Identifier(String),
     IntNumber(i64),
     FloatNumber(f64),
     String(String),
     Char,
     Symbol(Symbol),
     Newline,
+}
+
+macro_rules! matches {
+    ($e:expr, $p:pat) => {
+        match $e {
+            $p => true,
+            _ => false
+        }
+    }
+}
+macro_rules! ident_val {
+    ($e:expr) => {
+        match &$e.kind {
+            &TokenKind::Identifier(ref ident) => ident.to_string(),
+            _ => "".to_string()
+        }
+    }
+}
+macro_rules! ident_mut_val {
+    ($e:expr) => {
+        match &mut $e.kind {
+            &mut TokenKind::Identifier(ref mut ident) => ident,
+            _ => panic!()
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -232,10 +257,6 @@ impl Lexer {
         peekc == ch
     }
 
-    pub fn peek_token_is(&mut self, expect: &str) -> bool {
-        let peek = self.peek_e();
-        peek.val == expect && peek.kind != TokenKind::Char
-    }
     pub fn peek_keyword_token_is(&mut self, expect: Keyword) -> bool {
         let peek = self.peek_e();
         peek.kind == TokenKind::Keyword(expect)
@@ -243,14 +264,6 @@ impl Lexer {
     pub fn peek_symbol_token_is(&mut self, expect: Symbol) -> bool {
         let peek = self.peek_e();
         peek.kind == TokenKind::Symbol(expect)
-    }
-    pub fn next_token_is(&mut self, expect: &str) -> bool {
-        let peek = self.get_e();
-        let next = self.get_e();
-        let next_token_is_expect = next.val == expect && next.kind != TokenKind::Char;
-        self.unget(next);
-        self.unget(peek);
-        next_token_is_expect
     }
     pub fn next_keyword_token_is(&mut self, expect: Keyword) -> bool {
         let peek = self.get_e();
@@ -313,8 +326,8 @@ impl Lexer {
             };
         }
         *self.peek_pos.back_mut().unwrap() -= 1;
-        Token::new(TokenKind::Identifier,
-                   ident.as_str(),
+        Token::new(TokenKind::Identifier(ident),
+                   "",
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -447,8 +460,8 @@ impl Lexer {
             }
             _ => {}
         };
-        Token::new(TokenKind::Identifier,
-                   sym.as_str(),
+        Token::new(TokenKind::Identifier(sym),
+                   "",
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -591,20 +604,21 @@ impl Lexer {
         let token = self.do_read_token();
         token.and_then(|tok| match tok.kind {
                            TokenKind::Newline => self.read_token(),
-                           TokenKind::Identifier => Ok(self.convert_to_keyword_or_symbol(tok)),
+                           TokenKind::Identifier(_) => Ok(self.convert_to_keyword_or_symbol(tok)),
                            _ => Ok(tok),
                        })
     }
     fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
         let pos = token.pos;
         let line = token.line;
+        let val = ident_val!(token);
 
-        if token.val == "sizeof" {
+        if val == "sizeof" {
             return Token::new(TokenKind::Symbol(Symbol::Sizeof), "", 0, pos, line);
         }
 
-        if token.val.len() > 0 && token.val.chars().nth(0).unwrap().is_alphanumeric() {
-            let keyw = match token.val.as_str() {
+        if val.len() > 0 && val.chars().nth(0).unwrap().is_alphanumeric() {
+            let keyw = match val.as_str() {
                 "typedef" => TokenKind::Keyword(Keyword::Typedef),
                 "extern" => TokenKind::Keyword(Keyword::Extern),
                 "auto" => TokenKind::Keyword(Keyword::Auto),
@@ -639,7 +653,7 @@ impl Lexer {
             return Token::new(keyw, "", 0, pos, line);
         }
 
-        let symbol = match token.val.as_str() {
+        let symbol = match val.as_str() {
             "++" => TokenKind::Symbol(Symbol::Inc), 
             "--" => TokenKind::Symbol(Symbol::Dec),
             "(" => TokenKind::Symbol(Symbol::OpeningParen),
@@ -710,16 +724,17 @@ impl Lexer {
         let mut arg = Vec::new();
         loop {
             let tok = try!(self.do_read_token());
+            let val = ident_val!(tok);
             if n == 0 {
-                if tok.val == ")" {
+                if val == ")" {
                     *end = true;
                     // self.unget(tok);
                     break;
-                } else if tok.val == "," {
+                } else if val == "," {
                     break;
                 }
             }
-            match tok.val.as_str() {
+            match val.as_str() {
                 "(" => n += 1,
                 ")" => n -= 1,
                 _ => {}
@@ -737,6 +752,7 @@ impl Lexer {
                                   TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
                                   TokenKind::IntNumber(ref i) => format!("{}", *i),
                                   TokenKind::FloatNumber(ref f) => format!("{}", *f),
+                                  TokenKind::Identifier(ref i) => format!("{}", i),
                                   _ => token.val.to_string(),
                               })
                     .as_str();
@@ -765,7 +781,7 @@ impl Lexer {
         let mut is_combine = false;
         for macro_tok in macro_body {
             // TODO: refine code
-            if macro_tok.val == "#" {
+            if ident_val!(macro_tok) == "#" {
                 if is_stringize {
                     // means ##
                     is_stringize = false;
@@ -785,7 +801,7 @@ impl Lexer {
                 } else if is_combine {
                     let mut last = expanded.pop().unwrap();
                     for t in &args[position] {
-                        last.val += t.val.as_str();
+                        *ident_mut_val!(last) += ident_val!(t).as_str();
                     }
                     expanded.push(last);
                     is_combine = false;
@@ -799,7 +815,7 @@ impl Lexer {
             } else {
                 if is_combine {
                     let mut last = expanded.pop().unwrap();
-                    last.val += macro_tok.val.as_str();
+                    *ident_mut_val!(last) += ident_val!(macro_tok).as_str();
                     expanded.push(last);
                 } else {
                     expanded.push(macro_tok.clone());
@@ -816,8 +832,7 @@ impl Lexer {
     }
     fn expand(&mut self, token: ParseR<Token>) -> ParseR<Token> {
         token.and_then(|tok| {
-            let name = tok.val.to_string();
-
+            let name = ident_val!(tok);
             if tok.hideset.contains(name.as_str()) || !self.macro_map.contains_key(name.as_str()) {
                 Ok(tok)
             } else {
@@ -894,7 +909,7 @@ impl Lexer {
         let tok = self.do_read_token(); // cpp directive
         match tok { 
             Ok(t) => {
-                match t.val.as_str() {
+                match ident_val!(t).as_str() {
                     "include" => self.read_include(),
                     "define" => self.read_define(),
                     "undef" => self.read_undef(),
@@ -1000,7 +1015,7 @@ impl Lexer {
         let mut args: HashMap<String, usize> = HashMap::new();
         let mut count = 0usize;
         loop {
-            let arg = try!(self.get()).val;
+            let arg = ident_val!(try!(self.get()));
             args.insert(arg, count);
             if try!(self.skip_symbol(Symbol::ClosingParen)) {
                 break;
@@ -1020,12 +1035,12 @@ impl Lexer {
             // if tok is a parameter of funclike macro,
             //  the kind of tok will be changed to MacroParam
             //  and set macro_position
-            let maybe_macro_name = tok.val.as_str();
+            let maybe_macro_name = ident_val!(tok);
             // print!("{}{}", if tok.space { " " } else { "" }, tok.val);
-            if args.contains_key(maybe_macro_name) {
+            if args.contains_key(maybe_macro_name.as_str()) {
                 let mut macro_param = tok.clone();
                 macro_param.kind = TokenKind::MacroParam;
-                macro_param.macro_position = *args.get(maybe_macro_name).unwrap();
+                macro_param.macro_position = *args.get(maybe_macro_name.as_str()).unwrap();
                 body.push(macro_param);
             } else {
                 body.push(tok.clone());
@@ -1036,21 +1051,21 @@ impl Lexer {
     }
     fn read_define(&mut self) -> ParseR<()> {
         let mcro = try!(self.do_read_token());
-        assert_eq!(mcro.kind, TokenKind::Identifier);
+        // assert_eq!(mcro.kind, TokenKind::Identifier);
         // println!("define: {}", mcro.val);
 
         let t = try!(self.do_read_token());
-        if !t.space && t.val.as_str() == "(" {
-            self.read_define_func_macro(mcro.val)
+        if !t.space && ident_val!(t).as_str() == "(" {
+            self.read_define_func_macro(ident_val!(mcro))
         } else {
             self.unget(t);
-            self.read_define_obj_macro(mcro.val)
+            self.read_define_obj_macro(ident_val!(mcro))
         }
     }
     fn read_undef(&mut self) -> ParseR<()> {
         let mcro = try!(self.do_read_token());
-        assert_eq!(mcro.kind, TokenKind::Identifier);
-        self.macro_map.remove(mcro.val.as_str());
+        // assert_eq!(mcro.kind, TokenKind::Identifier);
+        self.macro_map.remove(ident_val!(mcro).as_str());
         Ok(())
     }
 
@@ -1064,11 +1079,11 @@ impl Lexer {
     fn read_defined_op(&mut self) -> ParseR<Token> {
         // TODO: add err handler
         let mut tok = try!(self.do_read_token());
-        if tok.val == "(" {
+        if ident_val!(tok) == "(" {
             tok = try!(self.do_read_token());
             try!(self.expect_skip_symbol(Symbol::ClosingParen));
         }
-        Ok(if self.macro_map.contains_key(tok.val.as_str()) {
+        Ok(if self.macro_map.contains_key(ident_val!(tok).as_str()) {
                Token::new(TokenKind::IntNumber(1),
                           "",
                           0,
@@ -1091,17 +1106,20 @@ impl Lexer {
                 break;
             } else {
                 tok = self.convert_to_keyword_or_symbol(tok);
-                if tok.val == "defined" {
-                    v.push(try!(self.read_defined_op()));
-                } else if tok.kind == TokenKind::Identifier {
-                    // identifier in expr line is replaced with 0i
-                    v.push(Token::new(TokenKind::IntNumber(0),
-                                      "",
-                                      0,
-                                      0,
-                                      *self.cur_line.back_mut().unwrap()));
-                } else {
-                    v.push(tok);
+                match tok.kind {
+                    TokenKind::Identifier(s) => {
+                        if s == "defined" {
+                            v.push(try!(self.read_defined_op()));
+                        } else {
+                            // identifier in expr line is replaced with 0i
+                            v.push(Token::new(TokenKind::IntNumber(0),
+                                              "",
+                                              0,
+                                              0,
+                                              *self.cur_line.back_mut().unwrap()));
+                        }
+                    }
+                    _ => v.push(tok),
                 }
             }
         }
@@ -1133,12 +1151,12 @@ impl Lexer {
         self.do_read_if(cond)
     }
     fn read_ifdef(&mut self) -> ParseR<()> {
-        let mcro_name = try!(self.do_read_token()).val;
+        let mcro_name = ident_val!(try!(self.do_read_token()));
         let macro_is_defined = self.macro_map.contains_key(mcro_name.as_str());
         self.do_read_if(macro_is_defined)
     }
     fn read_ifndef(&mut self) -> ParseR<()> {
-        let mcro_name = try!(self.do_read_token()).val;
+        let mcro_name = ident_val!(try!(self.do_read_token()));
         let macro_is_undefined = !self.macro_map.contains_key(mcro_name.as_str());
         self.do_read_if(macro_is_undefined)
     }
@@ -1166,19 +1184,24 @@ impl Lexer {
             }
 
             let tok = try!(self.do_read_token());
+            let val = ident_val!(tok);
             if nest == 0 {
-                match tok.val.as_str() {
+                match val.as_str() {
                     "else" | "elif" | "endif" => {
                         let line = *self.cur_line.back_mut().unwrap();
                         self.unget(tok);
-                        self.unget(Token::new(TokenKind::Identifier, "#", 0, 0, line));
+                        self.unget(Token::new(TokenKind::Identifier("#".to_string()),
+                                              "",
+                                              0,
+                                              0,
+                                              line));
                         return Ok(());
                     }
                     _ => {}
                 }
             }
 
-            match tok.val.as_str() {
+            match val.as_str() {
                 "if" | "ifdef" | "ifndef" => nest += 1,
                 "endif" => nest -= 1,
                 _ => {}

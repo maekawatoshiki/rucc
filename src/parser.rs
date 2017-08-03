@@ -38,6 +38,22 @@ fn retrieve_from_load(ast: &AST) -> AST {
         _ => (*ast).clone(),
     }
 }
+macro_rules! matches {
+    ($e:expr, $p:pat) => {
+        match $e {
+            $p => true,
+            _ => false
+        }
+    }
+}
+macro_rules! ident_val {
+    ($e:expr) => {
+        match &$e.kind {
+            &TokenKind::Identifier(ref ident) => ident.to_string(),
+            _ => "".to_string()
+        }
+    }
+}
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: &'a mut Lexer) -> Parser<'a> {
@@ -320,7 +336,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if tok.kind != TokenKind::Identifier {
+            if !matches!(tok.kind, TokenKind::Identifier(_)) {
                 continue;
             }
 
@@ -399,11 +415,11 @@ impl<'a> Parser<'a> {
                 Keyword::Inline | Keyword::Restrict => true,
                 _ => false,
             }
-        } else if token.kind == TokenKind::Identifier {
+        } else if let TokenKind::Identifier(ref ident) = token.kind {
             self.env
                 .back_mut()
                 .unwrap()
-                .contains_key(token.val.as_str())
+                .contains_key(ident.as_str())
         } else {
             false
         }
@@ -549,10 +565,9 @@ impl<'a> Parser<'a> {
 
         let tok = try!(self.lexer.get());
 
-        if tok.kind == TokenKind::Identifier {
-            let name = tok.val;
+        if let &TokenKind::Identifier(ref name) = &tok.kind {
             let (ty, params) = try!(self.read_declarator_tail(basety));
-            return Ok((ty, name, params));
+            return Ok((ty, name.to_string(), params));
         }
 
         self.lexer.unget(tok);
@@ -665,11 +680,12 @@ impl<'a> Parser<'a> {
         loop {
             let tok = try!(self.lexer.get());
 
-            if kind.is_none() && tok.kind == TokenKind::Identifier {
-                let maybe_userty_name = tok.val.as_str();
-                let maybe_userty = try!(self.get_typedef(maybe_userty_name));
-                if maybe_userty.is_some() {
-                    return Ok((maybe_userty.unwrap(), sclass));
+            if kind.is_none() {
+                if let &TokenKind::Identifier(ref maybe_userty_name) = &tok.kind {
+                    let maybe_userty = try!(self.get_typedef(maybe_userty_name));
+                    if maybe_userty.is_some() {
+                        return Ok((maybe_userty.unwrap(), sclass));
+                    }
                 }
             }
 
@@ -795,8 +811,8 @@ impl<'a> Parser<'a> {
     // rectype is abbreviation of 'record type'
     fn read_rectype_tag(&mut self) -> ParseR<Option<String>> {
         let maybe_tag = try!(self.lexer.get());
-        if maybe_tag.kind == TokenKind::Identifier {
-            Ok(Some(maybe_tag.val))
+        if let TokenKind::Identifier(maybe_tag_name) = maybe_tag.kind {
+            Ok(Some(maybe_tag_name))
         } else {
             self.lexer.unget(maybe_tag);
             Ok(None)
@@ -935,7 +951,7 @@ impl<'a> Parser<'a> {
             if try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
                 break;
             }
-            let name = try!(self.lexer.get()).val;
+            let name = ident_val!(try!(self.lexer.get()));
             if try!(self.lexer.skip_symbol(Symbol::Assign)) {
                 val = try!(self.read_assign()).eval_constexpr();
             }
@@ -1350,13 +1366,13 @@ impl<'a> Parser<'a> {
 
     fn read_field(&mut self, ast: AST) -> ParseR<AST> {
         let field = try!(self.lexer.get());
-        if field.kind != TokenKind::Identifier {
+        if !matches!(field.kind ,TokenKind::Identifier(_)) {
             let peek = self.peek_token();
             self.show_error_token(&try!(peek), "expected field name");
             return Err(Error::Something);
         }
 
-        let field_name = field.val;
+        let field_name = ident_val!(field);
         Ok(AST::new(ASTKind::StructRef(Rc::new(ast), field_name),
                     *self.lexer.cur_line.back().unwrap()))
     }
@@ -1396,11 +1412,11 @@ impl<'a> Parser<'a> {
             TokenKind::FloatNumber(f) => {
                 Ok(AST::new(ASTKind::Float(f), *self.lexer.cur_line.back().unwrap()))
             }
-            TokenKind::Identifier => {
-                if let Some(ast) = self.env.back_mut().unwrap().get(tok.val.as_str()) {
+            TokenKind::Identifier(ident) => {
+                if let Some(ast) = self.env.back_mut().unwrap().get(ident.as_str()) {
                     Ok(ast.clone())
                 } else {
-                    Ok(AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(tok.val),
+                    Ok(AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(ident),
                                                                *self.lexer
                                                                     .cur_line
                                                                     .back()
