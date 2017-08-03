@@ -1,9 +1,20 @@
 #! /bin/bash
-ll=$(echo $1 | sed -e s/\.c$/\.ll/)
+
+bc=$(echo $1 | sed -e s/\.c$/\.bc/)
 s=$(echo $1 | sed -e s/\.c$/\.s/)
-cargo run $1
+
+if [[ $2 == "--release" ]]; then
+  if [[ ! -e './target/release/rucc' ]]; then
+    cargo build --release
+  fi
+  ./target/release/rucc $1
+else
+  cargo run $1
+fi
+
 if [[ $? == 0 ]]; then
-  llc-3.8 $ll
-  clang $s
-  rm -f $ll $s
+  # opt-3.8 -std-link-opts $bc -o $bc 
+  llc-3.8 $bc
+  clang $s -lm
+  rm -f $bc $s
 fi

@@ -33,8 +33,25 @@ pub struct Parser<'a> {
 
 fn retrieve_from_load(ast: &AST) -> AST {
     match ast.kind {
-        ASTKind::Load(ref var) => (**var).clone(),
+        ASTKind::Load(ref var) |
+        ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => (**var).clone(),
         _ => (*ast).clone(),
+    }
+}
+macro_rules! matches {
+    ($e:expr, $p:pat) => {
+        match $e {
+            $p => true,
+            _ => false
+        }
+    }
+}
+macro_rules! ident_val {
+    ($e:expr) => {
+        match &$e.kind {
+            &TokenKind::Identifier(ref ident) => ident.to_string(),
+            _ => "".to_string()
+        }
     }
 }
 
@@ -55,7 +72,8 @@ impl<'a> Parser<'a> {
     fn show_error(&mut self, msg: &str) {
         self.err_counts += 1;
         writeln!(&mut stderr(),
-                 "{} {}: {}",
+                 "{}: {} {}: {}",
+                 self.lexer.get_filename(),
                  Colour::Red.bold().paint("error:"),
                  *self.lexer.cur_line.back().unwrap(),
                  msg)
@@ -68,7 +86,8 @@ impl<'a> Parser<'a> {
     fn show_error_token(&mut self, token: &Token, msg: &str) {
         self.err_counts += 1;
         writeln!(&mut stderr(),
-                 "{} {}: {}",
+                 "{}: {} {}: {}",
+                 self.lexer.get_filename(),
                  Colour::Red.bold().paint("error:"),
                  token.line,
                  msg)
@@ -77,6 +96,8 @@ impl<'a> Parser<'a> {
                  "{}",
                  self.lexer.get_surrounding_code_with_err_point(token.pos))
                 .unwrap();
+
+        panic!();
     }
     fn peek_token(&mut self) -> ParseR<Token> {
         self.lexer.peek()
@@ -196,6 +217,8 @@ impl<'a> Parser<'a> {
                 Keyword::If => return self.read_if_stmt(),
                 Keyword::For => return self.read_for_stmt(),
                 Keyword::While => return self.read_while_stmt(),
+                Keyword::Continue => return self.read_continue_stmt(),
+                Keyword::Break => return self.read_break_stmt(),
                 Keyword::Return => return self.read_return_stmt(),
                 _ => {}
             }
@@ -263,6 +286,22 @@ impl<'a> Parser<'a> {
         let body = try!(self.read_stmt());
         Ok(AST::new(ASTKind::While(Rc::new(cond), Rc::new(body)), 0))
     }
+    fn read_continue_stmt(&mut self) -> ParseR<AST> {
+        let line = *self.lexer.cur_line.back().unwrap();
+        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
+            let peek = self.peek_token();
+            self.show_error_token(&try!(peek), "expected ';'");
+        }
+        Ok(AST::new(ASTKind::Continue, line))
+    }
+    fn read_break_stmt(&mut self) -> ParseR<AST> {
+        let line = *self.lexer.cur_line.back().unwrap();
+        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
+            let peek = self.peek_token();
+            self.show_error_token(&try!(peek), "expected ';'");
+        }
+        Ok(AST::new(ASTKind::Break, line))
+    }
     fn read_return_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.cur_line.back().unwrap();
         if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
@@ -297,7 +336,7 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if tok.kind != TokenKind::Identifier {
+            if !matches!(tok.kind, TokenKind::Identifier(_)) {
                 continue;
             }
 
@@ -376,40 +415,53 @@ impl<'a> Parser<'a> {
                 Keyword::Inline | Keyword::Restrict => true,
                 _ => false,
             }
-        } else if token.kind == TokenKind::Identifier {
+        } else if let TokenKind::Identifier(ref ident) = token.kind {
             self.env
                 .back_mut()
                 .unwrap()
-                .contains_key(token.val.as_str())
+                .contains_key(ident.as_str())
         } else {
             false
         }
     }
     fn read_decl_init(&mut self, ty: &mut Type) -> ParseR<AST> {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
-        if try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
+        if self.lexer.peek_symbol_token_is(Symbol::OpeningBrace) {
             self.read_initializer_list(ty)
-        } else if let TokenKind::String(_) = try!(self.lexer.peek()).kind {
-            self.read_initializer_list(ty)
+        } else if let TokenKind::String(s) = try!(self.lexer.peek()).kind {
+            try!(self.lexer.get());
+            self.read_string_initializer(s)
         } else {
             self.read_assign()
         }
     }
     fn read_initializer_list(&mut self, ty: &mut Type) -> ParseR<AST> {
         match ty {
-            &mut Type::Array(_, _) => self.read_array_initializer(ty),
+            &mut Type::Array(_, _) => {
+                try!(self.lexer.skip_symbol(Symbol::OpeningBrace));
+                self.read_array_initializer(ty)
+            }
             _ => self.read_assign(),
         }
     }
+    fn read_string_initializer(&mut self, string: String) -> ParseR<AST> {
+        let mut char_ary = Vec::new();
+        for c in string.chars() {
+            char_ary.push(AST::new(ASTKind::Char(c as i32), 0));
+        }
+        Ok(AST::new(ASTKind::ConstArray(char_ary),
+                    *self.lexer.cur_line.back().unwrap()))
+    }
     fn read_array_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
-        if let &mut Type::Array(ref mut _elem_ty, ref mut len) = ty {
+        if let &mut Type::Array(ref elem_ty, ref mut len) = ty {
             let is_flexible = *len < 0;
             let mut elems = Vec::new();
+            let mut ety = (**elem_ty).clone();
             loop {
                 if try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
                     break;
                 }
-                let elem = try!(self.read_assign());
+                let elem = try!(self.read_decl_init(&mut ety));
                 elems.push(elem);
                 try!(self.lexer.skip_symbol(Symbol::Comma));
             }
@@ -464,8 +516,8 @@ impl<'a> Parser<'a> {
                 return Ok(());
             }
             if !try!(self.lexer.skip_symbol(Symbol::Comma)) {
-                let peek = self.peek_token();
-                self.show_error_token(&try!(peek), "expected ','");
+                let peek = try!(self.lexer.get());
+                self.show_error_token(&peek, "expected ','");
                 self.skip_until(Symbol::Semicolon);
                 return Err(Error::Something);
             }
@@ -513,10 +565,9 @@ impl<'a> Parser<'a> {
 
         let tok = try!(self.lexer.get());
 
-        if tok.kind == TokenKind::Identifier {
-            let name = tok.val;
+        if let &TokenKind::Identifier(ref name) = &tok.kind {
             let (ty, params) = try!(self.read_declarator_tail(basety));
-            return Ok((ty, name, params));
+            return Ok((ty, name.to_string(), params));
         }
 
         self.lexer.unget(tok);
@@ -629,11 +680,12 @@ impl<'a> Parser<'a> {
         loop {
             let tok = try!(self.lexer.get());
 
-            if kind.is_none() && tok.kind == TokenKind::Identifier {
-                let maybe_userty_name = tok.val.as_str();
-                let maybe_userty = try!(self.get_typedef(maybe_userty_name));
-                if maybe_userty.is_some() {
-                    return Ok((maybe_userty.unwrap(), sclass));
+            if kind.is_none() {
+                if let &TokenKind::Identifier(ref maybe_userty_name) = &tok.kind {
+                    let maybe_userty = try!(self.get_typedef(maybe_userty_name));
+                    if maybe_userty.is_some() {
+                        return Ok((maybe_userty.unwrap(), sclass));
+                    }
                 }
             }
 
@@ -759,8 +811,8 @@ impl<'a> Parser<'a> {
     // rectype is abbreviation of 'record type'
     fn read_rectype_tag(&mut self) -> ParseR<Option<String>> {
         let maybe_tag = try!(self.lexer.get());
-        if maybe_tag.kind == TokenKind::Identifier {
-            Ok(Some(maybe_tag.val))
+        if let TokenKind::Identifier(maybe_tag_name) = maybe_tag.kind {
+            Ok(Some(maybe_tag_name))
         } else {
             self.lexer.unget(maybe_tag);
             Ok(None)
@@ -777,9 +829,10 @@ impl<'a> Parser<'a> {
                 rand::thread_rng().gen_ascii_chars().take(8).collect()
             }
         };
-        let fields = try!(self.read_rectype_fields());
 
+        let fields = try!(self.read_rectype_fields());
         let mut cur_tags = self.tags.back_mut().unwrap();
+
         if fields.is_empty() {
             Ok(match cur_tags.entry(tag) {
                    hash_map::Entry::Occupied(o) => o.into_mut().clone(),
@@ -898,7 +951,7 @@ impl<'a> Parser<'a> {
             if try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
                 break;
             }
-            let name = try!(self.lexer.get()).val;
+            let name = ident_val!(try!(self.lexer.get()));
             if try!(self.lexer.skip_symbol(Symbol::Assign)) {
                 val = try!(self.read_assign()).eval_constexpr();
             }
@@ -1313,13 +1366,13 @@ impl<'a> Parser<'a> {
 
     fn read_field(&mut self, ast: AST) -> ParseR<AST> {
         let field = try!(self.lexer.get());
-        if field.kind != TokenKind::Identifier {
+        if !matches!(field.kind ,TokenKind::Identifier(_)) {
             let peek = self.peek_token();
             self.show_error_token(&try!(peek), "expected field name");
             return Err(Error::Something);
         }
 
-        let field_name = field.val;
+        let field_name = ident_val!(field);
         Ok(AST::new(ASTKind::StructRef(Rc::new(ast), field_name),
                     *self.lexer.cur_line.back().unwrap()))
     }
@@ -1359,11 +1412,11 @@ impl<'a> Parser<'a> {
             TokenKind::FloatNumber(f) => {
                 Ok(AST::new(ASTKind::Float(f), *self.lexer.cur_line.back().unwrap()))
             }
-            TokenKind::Identifier => {
-                if let Some(ast) = self.env.back_mut().unwrap().get(tok.val.as_str()) {
+            TokenKind::Identifier(ident) => {
+                if let Some(ast) = self.env.back_mut().unwrap().get(ident.as_str()) {
                     Ok(ast.clone())
                 } else {
-                    Ok(AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(tok.val),
+                    Ok(AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(ident),
                                                                *self.lexer
                                                                     .cur_line
                                                                     .back()

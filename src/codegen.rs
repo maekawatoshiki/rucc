@@ -1,10 +1,9 @@
 extern crate llvm_sys as llvm;
 
-use std;
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
-use std::collections::{HashMap, hash_map};
+use std::collections::{HashMap, hash_map, VecDeque};
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
@@ -68,6 +67,8 @@ pub struct Codegen {
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
     llvm_struct_map: HashMap<String, RectypeInfo>,
+    break_labels: VecDeque<LLVMBasicBlockRef>,
+    continue_labels: VecDeque<LLVMBasicBlockRef>,
     _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
@@ -110,6 +111,8 @@ impl Codegen {
             global_varmap: global_varmap,
             local_varmap: Vec::new(),
             llvm_struct_map: HashMap::new(),
+            continue_labels: VecDeque::new(),
+            break_labels: VecDeque::new(),
             _data_layout: LLVMGetDataLayout(module),
             cur_func: None,
         }
@@ -127,20 +130,12 @@ impl Codegen {
                 }
             }
         }
-        LLVMDumpModule(self.module);
+        // LLVMDumpModule(self.module);
     }
 
-    pub unsafe fn write_llvmir_to_file(&mut self, filename: &str) {
-        let mut errmsg = ptr::null_mut();
-        if LLVMPrintModuleToFile(self.module,
-                                 CString::new(filename).unwrap().as_ptr(),
-                                 &mut errmsg) != 0 {
-            let _err = CString::from_raw(errmsg)
-                .to_owned()
-                .into_string()
-                .unwrap();
-            std::process::exit(-1);
-        }
+    pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
+        llvm::bit_writer::LLVMWriteBitcodeToFile(self.module,
+                                                 CString::new(filename).unwrap().as_ptr());
     }
 
     pub unsafe fn gen(&mut self, ast: &node::AST) -> CodegenResult {
@@ -175,6 +170,8 @@ impl Codegen {
             node::ASTKind::Variable(ref name) => self.gen_var(name),
             node::ASTKind::ConstArray(ref elems) => self.gen_const_array(elems),
             node::ASTKind::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
+            node::ASTKind::Continue => self.gen_continue(),
+            node::ASTKind::Break => self.gen_break(),
             node::ASTKind::Return(ref ret) => {
                 if ret.is_none() {
                     Ok((LLVMBuildRetVoid(self.builder), None))
@@ -311,7 +308,10 @@ impl Codegen {
         if init.is_some() {
             self.const_init_global_var(ty, gvar, &*init.clone().unwrap())
         } else {
+            // default initialization
+
             match *ty {
+                // function is not initialized
                 Type::Func(_, _, _) => return Ok((ptr::null_mut(), None)),
                 _ => {}
             }
@@ -326,18 +326,7 @@ impl Codegen {
                            });
             // TODO: implement correctly
             if *sclass == StorageClass::Auto {
-                match *ty {
-                    Type::Array(ref elem_ty, _) => {
-                        LLVMSetInitializer(gvar,
-                                           LLVMConstArray(self.type_to_llvmty(elem_ty),
-                                                          ptr::null_mut(),
-                                                          0))
-                    }
-                    Type::Struct(_, _) => {
-                        LLVMSetInitializer(gvar, LLVMConstStruct(ptr::null_mut(), 0, 0))
-                    }
-                    _ => {}
-                }
+                LLVMSetInitializer(gvar, LLVMConstNull(self.type_to_llvmty(ty)));
             }
             Ok((ptr::null_mut(), None))
         }
@@ -350,11 +339,28 @@ impl Codegen {
         match *ty {
             // TODO: support only if const array size is the same as var's array size
             Type::Array(ref _ary_ty, ref _len) => {
-                LLVMSetInitializer(gvar, try!(self.gen(init_ast)).0);
+                let init_val = match init_ast.kind {
+                    node::ASTKind::ConstArray(ref elems) => {
+                        try!(self.gen_const_array_for_init(elems, ty)).0
+                    }
+                    _ => {
+                        println!("not supported");
+                        try!(self.gen(init_ast)).0
+                    }
+                };
+                LLVMSetInitializer(gvar, init_val);
+                Ok((ptr::null_mut(), None))
+            }
+            Type::Struct(_, _) |
+            Type::Union(_, _, _) => {
+                // TODO: implement asap
+                // panic!("sorry. this inst is not supported now.");
                 Ok((ptr::null_mut(), None))
             }
             _ => {
-                LLVMSetInitializer(gvar, try!(self.gen(init_ast)).0);
+                let cast_ty = LLVMGetElementType(LLVMTypeOf(gvar));
+                let init_val = try!(self.gen(init_ast));
+                LLVMSetInitializer(gvar, self.typecast(init_val.0, cast_ty));
                 Ok((ptr::null_mut(), None))
             }
         }
@@ -363,13 +369,42 @@ impl Codegen {
         let mut elems = Vec::new();
         let (elem_val, elem_ty) = try!(self.gen(&elems_ast[0]));
         elems.push(elem_val);
+        let llvm_elem_ty = LLVMTypeOf(elems[0]);
         for e in elems_ast[1..].iter() {
-            elems.push(try!(self.gen(e)).0);
+            let elem = try!(self.gen(e)).0;
+            elems.push(self.typecast(elem, llvm_elem_ty));
         }
-        Ok((LLVMConstArray(LLVMTypeOf(elems[0]),
+        Ok((LLVMConstArray(llvm_elem_ty,
                            elems.as_mut_slice().as_mut_ptr(),
                            elems.len() as u32),
             Some(Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32))))
+    }
+    unsafe fn gen_const_array_for_init(&mut self,
+                                       elems_ast: &Vec<node::AST>,
+                                       ty: &Type)
+                                       -> CodegenResult {
+        let (elem_ty, len) = if let &Type::Array(ref elem_ty, len) = ty {
+            (&**elem_ty, len)
+        } else {
+            panic!("never reach");
+        };
+
+        let llvm_elem_ty = self.type_to_llvmty(elem_ty);
+        let mut elems = Vec::new();
+        for e in elems_ast {
+            let elem = match e.kind {
+                node::ASTKind::ConstArray(ref elems) => {
+                    try!(self.gen_const_array_for_init(elems, elem_ty)).0
+                }
+                _ => try!(self.gen(e)).0,
+            };
+            elems.push(self.typecast(elem, llvm_elem_ty));
+        }
+        for _ in 0..(len - elems_ast.len() as i32) {
+            elems.push(LLVMConstNull(llvm_elem_ty));
+        }
+        Ok((LLVMConstArray(llvm_elem_ty, elems.as_mut_slice().as_mut_ptr(), len as u32),
+            Some(ty.clone())))
     }
     unsafe fn gen_local_var_decl(&mut self,
                                  ty: &Type,
@@ -410,9 +445,17 @@ impl Codegen {
                                         varty: &Type,
                                         init: &node::AST)
                                         -> CodegenResult {
-        let init_val = try!(self.gen(init)).0;
         match *varty {
             Type::Array(_, _) => {
+                let init_val = match init.kind {
+                    node::ASTKind::ConstArray(ref elems) => {
+                        try!(self.gen_const_array_for_init(elems, varty)).0
+                    }
+                    _ => {
+                        println!("not supported");
+                        try!(self.gen(init)).0
+                    }
+                };
                 let llvm_memcpy = self.global_varmap
                     .get("llvm.memcpy.p0i8.p0i8.i32")
                     .unwrap();
@@ -437,6 +480,7 @@ impl Codegen {
                     None))
             }
             _ => {
+                let init_val = try!(self.gen(init)).0;
                 Ok((LLVMBuildStore(self.builder,
                                    self.typecast(init_val, (LLVMGetElementType(LLVMTypeOf(var)))),
                                    var),
@@ -461,20 +505,52 @@ impl Codegen {
         Ok((ptr::null_mut(), None))
     }
 
+    unsafe fn val_to_bool(&mut self, val: LLVMValueRef) -> LLVMValueRef {
+        match LLVMGetTypeKind(LLVMTypeOf(val)) {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealONE,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+            _ => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntNE,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+        }
+    }
+    unsafe fn val_to_bool_not(&mut self, val: LLVMValueRef) -> LLVMValueRef {
+        match LLVMGetTypeKind(LLVMTypeOf(val)) {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOEQ,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+            _ => {
+                LLVMBuildICmp(self.builder,
+                              llvm::LLVMIntPredicate::LLVMIntEQ,
+                              val,
+                              LLVMConstNull(LLVMTypeOf(val)),
+                              CString::new("to_bool").unwrap().as_ptr())
+            }
+        }
+    }
+
     unsafe fn gen_if(&mut self,
                      cond: &node::AST,
                      then_stmt: &node::AST,
                      else_stmt: &node::AST)
                      -> CodegenResult {
-        let cond_val = {
-            let val = try!(self.gen(cond)).0;
-            LLVMBuildICmp(self.builder,
-                          llvm::LLVMIntPredicate::LLVMIntNE,
-                          val,
-                          LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("cond").unwrap().as_ptr())
-        };
-
+        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val = self.val_to_bool(cond_val_tmp);
 
         let func = self.cur_func.unwrap();
 
@@ -516,24 +592,20 @@ impl Codegen {
         let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
         let bb_after_loop = LLVMAppendBasicBlock(func,
                                                  CString::new("after_loop").unwrap().as_ptr());
+        self.continue_labels.push_back(bb_loop);
+        self.break_labels.push_back(bb_after_loop);
 
         LLVMBuildBr(self.builder, bb_before_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_before_loop);
         // before_loop block
-        let cond_val = {
-            let val = try!(self.gen(cond)).0;
-            LLVMBuildICmp(self.builder,
-                          llvm::LLVMIntPredicate::LLVMIntNE,
-                          val,
-                          LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("eql").unwrap().as_ptr())
-        };
+        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val = self.val_to_bool(cond_val_tmp);
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
-        // loop block
         try!(self.gen(body));
+
         if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
            ptr::null_mut() {
             LLVMBuildBr(self.builder, bb_before_loop);
@@ -555,8 +627,11 @@ impl Codegen {
         let bb_before_loop = LLVMAppendBasicBlock(func,
                                                   CString::new("before_loop").unwrap().as_ptr());
         let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
+        let bb_step = LLVMAppendBasicBlock(func, CString::new("step").unwrap().as_ptr());
         let bb_after_loop = LLVMAppendBasicBlock(func,
                                                  CString::new("after_loop").unwrap().as_ptr());
+        self.continue_labels.push_back(bb_step);
+        self.break_labels.push_back(bb_after_loop);
         try!(self.gen(init));
 
         LLVMBuildBr(self.builder, bb_before_loop);
@@ -572,17 +647,16 @@ impl Codegen {
                     v
                 }
             };
-            LLVMBuildICmp(self.builder,
-                          llvm::LLVMIntPredicate::LLVMIntNE,
-                          val,
-                          LLVMConstNull(LLVMTypeOf(val)),
-                          CString::new("eql").unwrap().as_ptr())
+            self.val_to_bool(val)
         };
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
-        // loop block
+
         try!(self.gen(body));
+        LLVMBuildBr(self.builder, bb_step);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_step);
         try!(self.gen(step));
         if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
            ptr::null_mut() {
@@ -597,12 +671,21 @@ impl Codegen {
     unsafe fn gen_unary_op(&mut self, expr: &node::AST, op: &node::CUnaryOps) -> CodegenResult {
         fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
             match ast.kind {
-                node::ASTKind::Load(ref var) => var, 
+                node::ASTKind::Load(ref var) |
+                node::ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => var, 
                 _ => ast,
             }
         }
         match *op {
+            node::CUnaryOps::LNot => {
+                let (val, ty) = try!(self.gen(expr));
+                Ok((self.val_to_bool_not(val), ty))
+            }
             node::CUnaryOps::Deref => self.gen_load(expr),
+            node::CUnaryOps::Minus => {
+                let (val, ty) = try!(self.gen(expr));
+                Ok((LLVMBuildNeg(self.builder, val, CString::new("minus").unwrap().as_ptr()), ty))
+            }
             node::CUnaryOps::Inc => {
                 let before_inc = try!(self.gen(expr));
                 try!(self.gen_assign(retrieve_from_load(expr),
@@ -654,19 +737,55 @@ impl Codegen {
         let lhsty_sz = lhsty.calc_size();
         let rhsty_sz = rhsty.calc_size();
 
-        match rhsty {
-            Type::Ptr(elem_ty) |
-            Type::Array(elem_ty, _) => {
+        match (lhsty.clone(), rhsty.clone()) {
+            (Type::Ptr(_), Type::Ptr(_)) |
+            (Type::Array(_, _), Type::Ptr(_)) |
+            (Type::Ptr(_), Type::Array(_, _)) |
+            (Type::Array(_, _), Type::Array(_, _)) => {
+                let castlhs = self.typecast(lhs, LLVMInt64Type());
+                let castrhs = self.typecast(rhs, LLVMInt64Type());
+                return Ok((self.gen_int_binary_op(castlhs, castrhs, op),
+                           Some(Type::LLong(Sign::Signed))));
+            }
+            (Type::Char(_), Type::Ptr(elem_ty)) |
+            (Type::Char(_), Type::Array(elem_ty, _)) |
+            (Type::Short(_), Type::Ptr(elem_ty)) |
+            (Type::Short(_), Type::Array(elem_ty, _)) |
+            (Type::Int(_), Type::Ptr(elem_ty)) |
+            (Type::Int(_), Type::Array(elem_ty, _)) |
+            (Type::Long(_), Type::Ptr(elem_ty)) |
+            (Type::Long(_), Type::Array(elem_ty, _)) |
+            (Type::LLong(_), Type::Ptr(elem_ty)) |
+            (Type::LLong(_), Type::Array(elem_ty, _)) => {
                 return self.gen_ptr_binary_op(rhs, lhs, Type::Ptr(elem_ty.clone()), op);
             }
-            _ => {}
-        }
-        match lhsty {
-            Type::Ptr(elem_ty) |
-            Type::Array(elem_ty, _) => {
+            (Type::Ptr(elem_ty), Type::Char(_)) |
+            (Type::Array(elem_ty, _), Type::Char(_)) |
+            (Type::Ptr(elem_ty), Type::Short(_)) |
+            (Type::Array(elem_ty, _), Type::Short(_)) |
+            (Type::Ptr(elem_ty), Type::Int(_)) |
+            (Type::Array(elem_ty, _), Type::Int(_)) |
+            (Type::Ptr(elem_ty), Type::Long(_)) |
+            (Type::Array(elem_ty, _), Type::Long(_)) |
+            (Type::Ptr(elem_ty), Type::LLong(_)) |
+            (Type::Array(elem_ty, _), Type::LLong(_)) => {
                 return self.gen_ptr_binary_op(lhs, rhs, Type::Ptr(elem_ty.clone()), op);
             }
-            Type::Char(_) | Type::Short(_) | Type::Int(_) | Type::Long(_) | Type::LLong(_) => {
+            (Type::Double, _) |
+            (Type::Float, _) => {
+                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
+                return Ok((self.gen_double_binary_op(lhs, castrhs, op), Some(lhsty)));
+            }
+            (_, Type::Double) |
+            (_, Type::Float) => {
+                let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
+                return Ok((self.gen_double_binary_op(castlhs, rhs, op), Some(rhsty)));
+            }
+            (Type::Char(_), _) |
+            (Type::Short(_), _) |
+            (Type::Int(_), _) |
+            (Type::Long(_), _) |
+            (Type::LLong(_), _) => {
                 if lhsty_sz < rhsty_sz {
                     let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
                     return Ok((self.gen_int_binary_op(castlhs, rhs, op), Some(rhsty)));
@@ -933,6 +1052,82 @@ impl Codegen {
             Some(ty)))
     }
 
+    unsafe fn gen_double_binary_op(&mut self,
+                                   lhs: LLVMValueRef,
+                                   rhs: LLVMValueRef,
+                                   op: &node::CBinOps)
+                                   -> LLVMValueRef {
+        match *op {
+            node::CBinOps::Add => {
+                LLVMBuildFAdd(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fadd").unwrap().as_ptr())
+            }
+            node::CBinOps::Sub => {
+                LLVMBuildFSub(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fsub").unwrap().as_ptr())
+            }
+            node::CBinOps::Mul => {
+                LLVMBuildFMul(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fmul").unwrap().as_ptr())
+            }
+            node::CBinOps::Div => {
+                LLVMBuildFDiv(self.builder,
+                              lhs,
+                              rhs,
+                              CString::new("fdiv").unwrap().as_ptr())
+            }
+            node::CBinOps::Eq => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOEQ,
+                              lhs,
+                              rhs,
+                              CString::new("feql").unwrap().as_ptr())
+            }
+            node::CBinOps::Ne => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealONE,
+                              lhs,
+                              rhs,
+                              CString::new("fne").unwrap().as_ptr())
+            }
+            node::CBinOps::Lt => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOLT,
+                              lhs,
+                              rhs,
+                              CString::new("flt").unwrap().as_ptr())
+            }
+            node::CBinOps::Gt => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOGT,
+                              lhs,
+                              rhs,
+                              CString::new("fgt").unwrap().as_ptr())
+            }
+            node::CBinOps::Le => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOLE,
+                              lhs,
+                              rhs,
+                              CString::new("fle").unwrap().as_ptr())
+            }
+            node::CBinOps::Ge => {
+                LLVMBuildFCmp(self.builder,
+                              llvm::LLVMRealPredicate::LLVMRealOGE,
+                              lhs,
+                              rhs,
+                              CString::new("fge").unwrap().as_ptr())
+            }
+            _ => ptr::null_mut(),
+        }
+    }
+
     unsafe fn gen_ternary_op(&mut self,
                              cond: &node::AST,
                              then_expr: &node::AST,
@@ -1159,12 +1354,26 @@ impl Codegen {
                           llvm_func,
                           args_val_ptr,
                           args_len as u32,
-                          CString::new("funccall").unwrap().as_ptr()),
+                          CString::new("").unwrap().as_ptr()),
             Some((*func_retty).clone())))
+    }
+    unsafe fn gen_continue(&mut self) -> CodegenResult {
+        let continue_bb = *self.continue_labels.back().unwrap();
+        LLVMBuildBr(self.builder, continue_bb);
+        Ok((ptr::null_mut(), None))
+    }
+
+    unsafe fn gen_break(&mut self) -> CodegenResult {
+        let break_bb = *self.break_labels.back().unwrap();
+        LLVMBuildBr(self.builder, break_bb);
+        Ok((ptr::null_mut(), None))
     }
 
     unsafe fn gen_return(&mut self, retval: LLVMValueRef) -> CodegenResult {
-        Ok((LLVMBuildRet(self.builder, retval), None))
+        Ok((LLVMBuildRet(self.builder,
+                         self.typecast(retval,
+                                       LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(self.cur_func.unwrap()))))),
+            None))
     }
 
     pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> CodegenResult {
@@ -1214,6 +1423,14 @@ impl Codegen {
                 return LLVMBuildFPToSI(self.builder, val, to, inst_name);
             }
             llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => {
+                match LLVMGetTypeKind(to) {
+                    llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                        return LLVMBuildPtrToInt(self.builder, val, to, inst_name);
+                    }
+                    _ => {}
+                }
+            }
             _ => {}
         }
         LLVMBuildTruncOrBitCast(self.builder, val, to, inst_name)
@@ -1225,7 +1442,7 @@ impl Codegen {
             &Type::Char(_) => LLVMInt8Type(),
             &Type::Short(_) => LLVMInt16Type(),
             &Type::Int(_) => LLVMInt32Type(),
-            &Type::Long(_) => LLVMInt32Type(),
+            &Type::Long(_) => LLVMInt64Type(),
             &Type::LLong(_) => LLVMInt64Type(),
             &Type::Float => LLVMFloatType(),
             &Type::Double => LLVMDoubleType(),
@@ -1266,7 +1483,8 @@ impl Codegen {
                                 fields: &Vec<node::AST>,
                                 fields_names_map: &mut HashMap<String, u32>,
                                 fields_llvm_types: &mut Vec<LLVMTypeRef>,
-                                fields_types: &mut Vec<Type>)
+                                fields_types: &mut Vec<Type>,
+                                is_struct: bool)
                                 -> (bool, LLVMTypeRef) {
         // returns (does_the_rectype_already_exists?, LLVMStructType)
         let new_struct: LLVMTypeRef = {
@@ -1282,6 +1500,14 @@ impl Codegen {
                 LLVMStructCreateNamed(self.context, CString::new(name.as_str()).unwrap().as_ptr())
             }
         };
+
+        self.llvm_struct_map
+            .insert(name.to_string(),
+                    RectypeInfo::new(HashMap::new(),
+                                     Vec::new(),
+                                     Vec::new(),
+                                     new_struct,
+                                     is_struct));
 
         // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
@@ -1300,12 +1526,12 @@ impl Codegen {
         let mut fields_names_map: HashMap<String, u32> = HashMap::new();
         let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
         let mut fields_types: Vec<Type> = Vec::new();
-        let (exist, new_struct) =
-            self.make_rectype_base(name,
-                                   fields,
-                                   &mut fields_names_map,
-                                   &mut fields_llvm_types,
-                                   &mut fields_types);
+        let (exist, new_struct) = self.make_rectype_base(name,
+                                                         fields,
+                                                         &mut fields_names_map,
+                                                         &mut fields_llvm_types,
+                                                         &mut fields_types,
+                                                         true);
         if exist {
             return new_struct;
         }
@@ -1331,12 +1557,12 @@ impl Codegen {
         let mut fields_names_map: HashMap<String, u32> = HashMap::new();
         let mut fields_llvm_types: Vec<LLVMTypeRef> = Vec::new();
         let mut fields_types: Vec<Type> = Vec::new();
-        let (exist, new_struct) =
-            self.make_rectype_base(name,
-                                   fields,
-                                   &mut fields_names_map,
-                                   &mut fields_llvm_types,
-                                   &mut fields_types);
+        let (exist, new_struct) = self.make_rectype_base(name,
+                                                         fields,
+                                                         &mut fields_names_map,
+                                                         &mut fields_llvm_types,
+                                                         &mut fields_types,
+                                                         true);
         if exist {
             return new_struct;
         }

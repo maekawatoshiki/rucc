@@ -17,19 +17,37 @@ fn main() {
         let ref input_file_name = args[1];
         let ast = parser::Parser::run_file(input_file_name.to_string());
 
-        // for node in &ast {
-        //     node.show();
-        // }
+        // DEBUG: for node in &ast {
+        // DEBUG:     node.show();
+        // DEBUG: }
 
-        println!("\nllvm-ir test output:");
+        // DEBUG: println!("\nllvm-ir test output:");
         unsafe {
             let mut codegen = codegen::Codegen::new("rucc");
             codegen.run(ast);
 
             let output_file_name = Regex::new(r"\..*$")
                 .unwrap()
-                .replace_all(input_file_name, ".ll");
-            codegen.write_llvmir_to_file(output_file_name.to_string().as_str());
+                .replace_all(input_file_name, ".bc");
+            codegen.write_llvm_bitcode_to_file(output_file_name.to_string().as_str());
+        }
+    }
+}
+
+
+#[test]
+fn compile_examples() {
+    use std::fs;
+
+    let examples_paths = match fs::read_dir("example") {
+        Ok(paths) => paths,
+        Err(e) => panic!(format!("error: {:?}", e.kind())),
+    };
+    for path in examples_paths {
+        let name = path.unwrap().path().to_str().unwrap().to_string();
+        let ast_tree = parser::Parser::run_file(name);
+        unsafe {
+            codegen::Codegen::new("rucc").run(ast_tree);
         }
     }
 }
