@@ -6,6 +6,8 @@ use rucc::codegen;
 extern crate regex;
 use regex::Regex;
 
+extern crate ansi_term;
+use self::ansi_term::Colour;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -31,6 +33,7 @@ fn main() {
                 .replace_all(input_file_name, ".bc");
             codegen.write_llvm_bitcode_to_file(output_file_name.to_string().as_str());
         }
+        println!("{}", Colour::Green.paint("Compiling exited successfully."));
     }
 }
 

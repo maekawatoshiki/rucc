@@ -28,6 +28,7 @@ pub struct Parser<'a> {
     lexer: &'a mut Lexer,
     err_counts: usize,
     env: VecDeque<HashMap<String, AST>>,
+    var_func_ty: VecDeque<HashMap<String, Type>>,
     tags: VecDeque<HashMap<String, Type>>,
 }
 
@@ -55,17 +56,21 @@ macro_rules! ident_val {
     }
 }
 
+
 impl<'a> Parser<'a> {
     pub fn new(lexer: &'a mut Lexer) -> Parser<'a> {
         let mut env = VecDeque::new();
+        let mut var_func_ty = VecDeque::new();
         let mut tags = VecDeque::new();
         env.push_back(HashMap::new());
+        var_func_ty.push_back(HashMap::new());
         tags.push_back(HashMap::new());
 
         Parser {
             lexer: lexer,
             err_counts: 0,
             env: env,
+            var_func_ty: var_func_ty,
             tags: tags,
         }
     }
@@ -78,10 +83,6 @@ impl<'a> Parser<'a> {
                  *self.lexer.cur_line.back().unwrap(),
                  msg)
                 .unwrap();
-        // writeln!(&mut stderr(),
-        //          "{}",
-        //          self.lexer.get_surrounding_code_with_err_point())
-        //         .unwrap();
     }
     fn show_error_token(&mut self, token: &Token, msg: &str) {
         self.err_counts += 1;
@@ -159,19 +160,28 @@ impl<'a> Parser<'a> {
     }
     fn read_func_def(&mut self) -> ParseR<AST> {
         let localenv = (*self.env.back().unwrap()).clone();
+        let localvft = (*self.var_func_ty.back().unwrap()).clone();
         let localtags = (*self.tags.back().unwrap()).clone();
         self.env.push_back(localenv);
+        self.var_func_ty.push_back(localvft);
         self.tags.push_back(localtags);
-        let retty = try!(self.read_type_spec()).0;
-        let (functy, name, param_names) = try!(self.read_declarator(&retty));
+
+        let ret_ty = try!(self.read_type_spec()).0;
+        let (functy, name, param_names) = try!(self.read_declarator(&ret_ty));
+        // TODO: [0] is global env, [1] is local env. so we have to insert to both.
+        self.var_func_ty[0].insert(name.clone(), functy.clone());
+        self.var_func_ty[1].insert(name.clone(), functy.clone());
 
         if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
             let peek = self.peek_token();
             self.show_error_token(&try!(peek), "expected '('");
         }
         let body = try!(self.read_func_body(&functy));
+
         self.env.pop_back();
+        self.var_func_ty.pop_back();
         self.tags.pop_back();
+
         Ok(AST::new(ASTKind::FuncDef(functy,
                                      if param_names.is_none() {
                                          Vec::new()
@@ -509,6 +519,10 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            self.var_func_ty
+                .back_mut()
+                .unwrap()
+                .insert(name.clone(), ty.clone());
             ast.push(AST::new(ASTKind::VariableDecl(ty, name, sclass.clone(), init),
                               *self.lexer.cur_line.back().unwrap()));
 
@@ -632,6 +646,10 @@ impl<'a> Parser<'a> {
             }
 
             let (ty, name) = try!(self.read_func_param());
+            self.var_func_ty
+                .back_mut()
+                .unwrap()
+                .insert(name.clone(), ty.clone());
             paramtypes.push(ty);
             paramnames.push(name);
             if try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
@@ -1276,23 +1294,33 @@ impl<'a> Parser<'a> {
                                    *self.lexer.cur_line.back().unwrap()))
             }
             TokenKind::Symbol(Symbol::Ampersand) => {
-                return Ok(retrieve_from_load(&try!(self.read_cast())))
+                return Ok(AST::new(ASTKind::UnaryOp(Rc::new(retrieve_from_load(&try!(self.read_cast()))),
+                                                    node::CUnaryOps::Addr),
+                                   *self.lexer.cur_line.back().unwrap()))
             }
             TokenKind::Symbol(Symbol::Sizeof) => {
                 // TODO: must fix this sloppy implementation
-                try!(self.lexer.skip_symbol(Symbol::OpeningParen));
-                let tok = try!(self.lexer.peek());
-                assert!(self.is_type(&tok));
-                let (basety, _) = try!(self.read_type_spec());
-                let (ty, _, _) = try!(self.read_declarator(&basety));
-                try!(self.lexer.skip_symbol(Symbol::ClosingParen));
-                return Ok(AST::new(ASTKind::Int(ty.calc_size() as i64),
-                                   *self.lexer.cur_line.back().unwrap()));
+                return self.read_sizeof();
             }
             _ => {}
         }
         self.lexer.unget(tok);
         self.read_postfix()
+    }
+    fn read_sizeof(&mut self) -> ParseR<AST> {
+        let tok = try!(self.lexer.get());
+        let peek = try!(self.lexer.peek());
+        if matches!(tok.kind, TokenKind::Symbol(Symbol::OpeningParen)) && self.is_type(&peek) {
+            let (basety, _) = try!(self.read_type_spec());
+            let (ty, _, _) = try!(self.read_declarator(&basety));
+            try!(self.lexer.skip_symbol(Symbol::ClosingParen));
+            return Ok(AST::new(ASTKind::Int(ty.calc_size() as i64),
+                               *self.lexer.cur_line.back().unwrap()));
+        }
+        self.lexer.unget(tok);
+        let expr = try!(self.read_unary());
+        Ok(AST::new(ASTKind::Int(try!(self.calc_sizeof(&expr)) as i64),
+                    *self.lexer.cur_line.back().unwrap()))
     }
     fn read_postfix(&mut self) -> ParseR<AST> {
         let mut ast = try!(self.read_primary());
@@ -1427,9 +1455,8 @@ impl<'a> Parser<'a> {
             TokenKind::String(s) => {
                 Ok(AST::new(ASTKind::String(s), *self.lexer.cur_line.back().unwrap()))
             }
-            TokenKind::Char => {
-                let ch = tok.val.bytes().nth(0);
-                Ok(AST::new(ASTKind::Char(if ch.is_some() { ch.unwrap() } else { 0 } as i32),
+            TokenKind::Char(ch) => {
+                Ok(AST::new(ASTKind::Char(ch as i32),
                             *self.lexer.cur_line.back().unwrap()))
             }
             TokenKind::Symbol(sym) => {
@@ -1458,5 +1485,91 @@ impl<'a> Parser<'a> {
                 Err(Error::Something)
             }
         }
+    }
+
+    fn usual_binary_ty_cov(&mut self, lhs: Type, rhs: Type) -> Type {
+        if lhs.calc_size() < rhs.calc_size() {
+            rhs
+        } else {
+            lhs
+        }
+    }
+    fn get_binary_expr_ty(&mut self, lhs: &AST, rhs: &AST, op: &node::CBinOps) -> ParseR<Type> {
+        fn cast(ty: Type) -> Type {
+            match ty {
+                Type::Array(elem_ty, _) => Type::Ptr(elem_ty),
+                Type::Func(_, _, _) => Type::Ptr(Rc::new(ty)),
+                _ => ty,
+            }
+        }
+        let lhs_ty = cast(try!(self.get_expr_returning_ty(lhs)));
+        let rhs_ty = cast(try!(self.get_expr_returning_ty(rhs)));
+        if matches!(lhs_ty, Type::Ptr(_)) && matches!(rhs_ty, Type::Ptr(_)) {
+            if matches!(op, &node::CBinOps::Sub) {
+                return Ok(Type::Long(Sign::Signed));
+            }
+            return Ok(Type::Int(Sign::Signed));
+        }
+        if matches!(lhs_ty, Type::Ptr(_)) {
+            return Ok(lhs_ty);
+        }
+        if matches!(rhs_ty, Type::Ptr(_)) {
+            return Ok(rhs_ty);
+        }
+        return Ok(self.usual_binary_ty_cov(lhs_ty, rhs_ty));
+    }
+    fn get_expr_returning_ty(&mut self, ast: &AST) -> ParseR<Type> {
+        let size = match ast.kind {
+            ASTKind::Int(_) => Type::Int(Sign::Signed),
+            ASTKind::Float(_) => Type::Double,
+            ASTKind::Char(_) => Type::Char(Sign::Signed),
+            ASTKind::String(ref s) => {
+                Type::Array(Rc::new(Type::Char(Sign::Signed)), s.len() as i32 + 1)
+            }
+            ASTKind::Load(ref v) => try!(self.get_expr_returning_ty(&*v)),
+            ASTKind::Variable(ref name) => {
+                match self.var_func_ty
+                          .back()
+                          .unwrap()
+                          .clone()
+                          .get(name.as_str()) {
+                    Some(ref ty) => (**ty).clone(),
+                    None => {
+                        let peek = try!(self.lexer.peek());
+                        self.show_error_token(&peek, "not found variable or function");
+                        return Err(Error::Something);
+                    }
+                }
+            }
+            ASTKind::UnaryOp(_, node::CUnaryOps::LNot) => Type::Int(Sign::Signed),
+            ASTKind::UnaryOp(ref expr, node::CUnaryOps::Minus) |
+            ASTKind::UnaryOp(ref expr, node::CUnaryOps::Inc) |
+            ASTKind::UnaryOp(ref expr, node::CUnaryOps::Dec) |
+            ASTKind::UnaryOp(ref expr, node::CUnaryOps::BNot) => {
+                try!(self.get_expr_returning_ty(&*expr))
+            }
+            ASTKind::UnaryOp(ref expr, node::CUnaryOps::Deref) => {
+                try!(self.get_expr_returning_ty(&*expr))
+                    .get_elem_ty()
+                    .unwrap()
+            }
+            ASTKind::UnaryOp(ref expr, node::CUnaryOps::Addr) => {
+                Type::Ptr(Rc::new(try!(self.get_expr_returning_ty(&*expr))))
+            }
+            ASTKind::BinaryOp(ref lhs, ref rhs, ref op) => {
+                try!(self.get_binary_expr_ty(&*lhs, &*rhs, &*op))
+            }
+            ASTKind::TernaryOp(_, ref then, _) => try!(self.get_expr_returning_ty(&*then)),
+            ASTKind::FuncCall(ref func, _) => {
+                let func_ty = try!(self.get_expr_returning_ty(func));
+                func_ty.get_return_ty().unwrap()
+            }
+            _ => panic!(),
+        };
+        Ok(size)
+    }
+    fn calc_sizeof(&mut self, ast: &AST) -> ParseR<usize> {
+        let ty = try!(self.get_expr_returning_ty(ast));
+        Ok(ty.calc_size())
     }
 }

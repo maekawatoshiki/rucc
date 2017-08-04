@@ -69,7 +69,6 @@ pub struct Codegen {
     llvm_struct_map: HashMap<String, RectypeInfo>,
     break_labels: VecDeque<LLVMBasicBlockRef>,
     continue_labels: VecDeque<LLVMBasicBlockRef>,
-    _data_layout: *const i8,
     cur_func: Option<LLVMValueRef>,
 }
 
@@ -113,7 +112,6 @@ impl Codegen {
             llvm_struct_map: HashMap::new(),
             continue_labels: VecDeque::new(),
             break_labels: VecDeque::new(),
-            _data_layout: LLVMGetDataLayout(module),
             cur_func: None,
         }
     }
@@ -682,6 +680,7 @@ impl Codegen {
                 Ok((self.val_to_bool_not(val), ty))
             }
             node::CUnaryOps::Deref => self.gen_load(expr),
+            node::CUnaryOps::Addr => self.gen(expr),
             node::CUnaryOps::Minus => {
                 let (val, ty) = try!(self.gen(expr));
                 Ok((LLVMBuildNeg(self.builder, val, CString::new("minus").unwrap().as_ptr()), ty))
@@ -904,7 +903,7 @@ impl Codegen {
     unsafe fn gen_assign(&mut self, lhsast: &node::AST, rhsast: &node::AST) -> CodegenResult {
         let (dst, ptr_dst_ty) = try!(self.gen(lhsast));
         // self.gen returns Ptr(real_type)
-        let dst_ty = match ptr_dst_ty.unwrap().get_ptr_elem_ty() { 
+        let dst_ty = match ptr_dst_ty.unwrap().get_elem_ty() { 
             Some(ok) => ok,
             None => {
                 return Err(Error::MsgWithLine("gen_assign: ptr_dst_ty must be a pointer to the value's type".to_string(),
@@ -1187,13 +1186,14 @@ impl Codegen {
                                    field_name: String)
                                    -> CodegenResult {
         let (strct, ptr_ty) = try!(self.gen(expr));
-        let ty = ptr_ty.unwrap().get_ptr_elem_ty().or_else(|| 
-            error::error_exit(expr.line,
-                              "gen_assign: ptr_dst_ty must be a pointer to the value's type")).unwrap();
-        let strct_name = self.get_struct_name(&ty);
+        let ty = ptr_ty
+            .unwrap()
+            .get_elem_ty()
+            .or_else(|| panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type"))
+            .unwrap();
+        let strct_name = ty.get_name();
         assert!(strct_name.is_some());
 
-        // let &(ref fieldmap, ref fieldtypes, ref llvm_fieldtypes, llvm_struct_ty, is_struct) =
         let ref rectype = self.llvm_struct_map
             .get(strct_name.unwrap().as_str())
             .unwrap();
@@ -1581,12 +1581,5 @@ impl Codegen {
                                      new_struct,
                                      false));
         new_struct
-    }
-    unsafe fn get_struct_name(&mut self, ty: &Type) -> Option<String> {
-        match ty {
-            &Type::Struct(ref name, _) => Some(name.to_string()),
-            &Type::Union(ref name, _, _) => Some(name.to_string()),
-            _ => None,
-        }
     }
 }

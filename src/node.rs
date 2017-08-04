@@ -82,6 +82,7 @@ pub enum CUnaryOps {
     Dec,
     Deref,
     Addr,
+    Sizeof,
     // TODO: add Cast, Sizeof
 }
 

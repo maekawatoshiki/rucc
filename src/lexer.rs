@@ -110,7 +110,7 @@ pub enum TokenKind {
     IntNumber(i64),
     FloatNumber(f64),
     String(String),
-    Char,
+    Char(char),
     Symbol(Symbol),
     Newline,
 }
@@ -136,7 +136,6 @@ macro_rules! ident_mut_val {
 pub struct Token {
     pub kind: TokenKind,
     pub space: bool, // leading space
-    pub val: String,
     pub macro_position: usize,
     pub hideset: HashSet<String>,
     pub pos: usize,
@@ -144,11 +143,10 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, val: &str, macro_position: usize, pos: usize, line: i32) -> Token {
+    pub fn new(kind: TokenKind, macro_position: usize, pos: usize, line: i32) -> Token {
         Token {
             kind: kind,
             space: false,
-            val: val.to_string(),
             macro_position: macro_position,
             hideset: HashSet::new(),
             pos: pos,
@@ -274,7 +272,7 @@ impl Lexer {
         next_token_is_expect
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
-        let tok = try!(self.get());
+        let tok = try!(self.get_token());
         Ok(if tok.kind == TokenKind::Keyword(keyword) {
                true
            } else {
@@ -283,7 +281,7 @@ impl Lexer {
            })
     }
     pub fn skip_symbol(&mut self, sym: Symbol) -> ParseR<bool> {
-        let tok = try!(self.get());
+        let tok = try!(self.get_token());
         Ok(if tok.kind == TokenKind::Symbol(sym) {
                true
            } else {
@@ -319,7 +317,6 @@ impl Lexer {
         }
         *self.peek_pos.back_mut().unwrap() -= 1;
         Token::new(TokenKind::Identifier(ident),
-                   "",
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -360,7 +357,6 @@ impl Lexer {
 
             let f: f64 = num.parse().unwrap();
             Token::new(TokenKind::FloatNumber(f),
-                       "",
                        0,
                        pos,
                        *self.cur_line.back_mut().unwrap())
@@ -373,7 +369,6 @@ impl Lexer {
                 self.read_dec_num(num.as_str())
             };
             Token::new(TokenKind::IntNumber(i),
-                       "",
                        0,
                        pos,
                        *self.cur_line.back_mut().unwrap())
@@ -414,7 +409,6 @@ impl Lexer {
         self.peek_next();
         *self.cur_line.back_mut().unwrap() += 1;
         Token::new(TokenKind::Newline,
-                   "",
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -453,7 +447,6 @@ impl Lexer {
             _ => {}
         };
         Token::new(TokenKind::Identifier(sym),
-                   "",
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -498,7 +491,6 @@ impl Lexer {
             }
         }
         Token::new(TokenKind::String(s),
-                   "",
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -506,19 +498,19 @@ impl Lexer {
     fn read_char_literal(&mut self) -> Token {
         let pos = *self.peek_pos.back().unwrap();
         self.peek_next(); // '\''
-        let c = self.peek_next();
-        let mut s = String::new();
-        s.push(if c == '\\' {
-                   self.read_escaped_char()
-               } else {
-                   c
-               });
+        let c = {
+            let c = self.peek_next();
+            if c == '\\' {
+                self.read_escaped_char()
+            } else {
+                c
+            }
+        };
         if self.peek_next() != '\'' {
             error::error_exit(*self.cur_line.back().unwrap(),
                               "missing terminating \' char");
         }
-        Token::new(TokenKind::Char,
-                   s.as_str(),
+        Token::new(TokenKind::Char(c),
                    0,
                    pos,
                    *self.cur_line.back_mut().unwrap())
@@ -606,7 +598,7 @@ impl Lexer {
         let val = ident_val!(token);
 
         if val == "sizeof" {
-            return Token::new(TokenKind::Symbol(Symbol::Sizeof), "", 0, pos, line);
+            return Token::new(TokenKind::Symbol(Symbol::Sizeof), 0, pos, line);
         }
 
         if val.len() > 0 && val.chars().nth(0).unwrap().is_alphanumeric() {
@@ -642,7 +634,7 @@ impl Lexer {
                 "return" => TokenKind::Keyword(Keyword::Return),
                 _ => return token,
             };
-            return Token::new(keyw, "", 0, pos, line);
+            return Token::new(keyw, 0, pos, line);
         }
 
         let symbol = match val.as_str() {
@@ -696,7 +688,7 @@ impl Lexer {
             _ => return token,
         };
 
-        Token::new(symbol, "", 0, pos, line)
+        Token::new(symbol, 0, pos, line)
     }
 
     fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
@@ -739,18 +731,22 @@ impl Lexer {
         let mut string = String::new();
         for token in tokens {
             string += format!("{}{}",
-                              (if token.space { " " } else { "" }),
+                              (if token.space && !string.is_empty() {
+                                   " "
+                               } else {
+                                   ""
+                               }),
                               match token.kind {
                                   TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
                                   TokenKind::IntNumber(ref i) => format!("{}", *i),
                                   TokenKind::FloatNumber(ref f) => format!("{}", *f),
-                                  TokenKind::Identifier(ref i) => format!("{}", i),
-                                  _ => token.val.to_string(),
+                                  TokenKind::Identifier(ref i) => format!("{}", *i),
+                                  TokenKind::Char(ref c) => format!("\'{}\'", *c),
+                                  _ => "".to_string(),
                               })
                     .as_str();
         }
         Token::new(TokenKind::String(string),
-                   "",
                    0,
                    0,
                    *self.cur_line.back_mut().unwrap())
@@ -801,7 +797,7 @@ impl Lexer {
                     let l = self.buf.back().unwrap().len();
                     self.unget_all(args[position].clone());
                     while self.buf.back().unwrap().len() > l {
-                        expanded.push(try!(self.get()));
+                        expanded.push(try!(self.get_token()));
                     }
                 }
             } else {
@@ -833,19 +829,31 @@ impl Lexer {
                          Macro::Object(ref body) => self.expand_obj_macro(name, body),
                          Macro::FuncLike(ref body) => self.expand_func_macro(name, body),
                      });
-                self.get()
+                self.get_token()
             }
         })
     }
 
-    pub fn get(&mut self) -> ParseR<Token> {
+    // TODO: get_token, get, peek ..., must fix their names or implementation
+    //  because they are difficult to understand
+
+    // used in Lexer only
+    fn get_token(&mut self) -> ParseR<Token> {
         let tok = self.read_token()
+            .and_then(|tok| match &tok.kind {
+                          &TokenKind::Symbol(Symbol::Hash) => {
+                try!(self.read_cpp_directive());
+                self.get_token()
+            }
+                          _ => Ok(tok.clone()),
+                      });
+        self.expand(tok)
+    }
+
+    pub fn get(&mut self) -> ParseR<Token> {
+        self.get_token()
             .and_then(|tok| {
                 match &tok.kind {
-                    &TokenKind::Symbol(Symbol::Hash) => {
-                        try!(self.read_cpp_directive());
-                        self.get()
-                    }
                     &TokenKind::String(ref s) => {
                         if let TokenKind::String(s2) = try!(self.peek()).kind {
                             // TODO: makes no sense...
@@ -861,12 +869,18 @@ impl Lexer {
                     }
                     _ => Ok(tok.clone()),
                 }
-            });
-        self.expand(tok)
+            })
     }
 
+    pub fn peek(&mut self) -> ParseR<Token> {
+        self.get_token()
+            .and_then(|tok| {
+                          self.unget(tok.clone());
+                          Ok(tok)
+                      })
+    }
     pub fn get_e(&mut self) -> Token {
-        let tok = self.get();
+        let tok = self.get_token();
         match tok {
             Ok(ok) => ok,
             Err(_) => {
@@ -875,15 +889,6 @@ impl Lexer {
             }
         }
     }
-
-    pub fn peek(&mut self) -> ParseR<Token> {
-        self.get()
-            .and_then(|tok| {
-                          self.unget(tok.clone());
-                          Ok(tok)
-                      })
-    }
-
     pub fn peek_e(&mut self) -> Token {
         let tok = self.peek();
         match tok {
@@ -1007,7 +1012,7 @@ impl Lexer {
         let mut args: HashMap<String, usize> = HashMap::new();
         let mut count = 0usize;
         loop {
-            let arg = ident_val!(try!(self.get()));
+            let arg = ident_val!(try!(self.get_token()));
             args.insert(arg, count);
             if try!(self.skip_symbol(Symbol::ClosingParen)) {
                 break;
@@ -1077,13 +1082,11 @@ impl Lexer {
         }
         Ok(if self.macro_map.contains_key(ident_val!(tok).as_str()) {
                Token::new(TokenKind::IntNumber(1),
-                          "",
                           0,
                           0,
                           *self.cur_line.back_mut().unwrap())
            } else {
                Token::new(TokenKind::IntNumber(0),
-                          "",
                           0,
                           0,
                           *self.cur_line.back_mut().unwrap())
@@ -1105,7 +1108,6 @@ impl Lexer {
                         } else {
                             // identifier in expr line is replaced with 0i
                             v.push(Token::new(TokenKind::IntNumber(0),
-                                              "",
                                               0,
                                               0,
                                               *self.cur_line.back_mut().unwrap()));
@@ -1121,7 +1123,7 @@ impl Lexer {
         let expr_line = try!(self.read_intexpr_line());
         self.buf.push_back(VecDeque::new());
 
-        self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), "", 0, 0, 0));
+        self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), 0, 0, 0));
         self.unget_all(expr_line);
 
         let node = parser::Parser::new(self).run_as_expr().ok().unwrap();
@@ -1182,11 +1184,7 @@ impl Lexer {
                     "else" | "elif" | "endif" => {
                         let line = *self.cur_line.back_mut().unwrap();
                         self.unget(tok);
-                        self.unget(Token::new(TokenKind::Identifier("#".to_string()),
-                                              "",
-                                              0,
-                                              0,
-                                              line));
+                        self.unget(Token::new(TokenKind::Identifier("#".to_string()), 0, 0, line));
                         return Ok(());
                     }
                     _ => {}
