@@ -123,9 +123,7 @@ impl<'a> Parser<'a> {
         nodes
     }
     pub fn run(&mut self, node: &mut Vec<AST>) {
-        while self.lexer.peek().is_ok() {
-            self.read_toplevel(node);
-        }
+        while matches!(self.read_toplevel(node), Ok(_)) {}
         if self.err_counts > 0 {
             println!("{} error{} generated.",
                      self.err_counts,
@@ -137,26 +135,24 @@ impl<'a> Parser<'a> {
         self.read_expr()
     }
 
-    fn read_toplevel(&mut self, ast: &mut Vec<AST>) {
+    fn read_toplevel(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
         // TODO: refine
-        match self.is_function_def() {
-            Ok(is_func_def) => {
-                if is_func_def {
-                    match self.read_func_def() {
-                        Ok(ok) => ast.push(ok),
-                        Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
-                        Err(_) => {}
-                    }
-                } else {
-                    match self.read_decl(ast) {
-                        Ok(_) => {}
-                        Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
-                        Err(_) => {}
-                    }
+        match try!(self.is_function_def()) {
+            true => {
+                match self.read_func_def() {
+                    Ok(ok) => ast.push(ok),
+                    Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
+                    Err(_) => {}
                 }
             }
-            Err(_) => {}
-        }
+            false => {
+                match self.read_decl(ast) {
+                    Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
+                    _ => {}
+                }
+            }
+        };
+        Ok(())
     }
     fn read_func_def(&mut self) -> ParseR<AST> {
         let localenv = (*self.env.back().unwrap()).clone();

@@ -41,6 +41,7 @@ fn main() {
 #[test]
 fn compile_examples() {
     use std::fs;
+    use std::process::Command;
 
     let examples_paths = match fs::read_dir("example") {
         Ok(paths) => paths,
@@ -48,9 +49,22 @@ fn compile_examples() {
     };
     for path in examples_paths {
         let name = path.unwrap().path().to_str().unwrap().to_string();
-        let ast_tree = parser::Parser::run_file(name);
-        unsafe {
-            codegen::Codegen::new("rucc").run(ast_tree);
-        }
+        Command::new("./rucc.sh")
+            .arg(name.to_string())
+            .arg("--release")
+            .spawn()
+            .expect("failed to run")
+            .wait()
+            .expect("failed to run");
+        let output1 = Command::new("./a.out").output().expect("failed to run");
+        Command::new("clang")
+            .arg(name)
+            .arg("-lm")
+            .spawn()
+            .expect("failed to run")
+            .wait()
+            .expect("failed to run");
+        let output2 = Command::new("./a.out").output().expect("failed to run");
+        assert!(output1 == output2);
     }
 }
