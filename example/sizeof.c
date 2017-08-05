@@ -28,4 +28,12 @@ int main() {
   PRINT_SIZEOF(s + i); 
   PRINT_SIZEOF(main);
   PRINT_SIZEOF(main + 8);
+  PRINT_SIZEOF(puts("hello"));
+  PRINT_SIZEOF(!1);
+  PRINT_SIZEOF(~1);
+  PRINT_SIZEOF(&i);
+  PRINT_SIZEOF(i++);
+  PRINT_SIZEOF(i--);
+  PRINT_SIZEOF(*&f);
+  PRINT_SIZEOF(1 ? 100000000000 : 200000000000);
 }
