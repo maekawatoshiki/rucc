@@ -8,6 +8,7 @@ use std::collections::{HashSet, HashMap};
 use error;
 use parser;
 use parser::{ParseR, Error};
+use node::Bits;
 
 #[derive(Debug, Clone)]
 pub enum Macro {
@@ -107,7 +108,7 @@ pub enum TokenKind {
     MacroParam,
     Keyword(Keyword),
     Identifier(String),
-    IntNumber(i64),
+    IntNumber(i64, Bits),
     FloatNumber(f64),
     String(String),
     Char(char),
@@ -220,6 +221,12 @@ impl Lexer {
     pub fn get_filename(&mut self) -> String {
         self.filename.back().unwrap().to_owned()
     }
+    pub fn get_cur_line(&mut self) -> &i32 {
+        self.cur_line.back().unwrap()
+    }
+    pub fn get_mut_cur_line(&mut self) -> &mut i32 {
+        self.cur_line.back_mut().unwrap()
+    }
     fn peek_get(&mut self) -> Option<char> {
         let peek = self.peek.back_mut().unwrap();
         let peek_pos = *self.peek_pos.back_mut().unwrap();
@@ -316,10 +323,7 @@ impl Lexer {
             };
         }
         *self.peek_pos.back_mut().unwrap() -= 1;
-        Token::new(TokenKind::Identifier(ident),
-                   0,
-                   pos,
-                   *self.cur_line.back_mut().unwrap())
+        Token::new(TokenKind::Identifier(ident), 0, pos, *self.get_cur_line())
     }
     fn read_number_literal(&mut self) -> Token {
         let mut num = String::with_capacity(8);
@@ -356,10 +360,7 @@ impl Lexer {
             }
 
             let f: f64 = num.parse().unwrap();
-            Token::new(TokenKind::FloatNumber(f),
-                       0,
-                       pos,
-                       *self.cur_line.back_mut().unwrap())
+            Token::new(TokenKind::FloatNumber(f), 0, pos, *self.get_cur_line())
         } else {
             let i = if num.len() > 2 && num.chars().nth(1).unwrap() == 'x' {
                 self.read_hex_num(&num[2..])
@@ -368,10 +369,14 @@ impl Lexer {
             } else {
                 self.read_dec_num(num.as_str())
             };
-            Token::new(TokenKind::IntNumber(i),
-                       0,
-                       pos,
-                       *self.cur_line.back_mut().unwrap())
+
+            let max_32bits = 4294967295;
+            let bits = if 0 == (i & !max_32bits) {
+                Bits::Bits32
+            } else {
+                Bits::Bits64
+            };
+            Token::new(TokenKind::IntNumber(i, bits), 0, pos, *self.get_cur_line())
         }
     }
     fn read_dec_num(&mut self, num_literal: &str) -> i64 {
@@ -407,11 +412,8 @@ impl Lexer {
     pub fn read_newline(&mut self) -> Token {
         let pos = *self.peek_pos.back().unwrap();
         self.peek_next();
-        *self.cur_line.back_mut().unwrap() += 1;
-        Token::new(TokenKind::Newline,
-                   0,
-                   pos,
-                   *self.cur_line.back_mut().unwrap())
+        *self.get_mut_cur_line() += 1;
+        Token::new(TokenKind::Newline, 0, pos, *self.get_cur_line())
     }
     pub fn read_symbol(&mut self) -> Token {
         let pos = *self.peek_pos.back().unwrap();
@@ -446,10 +448,7 @@ impl Lexer {
             }
             _ => {}
         };
-        Token::new(TokenKind::Identifier(sym),
-                   0,
-                   pos,
-                   *self.cur_line.back_mut().unwrap())
+        Token::new(TokenKind::Identifier(sym), 0, pos, *self.get_cur_line())
     }
     fn read_escaped_char(&mut self) -> char {
         let c = self.peek_next();
@@ -490,10 +489,7 @@ impl Lexer {
                 _ => s.push(c),
             }
         }
-        Token::new(TokenKind::String(s),
-                   0,
-                   pos,
-                   *self.cur_line.back_mut().unwrap())
+        Token::new(TokenKind::String(s), 0, pos, *self.get_cur_line())
     }
     fn read_char_literal(&mut self) -> Token {
         let pos = *self.peek_pos.back().unwrap();
@@ -510,10 +506,7 @@ impl Lexer {
             error::error_exit(*self.cur_line.back().unwrap(),
                               "missing terminating \' char");
         }
-        Token::new(TokenKind::Char(c),
-                   0,
-                   pos,
-                   *self.cur_line.back_mut().unwrap())
+        Token::new(TokenKind::Char(c), 0, pos, *self.get_cur_line())
     }
 
     pub fn do_read_token(&mut self) -> ParseR<Token> {
@@ -738,7 +731,7 @@ impl Lexer {
                                }),
                               match token.kind {
                                   TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
-                                  TokenKind::IntNumber(ref i) => format!("{}", *i),
+                                  TokenKind::IntNumber(ref i, _) => format!("{}", *i),
                                   TokenKind::FloatNumber(ref f) => format!("{}", *f),
                                   TokenKind::Identifier(ref i) => format!("{}", *i),
                                   TokenKind::Char(ref c) => format!("\'{}\'", *c),
@@ -746,16 +739,13 @@ impl Lexer {
                               })
                     .as_str();
         }
-        Token::new(TokenKind::String(string),
-                   0,
-                   0,
-                   *self.cur_line.back_mut().unwrap())
+        Token::new(TokenKind::String(string), 0, 0, *self.get_cur_line())
     }
     fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
         // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
         let expect_bracket = try!(self.read_token());
         if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
-            error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '('");
+            error::error_exit(*self.get_cur_line(), "expected '('");
         }
 
         let mut args = Vec::new();
@@ -884,8 +874,7 @@ impl Lexer {
         match tok {
             Ok(ok) => ok,
             Err(_) => {
-                error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                  "expected a token, but reach EOF");
+                error::error_exit(*self.get_cur_line(), "expected a token, but reach EOF");
             }
         }
     }
@@ -894,8 +883,7 @@ impl Lexer {
         match tok {
             Ok(ok) => ok,
             Err(_) => {
-                error::error_exit(*self.cur_line.back_mut().unwrap(),
-                                  "expected a token, but reach EOF");
+                error::error_exit(*self.get_cur_line(), "expected a token, but reach EOF");
             }
         }
     }
@@ -953,7 +941,7 @@ impl Lexer {
             if let TokenKind::String(s) = tok.kind {
                 name = s;
             } else {
-                error::error_exit(*self.cur_line.back_mut().unwrap(), "expected '<' or '\"'");
+                error::error_exit(*self.get_cur_line(), "expected '<' or '\"'");
             }
         }
         Ok(name)
@@ -964,9 +952,7 @@ impl Lexer {
         let real_filename = match self.try_include(filename.as_str()) {
             Some(f) => f,
             _ => {
-                println!("error: {}: not found '{}'",
-                         *self.cur_line.back_mut().unwrap(),
-                         filename);
+                println!("error: {}: not found '{}'", *self.get_cur_line(), filename);
                 process::exit(-1)
             }
         };
@@ -1081,15 +1067,15 @@ impl Lexer {
             try!(self.expect_skip_symbol(Symbol::ClosingParen));
         }
         Ok(if self.macro_map.contains_key(ident_val!(tok).as_str()) {
-               Token::new(TokenKind::IntNumber(1),
+               Token::new(TokenKind::IntNumber(1, Bits::Bits32),
                           0,
                           0,
-                          *self.cur_line.back_mut().unwrap())
+                          *self.get_cur_line())
            } else {
-               Token::new(TokenKind::IntNumber(0),
+               Token::new(TokenKind::IntNumber(0, Bits::Bits32),
                           0,
                           0,
-                          *self.cur_line.back_mut().unwrap())
+                          *self.get_cur_line())
            })
     }
     fn read_intexpr_line(&mut self) -> ParseR<Vec<Token>> {
@@ -1107,10 +1093,10 @@ impl Lexer {
                             v.push(try!(self.read_defined_op()));
                         } else {
                             // identifier in expr line is replaced with 0i
-                            v.push(Token::new(TokenKind::IntNumber(0),
+                            v.push(Token::new(TokenKind::IntNumber(0, Bits::Bits32),
                                               0,
                                               0,
-                                              *self.cur_line.back_mut().unwrap()));
+                                              *self.get_cur_line()));
                         }
                     }
                     _ => v.push(tok),
@@ -1182,7 +1168,7 @@ impl Lexer {
             if nest == 0 {
                 match val.as_str() {
                     "else" | "elif" | "endif" => {
-                        let line = *self.cur_line.back_mut().unwrap();
+                        let line = *self.get_cur_line();
                         self.unget(tok);
                         self.unget(Token::new(TokenKind::Identifier("#".to_string()), 0, 0, line));
                         return Ok(());

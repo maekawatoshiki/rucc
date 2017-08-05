@@ -49,6 +49,7 @@ fn compile_examples() {
     };
     for path in examples_paths {
         let name = path.unwrap().path().to_str().unwrap().to_string();
+        println!("testing {}...", name);
         Command::new("./rucc.sh")
             .arg(name.to_string())
             .arg("--release")

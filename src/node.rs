@@ -17,9 +17,17 @@ impl AST {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum Bits {
+    Bits8,
+    Bits16,
+    Bits32,
+    Bits64,
+}
+
 #[derive(Debug, Clone)]
 pub enum ASTKind {
-    Int(i64),
+    Int(i64, Bits),
     Float(f64),
     Char(i32),
     String(String),
@@ -93,7 +101,7 @@ impl AST {
 
     fn eval(&self) -> i64 {
         match self.kind {
-            ASTKind::Int(n) => n,
+            ASTKind::Int(n, _) => n,
             ASTKind::TypeCast(ref e, _) => e.eval(),
             ASTKind::UnaryOp(ref e, CUnaryOps::LNot) => (e.eval() == 0) as i64,
             ASTKind::UnaryOp(ref e, CUnaryOps::BNot) => !e.eval(),
@@ -138,7 +146,7 @@ impl AST {
     }
     pub fn show(&self) {
         match self.kind {
-            ASTKind::Int(n) => print!("{} ", n),
+            ASTKind::Int(n, _) => print!("{} ", n),
             ASTKind::Float(n) => print!("{} ", n),
             ASTKind::Char(c) => print!("'{}' ", c),
             ASTKind::String(ref s) => print!("\"{}\" ", s),

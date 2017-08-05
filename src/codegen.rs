@@ -9,6 +9,7 @@ use self::llvm::core::*;
 use self::llvm::prelude::*;
 
 use node;
+use node::Bits;
 use types::{Type, StorageClass, Sign};
 use error;
 
@@ -178,7 +179,7 @@ impl Codegen {
                     self.gen_return(retval)
                 }
             }
-            node::ASTKind::Int(ref n) => self.make_int(*n as u64, false),
+            node::ASTKind::Int(ref n, ref bits) => self.make_int(*n as u64, &*bits, false),
             node::ASTKind::Float(ref f) => self.make_double(*f),
             node::ASTKind::Char(ref c) => self.make_char(*c),
             node::ASTKind::String(ref s) => self.make_const_str(s),
@@ -640,7 +641,7 @@ impl Codegen {
             let val = {
                 let v = try!(self.gen(cond)).0;
                 if v == ptr::null_mut() {
-                    try!(self.make_int(1, false)).0
+                    try!(self.make_int(1, &Bits::Bits32, false)).0
                 } else {
                     v
                 }
@@ -689,14 +690,14 @@ impl Codegen {
                 let before_inc = try!(self.gen(expr));
                 try!(self.gen_assign(retrieve_from_load(expr),
                     &node::AST::new(node::ASTKind::BinaryOp(Rc::new(expr.clone()), Rc::new(
-                        node::AST::new(node::ASTKind::Int(1), 0)), node::CBinOps::Add),0)));
+                        node::AST::new(node::ASTKind::Int(1, Bits::Bits32), 0)), node::CBinOps::Add),0)));
                 Ok(before_inc)
             }
             node::CUnaryOps::Dec => {
                 let before_dec = try!(self.gen(expr));
                 try!(self.gen_assign(retrieve_from_load(expr),
                     &node::AST::new(node::ASTKind::BinaryOp(Rc::new(expr.clone()), Rc::new(
-                        node::AST::new(node::ASTKind::Int(1), 0)), node::CBinOps::Sub),0)));
+                        node::AST::new(node::ASTKind::Int(1, Bits::Bits32), 0)), node::CBinOps::Sub),0)));
                 Ok(before_dec)
             }
             _ => Ok((ptr::null_mut(), None)),
@@ -1037,7 +1038,7 @@ impl Codegen {
                                   node::CBinOps::Add => rhs,
                                   node::CBinOps::Sub => {
                                       LLVMBuildSub(self.builder,
-                                                   try!(self.make_int(0, false)).0,
+                                                   try!(self.make_int(0, &Bits::Bits32, false)).0,
                                                    rhs,
                                                    CString::new("sub").unwrap().as_ptr())
                                   }
@@ -1259,8 +1260,8 @@ impl Codegen {
                 Type::Array(ref ary_elemty, _) => {
                     return Ok((LLVMBuildGEP(self.builder,
                                             val,
-                                            vec![try!(self.make_int(0, false)).0,
-                                                 try!(self.make_int(0, false)).0]
+                                            vec![try!(self.make_int(0, &Bits::Bits32, false)).0,
+                                                 try!(self.make_int(0, &Bits::Bits32, false)).0]
                                                     .as_mut_slice()
                                                     .as_mut_ptr(),
                                             2,
@@ -1376,9 +1377,14 @@ impl Codegen {
             None))
     }
 
-    pub unsafe fn make_int(&mut self, n: u64, is_unsigned: bool) -> CodegenResult {
-        Ok((LLVMConstInt(LLVMInt32Type(), n, if is_unsigned { 1 } else { 0 }),
-            Some(Type::Int(Sign::Signed))))
+    pub unsafe fn make_int(&mut self, n: u64, bits: &Bits, is_unsigned: bool) -> CodegenResult {
+        let ty = match *bits {
+            Bits::Bits8 => LLVMInt8Type(),
+            Bits::Bits16 => LLVMInt16Type(),
+            Bits::Bits32 => LLVMInt32Type(),
+            Bits::Bits64 => LLVMInt64Type(),
+        };
+        Ok((LLVMConstInt(ty, n, if is_unsigned { 1 } else { 0 }), Some(Type::Int(Sign::Signed))))
     }
     pub unsafe fn make_char(&mut self, n: i32) -> CodegenResult {
         Ok((LLVMConstInt(LLVMInt8Type(), n as u64, 0), Some(Type::Char(Sign::Signed))))
