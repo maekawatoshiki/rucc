@@ -362,12 +362,13 @@ impl Lexer {
             let f: f64 = num.parse().unwrap();
             Token::new(TokenKind::FloatNumber(f), 0, pos, *self.get_cur_line())
         } else {
+            // TODO: suffix supporting
             let i = if num.len() > 2 && num.chars().nth(1).unwrap() == 'x' {
-                self.read_hex_num(&num[2..])
+                self.read_hex_num(&num[2..]).0
             } else if num.chars().nth(0).unwrap() == '0' {
-                self.read_oct_num(&num[1..])
+                self.read_oct_num(&num[1..]).0
             } else {
-                self.read_dec_num(num.as_str())
+                self.read_dec_num(num.as_str()).0
             };
 
             let max_32bits = 4294967295;
@@ -379,35 +380,38 @@ impl Lexer {
             Token::new(TokenKind::IntNumber(i, bits), 0, pos, *self.get_cur_line())
         }
     }
-    fn read_dec_num(&mut self, num_literal: &str) -> i64 {
+    fn read_dec_num(&mut self, num_literal: &str) -> (i64, String) {
         let mut n = 0u64;
+        let mut suffix = "".to_string();
         for c in num_literal.chars() {
             match c {
                 '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as u64,
-                _ => {} // TODO: suffix
+                _ => suffix.push(c), 
             }
         }
-        n as i64
+        (n as i64, suffix)
     }
-    fn read_oct_num(&mut self, num_literal: &str) -> i64 {
+    fn read_oct_num(&mut self, num_literal: &str) -> (i64, String) {
         let mut n = 0i64;
+        let mut suffix = "".to_string();
         for c in num_literal.chars() {
             match c {
                 '0'...'7' => n = n * 8 + c.to_digit(8).unwrap() as i64,
-                _ => {} // TODO: suffix
+                _ => suffix.push(c), 
             }
         }
-        n
+        (n, suffix)
     }
-    fn read_hex_num(&mut self, num_literal: &str) -> i64 {
+    fn read_hex_num(&mut self, num_literal: &str) -> (i64, String) {
         let mut n = 0u64;
+        let mut suffix = "".to_string();
         for c in num_literal.chars() {
             match c {
                 '0'...'9' | 'A'...'F' | 'a'...'f' => n = n * 16 + c.to_digit(16).unwrap() as u64,
-                _ => {} // TODO: suffix
+                _ => suffix.push(c), 
             }
         }
-        n as i64
+        (n as i64, suffix)
     }
     pub fn read_newline(&mut self) -> Token {
         let pos = *self.peek_pos.back().unwrap();
@@ -472,7 +476,7 @@ impl Lexer {
                     }
                     self.peek_next();
                 }
-                self.read_hex_num(hex.as_str()) as i32 as u8 as char
+                self.read_hex_num(hex.as_str()).0 as i32 as u8 as char
             }
             _ => c,
         }
@@ -1021,12 +1025,12 @@ impl Lexer {
             let maybe_macro_name = ident_val!(tok);
             // print!("{}{}", if tok.space { " " } else { "" }, tok.val);
             if args.contains_key(maybe_macro_name.as_str()) {
-                let mut macro_param = tok.clone();
+                let mut macro_param = tok;
                 macro_param.kind = TokenKind::MacroParam;
                 macro_param.macro_position = *args.get(maybe_macro_name.as_str()).unwrap();
                 body.push(macro_param);
             } else {
-                body.push(tok.clone());
+                body.push(tok);
             }
         }
         self.register_funclike_macro(name, body);

@@ -166,7 +166,7 @@ impl Codegen {
             }
             node::ASTKind::TypeCast(ref expr, ref ty) => self.gen_type_cast(expr, ty),
             node::ASTKind::Load(ref expr) => self.gen_load(expr),
-            node::ASTKind::Variable(ref name) => self.gen_var(name),
+            node::ASTKind::Variable(_, ref name) => self.gen_var(name),
             node::ASTKind::ConstArray(ref elems) => self.gen_const_array(elems),
             node::ASTKind::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             node::ASTKind::Continue => self.gen_continue(),
@@ -1290,9 +1290,8 @@ impl Codegen {
         let args_len = args.len();
 
         let func = match ast.kind {
-            node::ASTKind::Variable(ref name) => {
-                let var = self.lookup_var(name);
-                if let Some(varinfo) = var {
+            node::ASTKind::Variable(_, ref name) => {
+                if let Some(varinfo) = self.lookup_var(name) {
                     varinfo
                 } else {
                     return Err(Error::MsgWithLine(format!("gen_func_call: not found function '{}'",
@@ -1301,8 +1300,8 @@ impl Codegen {
                 }
             }
             _ => {
-                let (val, ty_w) = try!(self.gen(ast));
-                VarInfo::new(ty_w.unwrap(), LLVMTypeOf(val), val)
+                let (val, ty) = try!(self.gen(ast));
+                VarInfo::new(ty.unwrap(), LLVMTypeOf(val), val)
             }
         };
 

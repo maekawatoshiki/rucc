@@ -34,7 +34,7 @@ pub enum ASTKind {
     Typedef(Type, String), // from, to ( typedef from to; )
     TypeCast(Rc<AST>, Type),
     Load(Rc<AST>),
-    Variable(String),
+    Variable(Type, String),
     VariableDecl(Type, String, StorageClass, Option<Rc<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
     UnaryOp(Rc<AST>, CUnaryOps),
@@ -161,7 +161,7 @@ impl AST {
                 expr.show();
                 print!(")");
             }
-            ASTKind::Variable(ref name) => print!("{} ", name),
+            ASTKind::Variable(ref ty, ref name) => print!("({:?} {}) ", ty, name),
             ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
                 print!("(var-decl {:?} {:?} {}", ty, sclass, name);
                 if init.is_some() {

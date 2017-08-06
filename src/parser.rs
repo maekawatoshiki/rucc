@@ -28,7 +28,6 @@ pub struct Parser<'a> {
     lexer: &'a mut Lexer,
     err_counts: usize,
     env: VecDeque<HashMap<String, AST>>,
-    var_func_ty: VecDeque<HashMap<String, Type>>,
     tags: VecDeque<HashMap<String, Type>>,
 }
 
@@ -60,17 +59,14 @@ macro_rules! ident_val {
 impl<'a> Parser<'a> {
     pub fn new(lexer: &'a mut Lexer) -> Parser<'a> {
         let mut env = VecDeque::new();
-        let mut var_func_ty = VecDeque::new();
         let mut tags = VecDeque::new();
         env.push_back(HashMap::new());
-        var_func_ty.push_back(HashMap::new());
         tags.push_back(HashMap::new());
 
         Parser {
             lexer: lexer,
             err_counts: 0,
             env: env,
-            var_func_ty: var_func_ty,
             tags: tags,
         }
     }
@@ -156,17 +152,17 @@ impl<'a> Parser<'a> {
     }
     fn read_func_def(&mut self) -> ParseR<AST> {
         let localenv = (*self.env.back().unwrap()).clone();
-        let localvft = (*self.var_func_ty.back().unwrap()).clone();
         let localtags = (*self.tags.back().unwrap()).clone();
         self.env.push_back(localenv);
-        self.var_func_ty.push_back(localvft);
         self.tags.push_back(localtags);
 
         let ret_ty = try!(self.read_type_spec()).0;
-        let (functy, name, param_names) = try!(self.read_declarator(&ret_ty));
+        let (functy, name, param_names) = try!(self.read_declarator(ret_ty));
         // TODO: [0] is global env, [1] is local env. so we have to insert to both.
-        self.var_func_ty[0].insert(name.clone(), functy.clone());
-        self.var_func_ty[1].insert(name.clone(), functy.clone());
+        self.env[0].insert(name.clone(),
+                           AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0));
+        self.env[1].insert(name.clone(),
+                           AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0));
 
         if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
             let peek = self.peek_token();
@@ -175,7 +171,6 @@ impl<'a> Parser<'a> {
         let body = try!(self.read_func_body(&functy));
 
         self.env.pop_back();
-        self.var_func_ty.pop_back();
         self.tags.pop_back();
 
         Ok(AST::new(ASTKind::FuncDef(functy,
@@ -395,20 +390,18 @@ impl<'a> Parser<'a> {
     }
 
     fn get_typedef(&mut self, name: &str) -> ParseR<Option<Type>> {
-        match self.env.back().unwrap().clone().get(name) {
+        match self.env.back().unwrap().get(name) {
             Some(ast) => {
                 match ast.kind {
-                    ASTKind::Typedef(ref from, ref _to) => Ok(Some((*from).clone())),
-                    _ => {
-                        let peek = self.peek_token();
-                        self.show_error_token(&try!(peek),
-                                              format!("not found type '{}'", name).as_str());
-                        Err(Error::Something)
-                    }
+                    ASTKind::Typedef(ref from, ref _to) => return Ok(Some((*from).clone())),
+                    _ => {}
                 }
             }
-            None => Ok(None),
+            None => return Ok(None),
         }
+        let peek = self.peek_token();
+        self.show_error_token(&try!(peek), format!("not found type '{}'", name).as_str());
+        Err(Error::Something)
     }
     fn is_type(&mut self, token: &Token) -> bool {
         if let TokenKind::Keyword(ref keyw) = token.kind {
@@ -422,10 +415,15 @@ impl<'a> Parser<'a> {
                 _ => false,
             }
         } else if let TokenKind::Identifier(ref ident) = token.kind {
-            self.env
-                .back_mut()
-                .unwrap()
-                .contains_key(ident.as_str())
+            match self.env.back().unwrap().get(ident.as_str()) {
+                Some(ast) => {
+                    match ast.kind {
+                        ASTKind::Typedef(_, _) => true,
+                        _ => false,
+                    }
+                }
+                None => false,
+            }
         } else {
             false
         }
@@ -487,19 +485,15 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn read_decl(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
-        let (basety, sclass_w) = try!(self.read_type_spec());
-        let (sclass, is_typedef) = if let Some(sclass) = sclass_w {
-            (sclass.clone(), sclass == StorageClass::Typedef)
-        } else {
-            (StorageClass::Auto, false)
-        };
+        let (basety, sclass) = try!(self.read_type_spec());
+        let is_typedef = sclass == StorageClass::Typedef;
 
         if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
             return Ok(());
         }
 
         loop {
-            let (mut ty, name, _) = try!(self.read_declarator(&basety)); // XXX
+            let (mut ty, name, _) = try!(self.read_declarator(basety.clone())); // XXX
 
             if is_typedef {
                 let typedef = AST::new(ASTKind::Typedef(ty, name.to_string()),
@@ -513,10 +507,11 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-            self.var_func_ty
+            self.env
                 .back_mut()
                 .unwrap()
-                .insert(name.clone(), ty.clone());
+                .insert(name.clone(),
+                        AST::new(ASTKind::Variable(ty.clone(), name.clone()), 0));
             ast.push(AST::new(ASTKind::VariableDecl(ty, name, sclass.clone(), init),
                               *self.lexer.get_cur_line()));
 
@@ -548,7 +543,7 @@ impl<'a> Parser<'a> {
         }
     }
     // returns (declarator type, name, params{for function})
-    fn read_declarator(&mut self, basety: &Type) -> ParseR<(Type, String, Option<Vec<String>>)> {
+    fn read_declarator(&mut self, basety: Type) -> ParseR<(Type, String, Option<Vec<String>>)> {
         if try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
             let peek_tok = try!(self.lexer.peek());
             if self.is_type(&peek_tok) {
@@ -563,12 +558,12 @@ impl<'a> Parser<'a> {
             }
             let t = try!(self.read_declarator_tail(basety));
             self.lexer.unget_all(buf);
-            return self.read_declarator(&t.0);
+            return self.read_declarator(t.0);
         }
 
         if try!(self.lexer.skip_symbol(Symbol::Asterisk)) {
             try!(self.skip_type_qualifiers());
-            return self.read_declarator(&Type::Ptr(Rc::new(basety.clone())));
+            return self.read_declarator(Type::Ptr(Rc::new(basety.clone())));
         }
 
         let tok = try!(self.lexer.get());
@@ -582,7 +577,7 @@ impl<'a> Parser<'a> {
         let (ty, params) = try!(self.read_declarator_tail(basety));
         Ok((ty, "".to_string(), params))
     }
-    fn read_declarator_tail(&mut self, basety: &Type) -> ParseR<(Type, Option<Vec<String>>)> {
+    fn read_declarator_tail(&mut self, basety: Type) -> ParseR<(Type, Option<Vec<String>>)> {
         if try!(self.lexer.skip_symbol(Symbol::OpeningBoxBracket)) {
             return Ok((try!(self.read_declarator_array(basety)), None));
         }
@@ -592,7 +587,7 @@ impl<'a> Parser<'a> {
         Ok((basety.clone(), None))
     }
 
-    fn read_declarator_array(&mut self, basety: &Type) -> ParseR<Type> {
+    fn read_declarator_array(&mut self, basety: Type) -> ParseR<Type> {
         let len: i32;
         if try!(self.lexer.skip_symbol(Symbol::ClosingBoxBracket)) {
             len = -1;
@@ -606,15 +601,15 @@ impl<'a> Parser<'a> {
         let ty = try!(self.read_declarator_tail(basety)).0;
         Ok(Type::Array(Rc::new(ty), len))
     }
-    fn read_declarator_func(&mut self, retty: &Type) -> ParseR<(Type, Option<Vec<String>>)> {
+    fn read_declarator_func(&mut self, retty: Type) -> ParseR<(Type, Option<Vec<String>>)> {
         if self.lexer.peek_keyword_token_is(Keyword::Void) &&
            self.lexer.next_symbol_token_is(Symbol::ClosingParen) {
             try!(self.lexer.expect_skip_keyword(Keyword::Void));
             try!(self.lexer.expect_skip_symbol(Symbol::ClosingParen));
-            return Ok((Type::Func(Rc::new(retty.clone()), Vec::new(), false), None));
+            return Ok((Type::Func(Rc::new(retty), Vec::new(), false), None));
         }
         if try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            return Ok((Type::Func(Rc::new(retty.clone()), Vec::new(), false), None));
+            return Ok((Type::Func(Rc::new(retty), Vec::new(), false), None));
         }
 
         let (paramtypes, paramnames, vararg) = try!(self.read_declarator_params());
@@ -640,10 +635,15 @@ impl<'a> Parser<'a> {
             }
 
             let (ty, name) = try!(self.read_func_param());
-            self.var_func_ty
-                .back_mut()
-                .unwrap()
-                .insert(name.clone(), ty.clone());
+
+            // meaning that reading parameter of defining function
+            if self.env.len() > 1 {
+                self.env
+                    .back_mut()
+                    .unwrap()
+                    .insert(name.clone(),
+                            AST::new(ASTKind::Variable(ty.clone(), name.clone()), 0));
+            }
             paramtypes.push(ty);
             paramnames.push(name);
             if try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
@@ -659,14 +659,14 @@ impl<'a> Parser<'a> {
     }
     fn read_func_param(&mut self) -> ParseR<(Type, String)> {
         let basety = try!(self.read_type_spec()).0;
-        let (ty, name, _) = try!(self.read_declarator(&basety));
+        let (ty, name, _) = try!(self.read_declarator(basety));
         match ty {
             Type::Array(subst, _) => Ok((Type::Ptr(subst), name)),
             Type::Func(_, _, _) => Ok((Type::Ptr(Rc::new(ty)), name)),
             _ => Ok((ty, name)),
         }
     }
-    fn read_type_spec(&mut self) -> ParseR<(Type, Option<StorageClass>)> {
+    fn read_type_spec(&mut self) -> ParseR<(Type, StorageClass)> {
         #[derive(PartialEq, Debug, Clone)]
         enum Size {
             Short,
@@ -686,7 +686,7 @@ impl<'a> Parser<'a> {
         let mut kind: Option<PrimitiveType> = None;
         let mut sign: Option<Sign> = None;
         let mut size = Size::Normal;
-        let mut sclass: Option<StorageClass> = None;
+        let mut sclass = StorageClass::Auto;
         let mut userty: Option<Type> = None;
 
         loop {
@@ -703,11 +703,11 @@ impl<'a> Parser<'a> {
 
             if let TokenKind::Keyword(keyw) = tok.kind {
                 match &keyw {
-                    &Keyword::Typedef => sclass = Some(StorageClass::Typedef),
-                    &Keyword::Extern => sclass = Some(StorageClass::Extern),
-                    &Keyword::Static => sclass = Some(StorageClass::Static),
-                    &Keyword::Auto => sclass = Some(StorageClass::Auto),
-                    &Keyword::Register => sclass = Some(StorageClass::Register),
+                    &Keyword::Typedef => sclass = StorageClass::Typedef,
+                    &Keyword::Extern => sclass = StorageClass::Extern,
+                    &Keyword::Static => sclass = StorageClass::Static,
+                    &Keyword::Auto => sclass = StorageClass::Auto,
+                    &Keyword::Register => sclass = StorageClass::Register,
                     &Keyword::Const |
                     &Keyword::Volatile |
                     &Keyword::Inline |
@@ -797,7 +797,7 @@ impl<'a> Parser<'a> {
         if kind.is_some() {
             match kind.unwrap() {
                 PrimitiveType::Void => return Ok((Type::Void, sclass)),
-                PrimitiveType::Char => return Ok((Type::Char(sign.clone().unwrap()), sclass)),
+                PrimitiveType::Char => return Ok((Type::Char(sign.unwrap()), sclass)),
                 PrimitiveType::Float => return Ok((Type::Float, sclass)),
                 PrimitiveType::Double => return Ok((Type::Double, sclass)),
                 _ => {}
@@ -805,10 +805,10 @@ impl<'a> Parser<'a> {
         }
 
         let ty = match size {
-            Size::Short => Type::Short(sign.clone().unwrap()),
-            Size::Normal => Type::Int(sign.clone().unwrap()),
-            Size::Long => Type::Long(sign.clone().unwrap()),
-            Size::LLong => Type::LLong(sign.clone().unwrap()),
+            Size::Short => Type::Short(sign.unwrap()),
+            Size::Normal => Type::Int(sign.unwrap()),
+            Size::Long => Type::Long(sign.unwrap()),
+            Size::LLong => Type::LLong(sign.unwrap()),
         };
 
         Ok((ty, sclass))
@@ -896,7 +896,7 @@ impl<'a> Parser<'a> {
             }
             let (basety, _) = try!(self.read_type_spec());
             loop {
-                let (ty, name, _) = try!(self.read_declarator(&basety.clone()));
+                let (ty, name, _) = try!(self.read_declarator(basety.clone()));
                 if try!(self.lexer.skip_symbol(Symbol::Colon)) {
                     // TODO: for now, designated bitwidth ignore
                     try!(self.read_expr());
@@ -1224,7 +1224,7 @@ impl<'a> Parser<'a> {
         let peek = try!(self.lexer.peek());
         if tok.kind == TokenKind::Symbol(Symbol::OpeningParen) && self.is_type(&peek) {
             let basety = try!(self.read_type_spec()).0;
-            let ty = try!(self.read_declarator(&basety)).0;
+            let ty = try!(self.read_declarator(basety)).0;
             if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
                 let peek = self.peek_token();
                 self.show_error_token(&try!(peek), "expected ')'");
@@ -1303,7 +1303,7 @@ impl<'a> Parser<'a> {
         let peek = try!(self.lexer.peek());
         if matches!(tok.kind, TokenKind::Symbol(Symbol::OpeningParen)) && self.is_type(&peek) {
             let (basety, _) = try!(self.read_type_spec());
-            let (ty, _, _) = try!(self.read_declarator(&basety));
+            let (ty, _, _) = try!(self.read_declarator(basety));
             try!(self.lexer.skip_symbol(Symbol::ClosingParen));
             return Ok(AST::new(ASTKind::Int(ty.calc_size() as i64, Bits::Bits32),
                                *self.lexer.get_cur_line()));
@@ -1431,16 +1431,20 @@ impl<'a> Parser<'a> {
                 Ok(AST::new(ASTKind::Float(f), *self.lexer.get_cur_line()))
             }
             TokenKind::Identifier(ident) => {
-                if let Some(ast) = self.env.back_mut().unwrap().get(ident.as_str()) {
-                    Ok(ast.clone())
-                } else {
-                    Ok(AST::new(ASTKind::Load(Rc::new(AST::new(ASTKind::Variable(ident),
-                                                               *self.lexer
-                                                                    .cur_line
-                                                                    .back()
-                                                                    .unwrap()))),
-                                *self.lexer.get_cur_line()))
+                if let Some(ast) = self.env.back().unwrap().get(ident.as_str()) {
+                    return match ast.kind {
+                               ASTKind::Variable(_, _) => {
+                                   Ok(AST::new(ASTKind::Load(Rc::new((*ast).clone())),
+                                               *self.lexer.get_cur_line()))
+                               } 
+                               _ => Ok((*ast).clone()),
+                           };
                 }
+                self.show_error_token(&tok,
+                                      format!("not found the variable or function '{}'",
+                                                      ident)
+                                              .as_str());
+                Err(Error::Something)
             }
             TokenKind::String(s) => Ok(AST::new(ASTKind::String(s), *self.lexer.get_cur_line())),
             TokenKind::Char(ch) => {
@@ -1515,20 +1519,7 @@ impl<'a> Parser<'a> {
                 Type::Array(Rc::new(Type::Char(Sign::Signed)), s.len() as i32 + 1)
             }
             ASTKind::Load(ref v) => try!(self.get_expr_returning_ty(&*v)),
-            ASTKind::Variable(ref name) => {
-                match self.var_func_ty
-                          .back()
-                          .unwrap()
-                          .clone()
-                          .get(name.as_str()) {
-                    Some(ref ty) => (**ty).clone(),
-                    None => {
-                        let peek = try!(self.lexer.peek());
-                        self.show_error_token(&peek, "not found variable or function");
-                        return Err(Error::Something);
-                    }
-                }
-            }
+            ASTKind::Variable(ref ty, _) => (*ty).clone(),
             ASTKind::UnaryOp(_, node::CUnaryOps::LNot) => Type::Int(Sign::Signed),
             ASTKind::UnaryOp(ref expr, node::CUnaryOps::Minus) |
             ASTKind::UnaryOp(ref expr, node::CUnaryOps::Inc) |
