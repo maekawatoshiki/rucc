@@ -224,7 +224,7 @@ impl<'a> Parser<'a> {
             return self.read_compound_stmt();
         }
         self.lexer.unget(tok);
-        let expr = self.read_expr();
+        let expr = self.read_opt_expr();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
@@ -262,7 +262,11 @@ impl<'a> Parser<'a> {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
-        let step = try!(self.read_opt_expr());
+        let step = if try!(self.lexer.peek_symbol_token_is(Symbol::ClosingParen)) {
+            AST::new(ASTKind::Compound(Vec::new()), *self.lexer.get_cur_line())
+        } else {
+            try!(self.read_opt_expr())
+        };
         if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ')'");
@@ -396,9 +400,7 @@ impl<'a> Parser<'a> {
             }
             None => return Ok(None),
         }
-        let peek = self.lexer.peek();
-        self.show_error_token(&try!(peek), format!("not found type '{}'", name).as_str());
-        Err(Error::Something)
+        Ok(None)
     }
     fn is_type(&mut self, token: &Token) -> bool {
         if let TokenKind::Keyword(ref keyw) = token.kind {
@@ -696,6 +698,10 @@ impl<'a> Parser<'a> {
                         return Ok((maybe_userty.unwrap(), sclass));
                     }
                 }
+            }
+            if !matches!(tok.kind, TokenKind::Keyword(_)) {
+                self.lexer.unget(tok);
+                break;
             }
 
             if let TokenKind::Keyword(keyw) = tok.kind {

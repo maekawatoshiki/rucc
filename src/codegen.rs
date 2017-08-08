@@ -319,12 +319,12 @@ impl Codegen {
                            match *sclass {
                                StorageClass::Typedef => panic!(),
                                StorageClass::Extern => llvm::LLVMLinkage::LLVMExternalLinkage,
-                               StorageClass::Static => llvm::LLVMLinkage::LLVMCommonLinkage, // TODO: think handling of static
+                               StorageClass::Static => llvm::LLVMLinkage::LLVMInternalLinkage, // TODO: think handling of static
                                StorageClass::Register => llvm::LLVMLinkage::LLVMCommonLinkage,
                                StorageClass::Auto => llvm::LLVMLinkage::LLVMCommonLinkage,
                            });
             // TODO: implement correctly
-            if *sclass == StorageClass::Auto {
+            if *sclass == StorageClass::Auto || *sclass == StorageClass::Static {
                 LLVMSetInitializer(gvar, LLVMConstNull(self.type_to_llvmty(ty)));
             }
             Ok((ptr::null_mut(), None))
