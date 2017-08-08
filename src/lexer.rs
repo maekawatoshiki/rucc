@@ -288,35 +288,33 @@ impl Lexer {
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
         let tok = try!(self.get_token());
-        Ok(if tok.kind == TokenKind::Keyword(keyword) {
-               true
-           } else {
-               self.buf.back_mut().unwrap().push_back(tok);
-               false
-           })
+        if tok.kind == TokenKind::Keyword(keyword) {
+            return Ok(true);
+        }
+        self.unget(tok);
+        Ok(false)
     }
     pub fn skip_symbol(&mut self, sym: Symbol) -> ParseR<bool> {
         let tok = try!(self.get_token());
-        Ok(if tok.kind == TokenKind::Symbol(sym) {
-               true
-           } else {
-               self.buf.back_mut().unwrap().push_back(tok);
-               false
-           })
+        if tok.kind == TokenKind::Symbol(sym) {
+            return Ok(true);
+        }
+        self.unget(tok);
+        Ok(false)
     }
     pub fn expect_skip_keyword(&mut self, expect: Keyword) -> ParseR<bool> {
-        self.skip_keyword(expect.clone())
+        self.skip_keyword(expect)
     }
     pub fn expect_skip_symbol(&mut self, expect: Symbol) -> ParseR<bool> {
-        self.skip_symbol(expect.clone())
+        self.skip_symbol(expect)
     }
     pub fn unget(&mut self, t: Token) {
         self.buf.back_mut().unwrap().push_back(t);
     }
-    pub fn unget_all(&mut self, mut tv: Vec<Token>) {
-        tv.reverse();
-        for t in tv {
-            self.unget(t);
+    pub fn unget_all(&mut self, tv: Vec<Token>) {
+        let buf = self.buf.back_mut().unwrap();
+        for t in tv.iter().rev() {
+            buf.push_back(t.clone());
         }
     }
 
@@ -518,11 +516,9 @@ impl Lexer {
     }
 
     pub fn do_read_token(&mut self) -> ParseR<Token> {
-        if !self.buf.back_mut().unwrap().is_empty() {
-            return match self.buf.back_mut().unwrap().pop_back() {
-                       Some(tok) => Ok(tok),
-                       None => Err(Error::EOF),
-                   };
+        match self.buf.back_mut().unwrap().pop_back() {
+            Some(tok) => return Ok(tok),
+            None => {}
         }
 
         match self.peek_get() {
@@ -844,7 +840,7 @@ impl Lexer {
                 try!(self.read_cpp_directive());
                 self.get_token()
             }
-                          _ => Ok(tok.clone()),
+                          _ => Ok(tok),
                       });
         self.expand(tok)
     }
@@ -877,24 +873,6 @@ impl Lexer {
                           self.unget(tok.clone());
                           Ok(tok)
                       })
-    }
-    pub fn get_e(&mut self) -> Token {
-        let tok = self.get_token();
-        match tok {
-            Ok(ok) => ok,
-            Err(_) => {
-                error::error_exit(*self.get_cur_line(), "expected a token, but reach EOF");
-            }
-        }
-    }
-    pub fn peek_e(&mut self) -> Token {
-        let tok = self.peek();
-        match tok {
-            Ok(ok) => ok,
-            Err(_) => {
-                error::error_exit(*self.get_cur_line(), "expected a token, but reach EOF");
-            }
-        }
     }
 
     // for c preprocessor

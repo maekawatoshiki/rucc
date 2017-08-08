@@ -96,9 +96,6 @@ impl<'a> Parser<'a> {
 
         panic!();
     }
-    fn peek_token(&mut self) -> ParseR<Token> {
-        self.lexer.peek()
-    }
     pub fn run_file(filename: String) -> Vec<AST> {
         let mut nodes: Vec<AST> = Vec::new();
         let mut lexer = Lexer::new(filename.to_string());
@@ -165,7 +162,7 @@ impl<'a> Parser<'a> {
                            AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0));
 
         if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected '('");
         }
         let body = try!(self.read_func_body(&functy));
@@ -229,19 +226,19 @@ impl<'a> Parser<'a> {
         self.lexer.unget(tok);
         let expr = self.read_expr();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
         expr
     }
     fn read_if_stmt(&mut self) -> ParseR<AST> {
         if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected '('");
         }
         let cond = try!(self.read_expr());
         if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ')'");
         }
         let then_stmt = Rc::new(try!(self.read_stmt()));
@@ -254,7 +251,7 @@ impl<'a> Parser<'a> {
     }
     fn read_for_stmt(&mut self) -> ParseR<AST> {
         if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected '('");
         }
         let init = try!(self.read_opt_decl_or_stmt());
@@ -262,12 +259,12 @@ impl<'a> Parser<'a> {
         //       when cur tok is ';', returns None.
         let cond = try!(self.read_opt_expr());
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
         let step = try!(self.read_opt_expr());
         if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ')'");
         }
         let body = try!(self.read_stmt());
@@ -276,12 +273,12 @@ impl<'a> Parser<'a> {
     }
     fn read_while_stmt(&mut self) -> ParseR<AST> {
         if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected '('");
         }
         let cond = try!(self.read_expr());
         if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ')'");
         }
         let body = try!(self.read_stmt());
@@ -290,7 +287,7 @@ impl<'a> Parser<'a> {
     fn read_continue_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.get_cur_line();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
         Ok(AST::new(ASTKind::Continue, line))
@@ -298,7 +295,7 @@ impl<'a> Parser<'a> {
     fn read_break_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.get_cur_line();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
         Ok(AST::new(ASTKind::Break, line))
@@ -310,7 +307,7 @@ impl<'a> Parser<'a> {
         } else {
             let retval = Some(Rc::new(try!(self.read_expr())));
             if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "expected ';'");
             }
             Ok(AST::new(ASTKind::Return(retval), line))
@@ -361,7 +358,7 @@ impl<'a> Parser<'a> {
             let tok = match self.lexer.get() {
                 Ok(tok) => tok,
                 Err(_) => {
-                    let peek = self.peek_token();
+                    let peek = self.lexer.peek();
                     self.show_error_token(&try!(peek), "expected ')', but reach EOF");
                     return Err(Error::EOF);
                 }
@@ -399,7 +396,7 @@ impl<'a> Parser<'a> {
             }
             None => return Ok(None),
         }
-        let peek = self.peek_token();
+        let peek = self.lexer.peek();
         self.show_error_token(&try!(peek), format!("not found type '{}'", name).as_str());
         Err(Error::Something)
     }
@@ -594,7 +591,7 @@ impl<'a> Parser<'a> {
         } else {
             len = try!(self.read_expr()).eval_constexpr() as i32;
             if !try!(self.lexer.skip_symbol(Symbol::ClosingBoxBracket)) {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "expected ']'");
             }
         }
@@ -622,13 +619,13 @@ impl<'a> Parser<'a> {
         loop {
             if try!(self.lexer.skip_symbol(Symbol::Vararg)) {
                 if paramtypes.len() == 0 {
-                    let peek = self.peek_token();
+                    let peek = self.lexer.peek();
                     self.show_error_token(&try!(peek),
                                           "at least one param is required before '...'");
                     return Err(Error::Something);
                 }
                 if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-                    let peek = self.peek_token();
+                    let peek = self.lexer.peek();
                     self.show_error_token(&try!(peek), "expected ')'");
                 }
                 return Ok((paramtypes, paramnames, true));
@@ -650,7 +647,7 @@ impl<'a> Parser<'a> {
                 return Ok((paramtypes, paramnames, false));
             }
             if !try!(self.lexer.skip_symbol(Symbol::Comma)) {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "expected ','");
                 self.skip_until(Symbol::ClosingParen);
                 return Err(Error::Something);
@@ -715,42 +712,42 @@ impl<'a> Parser<'a> {
                     &Keyword::Noreturn => {}
                     &Keyword::Void => {
                         if kind.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         }
                         kind = Some(PrimitiveType::Void);
                     }
                     &Keyword::Char => {
                         if kind.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         }
                         kind = Some(PrimitiveType::Char);
                     }
                     &Keyword::Int => {
                         if kind.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         }
                         kind = Some(PrimitiveType::Int);
                     }
                     &Keyword::Float => {
                         if kind.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         }
                         kind = Some(PrimitiveType::Float);
                     }
                     &Keyword::Double => {
                         if kind.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         }
                         kind = Some(PrimitiveType::Double);
                     }
                     &Keyword::Signed => {
                         if sign.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         };
 
@@ -758,7 +755,7 @@ impl<'a> Parser<'a> {
                     }
                     &Keyword::Unsigned => {
                         if sign.is_some() {
-                            let peek = self.peek_token();
+                            let peek = self.lexer.peek();
                             self.show_error_token(&try!(peek), "type mismatch");
                         };
 
@@ -907,7 +904,7 @@ impl<'a> Parser<'a> {
                     continue;
                 } else {
                     if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-                        let peek = self.peek_token();
+                        let peek = self.lexer.peek();
                         self.show_error_token(&try!(peek), "expected ';'");
                     }
                 }
@@ -915,7 +912,7 @@ impl<'a> Parser<'a> {
             }
         }
         if !try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected '}'");
         }
         Ok(decls)
@@ -934,7 +931,7 @@ impl<'a> Parser<'a> {
                 Some(&Type::Enum) => {}
                 None => {}
                 _ => {
-                    let peek = self.peek_token();
+                    let peek = self.lexer.peek();
                     self.show_error_token(&try!(peek), "undefined enum");
                     return Err(Error::Something);
                 }
@@ -947,7 +944,7 @@ impl<'a> Parser<'a> {
                     .back_mut()
                     .unwrap()
                     .contains_key(tag.as_str()) {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "do not redefine enum");
                 return Err(Error::Something);
             }
@@ -1070,7 +1067,7 @@ impl<'a> Parser<'a> {
     fn read_ternary(&mut self, cond: AST) -> ParseR<AST> {
         let then_expr = try!(self.read_expr());
         if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ':'");
         }
         let else_expr = try!(self.read_assign());
@@ -1226,7 +1223,7 @@ impl<'a> Parser<'a> {
             let basety = try!(self.read_type_spec()).0;
             let ty = try!(self.read_declarator(basety)).0;
             if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "expected ')'");
             }
             return Ok(AST::new(ASTKind::TypeCast(Rc::new(try!(self.read_cast())), ty),
@@ -1363,7 +1360,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
                 if !try!(self.lexer.skip_symbol(Symbol::Comma)) {
-                    let peek = self.peek_token();
+                    let peek = self.lexer.peek();
                     self.show_error_token(&try!(peek), "expected ','");
                     self.skip_until(Symbol::ClosingParen);
                     return Err(Error::Something);
@@ -1376,7 +1373,7 @@ impl<'a> Parser<'a> {
     fn read_index(&mut self, ast: AST) -> ParseR<AST> {
         let idx = try!(self.read_expr());
         if !try!(self.lexer.skip_symbol(Symbol::ClosingBoxBracket)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ']'");
         }
         Ok(AST::new(ASTKind::BinaryOp(Rc::new(ast), Rc::new(idx), node::CBinOps::Add),
@@ -1386,7 +1383,7 @@ impl<'a> Parser<'a> {
     fn read_field(&mut self, ast: AST) -> ParseR<AST> {
         let field = try!(self.lexer.get());
         if !matches!(field.kind ,TokenKind::Identifier(_)) {
-            let peek = self.peek_token();
+            let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected field name");
             return Err(Error::Something);
         }
@@ -1404,7 +1401,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             if !try!(self.lexer.skip_symbol(Symbol::Comma)) {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "expected ','");
                 self.skip_until(Symbol::ClosingBrace);
                 return Err(Error::Something);
@@ -1416,7 +1413,7 @@ impl<'a> Parser<'a> {
         let tok = match self.lexer.get() {
             Ok(tok) => tok,
             Err(_) => {
-                let peek = self.peek_token();
+                let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek),
                                       "expected primary(number, string...), but reach EOF");
                 return Err(Error::EOF);
