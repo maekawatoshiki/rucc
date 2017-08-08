@@ -430,7 +430,7 @@ impl<'a> Parser<'a> {
     }
     fn read_decl_init(&mut self, ty: &mut Type) -> ParseR<AST> {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
-        if self.lexer.peek_symbol_token_is(Symbol::OpeningBrace) {
+        if try!(self.lexer.peek_symbol_token_is(Symbol::OpeningBrace)) {
             self.read_initializer_list(ty)
         } else if let TokenKind::String(s) = try!(self.lexer.peek()).kind {
             try!(self.lexer.get());
@@ -602,8 +602,8 @@ impl<'a> Parser<'a> {
         Ok(Type::Array(Rc::new(ty), len))
     }
     fn read_declarator_func(&mut self, retty: Type) -> ParseR<(Type, Option<Vec<String>>)> {
-        if self.lexer.peek_keyword_token_is(Keyword::Void) &&
-           self.lexer.next_symbol_token_is(Symbol::ClosingParen) {
+        if try!(self.lexer.peek_keyword_token_is(Keyword::Void)) &&
+           try!(self.lexer.next_symbol_token_is(Symbol::ClosingParen)) {
             try!(self.lexer.expect_skip_keyword(Keyword::Void));
             try!(self.lexer.expect_skip_symbol(Symbol::ClosingParen));
             return Ok((Type::Func(Rc::new(retty), Vec::new(), false), None));
@@ -847,7 +847,7 @@ impl<'a> Parser<'a> {
 
         if fields.is_empty() {
             Ok(match cur_tags.entry(tag) {
-                   hash_map::Entry::Occupied(o) => o.into_mut().clone(),
+                   hash_map::Entry::Occupied(o) => o.get().clone(),
                    hash_map::Entry::Vacant(v) => {
                 let new_struct = if is_struct {
                     Type::Struct(v.key().to_string(), Vec::new())

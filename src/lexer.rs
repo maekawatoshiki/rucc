@@ -227,56 +227,64 @@ impl Lexer {
     pub fn get_mut_cur_line(&mut self) -> &mut i32 {
         self.cur_line.back_mut().unwrap()
     }
-    fn peek_get(&mut self) -> Option<char> {
+    fn peek_get(&mut self) -> ParseR<char> {
         let peek = self.peek.back_mut().unwrap();
         let peek_pos = *self.peek_pos.back_mut().unwrap();
         if peek_pos >= peek.len() {
-            None
+            Err(Error::EOF)
         } else {
-            Some(peek[peek_pos] as char)
+            Ok(peek[peek_pos] as char)
         }
     }
-    fn peek_next(&mut self) -> char {
+    fn peek_next(&mut self) -> ParseR<char> {
+        let peek = self.peek.back_mut().unwrap();
         let peek_pos = self.peek_pos.back_mut().unwrap();
-        let ret = self.peek.back_mut().unwrap()[*peek_pos] as char;
-        *peek_pos += 1;
-        ret
+        let ret = peek[*peek_pos] as char;
+        if *peek_pos >= peek.len() {
+            Err(Error::EOF)
+        } else {
+            *peek_pos += 1;
+            Ok(ret)
+        }
     }
-    fn peek_next_char_is(&mut self, ch: char) -> bool {
-        let nextc = self.peek.back().unwrap()[*self.peek_pos.back_mut().unwrap() + 1] as char;
-        nextc == ch
+    fn peek_next_char_is(&mut self, ch: char) -> ParseR<bool> {
+        let peek = self.peek.back_mut().unwrap();
+        let peek_pos = self.peek_pos.back_mut().unwrap();
+        if *peek_pos >= peek.len() {
+            Err(Error::EOF)
+        } else {
+            let nextc = peek[*peek_pos + 1] as char;
+            Ok(nextc == ch)
+        }
     }
-    fn peek_char_is(&mut self, ch: char) -> bool {
-        let line = *self.cur_line.back().unwrap();
-        let errf =
-            || -> Option<char> { error::error_exit(line, format!("expected '{}'", ch).as_str()); };
-        let peekc = self.peek_get().or_else(errf).unwrap();
-        peekc == ch
+    fn peek_char_is(&mut self, ch: char) -> ParseR<bool> {
+        let peekc = try!(self.peek_get());
+        Ok(peekc == ch)
     }
 
-    pub fn peek_keyword_token_is(&mut self, expect: Keyword) -> bool {
-        let peek = self.peek_e();
-        peek.kind == TokenKind::Keyword(expect)
+    pub fn peek_keyword_token_is(&mut self, expect: Keyword) -> ParseR<bool> {
+        let peek = try!(self.peek());
+        Ok(peek.kind == TokenKind::Keyword(expect))
     }
-    pub fn peek_symbol_token_is(&mut self, expect: Symbol) -> bool {
-        let peek = self.peek_e();
-        peek.kind == TokenKind::Symbol(expect)
+    pub fn peek_symbol_token_is(&mut self, expect: Symbol) -> ParseR<bool> {
+        let peek = try!(self.peek());
+        Ok(peek.kind == TokenKind::Symbol(expect))
     }
-    pub fn next_keyword_token_is(&mut self, expect: Keyword) -> bool {
-        let peek = self.get_e();
-        let next = self.get_e();
+    pub fn next_keyword_token_is(&mut self, expect: Keyword) -> ParseR<bool> {
+        let peek = try!(self.get());
+        let next = try!(self.get());
         let next_token_is_expect = next.kind == TokenKind::Keyword(expect);
         self.unget(next);
         self.unget(peek);
-        next_token_is_expect
+        Ok(next_token_is_expect)
     }
-    pub fn next_symbol_token_is(&mut self, expect: Symbol) -> bool {
-        let peek = self.get_e();
-        let next = self.get_e();
+    pub fn next_symbol_token_is(&mut self, expect: Symbol) -> ParseR<bool> {
+        let peek = try!(self.get());
+        let next = try!(self.get());
         let next_token_is_expect = next.kind == TokenKind::Symbol(expect);
         self.unget(next);
         self.unget(peek);
-        next_token_is_expect
+        Ok(next_token_is_expect)
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
         let tok = try!(self.get_token());
@@ -312,41 +320,37 @@ impl Lexer {
         }
     }
 
-    pub fn read_identifier(&mut self) -> Token {
+    pub fn read_identifier(&mut self) -> ParseR<Token> {
         let mut ident = String::with_capacity(16);
         let pos = *self.peek_pos.back().unwrap();
         loop {
-            let c = self.peek_next();
+            let c = try!(self.peek_next());
             match c {
                 'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
                 _ => break,
             };
         }
         *self.peek_pos.back_mut().unwrap() -= 1;
-        Token::new(TokenKind::Identifier(ident), 0, pos, *self.get_cur_line())
+        Ok(Token::new(TokenKind::Identifier(ident), 0, pos, *self.get_cur_line()))
     }
-    fn read_number_literal(&mut self) -> Token {
+    fn read_number_literal(&mut self) -> ParseR<Token> {
         let mut num = String::with_capacity(8);
         let mut is_float = false;
-        let mut last = self.peek_get().unwrap();
+        let mut last = try!(self.peek_get());
         let pos = *self.peek_pos.back().unwrap();
         loop {
-            match self.peek_get() {
-                Some(c) => {
-                    num.push(c);
-                    is_float = is_float || c == '.';
-                    let is_f = "eEpP".contains(last) && "+-".contains(c);
-                    if !c.is_alphanumeric() && c != '.' && !is_f {
-                        is_float = is_float || is_f;
-                        num.pop();
-                        break;
-                    }
-                    last = c;
-                }
-                _ => break,
-            };
-            self.peek_next();
+            let c = try!(self.peek_next());
+            num.push(c);
+            is_float = is_float || c == '.';
+            let is_f = "eEpP".contains(last) && "+-".contains(c);
+            if !c.is_alphanumeric() && c != '.' && !is_f {
+                is_float = is_float || is_f;
+                num.pop();
+                break;
+            }
+            last = c;
         }
+        *self.peek_pos.back_mut().unwrap() -= 1;
         if is_float {
             // TODO: this is to delete suffix like 'F', but not efficient
             loop {
@@ -360,7 +364,7 @@ impl Lexer {
             }
 
             let f: f64 = num.parse().unwrap();
-            Token::new(TokenKind::FloatNumber(f), 0, pos, *self.get_cur_line())
+            Ok(Token::new(TokenKind::FloatNumber(f), 0, pos, *self.get_cur_line()))
         } else {
             // TODO: suffix supporting
             let i = if num.len() > 2 && num.chars().nth(1).unwrap() == 'x' {
@@ -377,7 +381,7 @@ impl Lexer {
             } else {
                 Bits::Bits64
             };
-            Token::new(TokenKind::IntNumber(i, bits), 0, pos, *self.get_cur_line())
+            Ok(Token::new(TokenKind::IntNumber(i, bits), 0, pos, *self.get_cur_line()))
         }
     }
     fn read_dec_num(&mut self, num_literal: &str) -> (i64, String) {
@@ -413,104 +417,104 @@ impl Lexer {
         }
         (n as i64, suffix)
     }
-    pub fn read_newline(&mut self) -> Token {
+    pub fn read_newline(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        self.peek_next();
+        try!(self.peek_next());
         *self.get_mut_cur_line() += 1;
-        Token::new(TokenKind::Newline, 0, pos, *self.get_cur_line())
+        Ok(Token::new(TokenKind::Newline, 0, pos, *self.get_cur_line()))
     }
-    pub fn read_symbol(&mut self) -> Token {
+    pub fn read_symbol(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        let c = self.peek_next();
+        let c = try!(self.peek_next());
         let mut sym = String::new();
         sym.push(c);
         match c {
             '+' | '-' => {
-                if self.peek_char_is('=') || self.peek_char_is('>') || self.peek_char_is('+') ||
-                   self.peek_char_is('-') {
-                    sym.push(self.peek_next());
+                if try!(self.peek_char_is('=')) || try!(self.peek_char_is('>')) ||
+                   try!(self.peek_char_is('+')) || try!(self.peek_char_is('-')) {
+                    sym.push(try!(self.peek_next()));
                 }
             }
             '*' | '/' | '%' | '=' | '^' | '!' => {
-                if self.peek_char_is('=') {
-                    sym.push(self.peek_next());
+                if try!(self.peek_char_is('=')) {
+                    sym.push(try!(self.peek_next()));
                 }
             }
             '<' | '>' | '&' | '|' => {
-                if self.peek_char_is(c) {
-                    sym.push(self.peek_next());
+                if try!(self.peek_char_is(c)) {
+                    sym.push(try!(self.peek_next()));
                 }
-                if self.peek_char_is('=') {
-                    sym.push(self.peek_next());
+                if try!(self.peek_char_is('=')) {
+                    sym.push(try!(self.peek_next()));
                 }
             }
             '.' => {
-                if self.peek_char_is('.') && self.peek_next_char_is('.') {
-                    sym.push(self.peek_next());
-                    sym.push(self.peek_next());
+                if try!(self.peek_char_is('.')) && try!(self.peek_next_char_is('.')) {
+                    sym.push(try!(self.peek_next()));
+                    sym.push(try!(self.peek_next()));
                 }
             }
             _ => {}
         };
-        Token::new(TokenKind::Identifier(sym), 0, pos, *self.get_cur_line())
+        Ok(Token::new(TokenKind::Identifier(sym), 0, pos, *self.get_cur_line()))
     }
-    fn read_escaped_char(&mut self) -> char {
-        let c = self.peek_next();
+    fn read_escaped_char(&mut self) -> ParseR<char> {
+        let c = try!(self.peek_next());
         match c {
-            '\'' | '"' | '?' | '\\' => c,
-            '0' => '\x00',
-            'a' => '\x07',
-            'b' => '\x08',
-            'f' => '\x0c',
-            'n' => '\x0a',
-            'r' => '\x0d',
-            't' => '\x09',
-            'v' => '\x0b',
+            '\'' | '"' | '?' | '\\' => Ok(c),
+            '0' => Ok('\x00'),
+            'a' => Ok('\x07'),
+            'b' => Ok('\x08'),
+            'f' => Ok('\x0c'),
+            'n' => Ok('\x0a'),
+            'r' => Ok('\x0d'),
+            't' => Ok('\x09'),
+            'v' => Ok('\x0b'),
             'x' => {
                 let mut hex = "".to_string();
                 loop {
-                    let c = self.peek_get().unwrap();
+                    let c = try!(self.peek_get());
                     match c {
                         '0'...'9' | 'a'...'f' | 'A'...'F' => hex.push(c),
                         _ => break,
                     }
-                    self.peek_next();
+                    try!(self.peek_next());
                 }
-                self.read_hex_num(hex.as_str()).0 as i32 as u8 as char
+                Ok(self.read_hex_num(hex.as_str()).0 as i32 as u8 as char)
             }
-            _ => c,
+            _ => Ok(c),
         }
     }
-    fn read_string_literal(&mut self) -> Token {
+    fn read_string_literal(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        self.peek_next(); // '"'
+        try!(self.peek_next()); // '"'
         let mut s = String::new();
         loop {
-            let c = self.peek_next();
+            let c = try!(self.peek_next());
             match c {
                 '"' => break,
-                '\\' => s.push(self.read_escaped_char()),
+                '\\' => s.push(try!(self.read_escaped_char())),
                 _ => s.push(c),
             }
         }
-        Token::new(TokenKind::String(s), 0, pos, *self.get_cur_line())
+        Ok(Token::new(TokenKind::String(s), 0, pos, *self.get_cur_line()))
     }
-    fn read_char_literal(&mut self) -> Token {
+    fn read_char_literal(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        self.peek_next(); // '\''
+        try!(self.peek_next()); // '\''
         let c = {
-            let c = self.peek_next();
+            let c = try!(self.peek_next());
             if c == '\\' {
-                self.read_escaped_char()
+                try!(self.read_escaped_char())
             } else {
                 c
             }
         };
-        if self.peek_next() != '\'' {
+        if try!(self.peek_next()) != '\'' {
             error::error_exit(*self.cur_line.back().unwrap(),
                               "missing terminating \' char");
         }
-        Token::new(TokenKind::Char(c), 0, pos, *self.get_cur_line())
+        Ok(Token::new(TokenKind::Char(c), 0, pos, *self.get_cur_line()))
     }
 
     pub fn do_read_token(&mut self) -> ParseR<Token> {
@@ -522,11 +526,11 @@ impl Lexer {
         }
 
         match self.peek_get() {
-            Some(c) => {
+            Ok(c) => {
                 match c {
-                    'a'...'z' | 'A'...'Z' | '_' => Ok(self.read_identifier()),
+                    'a'...'z' | 'A'...'Z' | '_' => self.read_identifier(),
                     ' ' | '\t' => {
-                        self.peek_next();
+                        try!(self.peek_next());
                         self.do_read_token()
                             // set a leading space
                             .and_then(|tok| {
@@ -535,40 +539,41 @@ impl Lexer {
                                 Ok(t)
                             })
                     }
-                    '0'...'9' => Ok(self.read_number_literal()),
-                    '\"' => Ok(self.read_string_literal()),
-                    '\'' => Ok(self.read_char_literal()),
-                    '\n' => Ok(self.read_newline()),
+                    '0'...'9' => self.read_number_literal(),
+                    '\"' => self.read_string_literal(),
+                    '\'' => self.read_char_literal(),
+                    '\n' => self.read_newline(),
                     '\\' => {
-                        while self.peek_next() != '\n' {}
+                        while try!(self.peek_next()) != '\n' {}
                         self.do_read_token()
                     }
                     '/' => {
-                        if self.peek_next_char_is('*') {
-                            self.peek_next(); // /
-                            self.peek_next(); // *
-                            while !(self.peek_char_is('*') && self.peek_next_char_is('/')) {
-                                self.peek_next();
+                        if try!(self.peek_next_char_is('*')) {
+                            try!(self.peek_next()); // /
+                            try!(self.peek_next()); // *
+                            while !(try!(self.peek_char_is('*')) &&
+                                    try!(self.peek_next_char_is('/'))) {
+                                try!(self.peek_next());
                             }
-                            self.peek_next(); // *
-                            self.peek_next(); // /
+                            try!(self.peek_next()); // *
+                            try!(self.peek_next()); // /
                             self.do_read_token()
-                        } else if self.peek_next_char_is('/') {
-                            self.peek_next(); // /
-                            self.peek_next(); // /
-                            while !self.peek_char_is('\n') {
-                                self.peek_next();
+                        } else if try!(self.peek_next_char_is('/')) {
+                            try!(self.peek_next()); // /
+                            try!(self.peek_next()); // /
+                            while !try!(self.peek_char_is('\n')) {
+                                try!(self.peek_next());
                             }
-                            // self.peek_next(); // \n
+                            // try!(self.peek_next()); // \n
                             self.do_read_token()
                         } else {
-                            Ok(self.read_symbol())
+                            self.read_symbol()
                         }
                     }
-                    _ => Ok(self.read_symbol()),
+                    _ => self.read_symbol(),
                 }
             }
-            None => {
+            _ => {
                 if self.peek.len() > 1 {
                     self.peek.pop_back();
                     self.peek_pos.pop_back();
@@ -788,9 +793,9 @@ impl Lexer {
                     expanded.push(last);
                     is_combine = false;
                 } else {
-                    let l = self.buf.back().unwrap().len();
+                    let cur_len = self.buf.back().unwrap().len();
                     self.unget_all(args[position].clone());
-                    while self.buf.back().unwrap().len() > l {
+                    while self.buf.back().unwrap().len() > cur_len {
                         expanded.push(try!(self.get_token()));
                     }
                 }
@@ -936,10 +941,10 @@ impl Lexer {
     fn read_headerfile_name(&mut self) -> ParseR<String> {
         let mut name = "".to_string();
         if try!(self.skip_symbol(Symbol::Lt)) {
-            while !self.peek_char_is('>') {
-                name.push(self.peek_next());
+            while !try!(self.peek_char_is('>')) {
+                name.push(try!(self.peek_next()));
             }
-            self.peek_next(); // >
+            try!(self.peek_next()); // >
         } else {
             let tok = try!(self.do_read_token());
             if let TokenKind::String(s) = tok.kind {
@@ -1163,7 +1168,7 @@ impl Lexer {
     fn skip_cond_include(&mut self) -> ParseR<()> {
         let mut nest = 0;
         loop {
-            if self.peek_next() != '#' {
+            if try!(self.peek_next()) != '#' {
                 continue;
             }
 
