@@ -239,13 +239,18 @@ impl Lexer {
     fn peek_next(&mut self) -> ParseR<char> {
         let peek = self.peek.back_mut().unwrap();
         let peek_pos = self.peek_pos.back_mut().unwrap();
-        let ret = peek[*peek_pos] as char;
+        let line = self.cur_line.back_mut().unwrap();
+
         if *peek_pos >= peek.len() {
-            Err(Error::EOF)
-        } else {
-            *peek_pos += 1;
-            Ok(ret)
+            return Err(Error::EOF);
         }
+
+        let ret = peek[*peek_pos] as char;
+        if ret == '\n' {
+            *line += 1;
+        }
+        *peek_pos += 1;
+        Ok(ret)
     }
     fn peek_next_char_is(&mut self, ch: char) -> ParseR<bool> {
         let peek = self.peek.back_mut().unwrap();
@@ -322,13 +327,13 @@ impl Lexer {
         let mut ident = String::with_capacity(16);
         let pos = *self.peek_pos.back().unwrap();
         loop {
-            let c = try!(self.peek_next());
+            let c = try!(self.peek_get());
             match c {
                 'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
                 _ => break,
             };
+            *self.peek_pos.back_mut().unwrap() += 1;
         }
-        *self.peek_pos.back_mut().unwrap() -= 1;
         Ok(Token::new(TokenKind::Identifier(ident), 0, pos, *self.get_cur_line()))
     }
     fn read_number_literal(&mut self) -> ParseR<Token> {
@@ -337,7 +342,7 @@ impl Lexer {
         let mut last = try!(self.peek_get());
         let pos = *self.peek_pos.back().unwrap();
         loop {
-            let c = try!(self.peek_next());
+            let c = try!(self.peek_get());
             num.push(c);
             is_float = is_float || c == '.';
             let is_f = "eEpP".contains(last) && "+-".contains(c);
@@ -347,8 +352,8 @@ impl Lexer {
                 break;
             }
             last = c;
+            *self.peek_pos.back_mut().unwrap() += 1;
         }
-        *self.peek_pos.back_mut().unwrap() -= 1;
         if is_float {
             // TODO: this is to delete suffix like 'F', but not efficient
             loop {
@@ -418,7 +423,7 @@ impl Lexer {
     pub fn read_newline(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
         try!(self.peek_next());
-        *self.get_mut_cur_line() += 1;
+        // *self.get_mut_cur_line() += 1;
         Ok(Token::new(TokenKind::Newline, 0, pos, *self.get_cur_line()))
     }
     pub fn read_symbol(&mut self) -> ParseR<Token> {

@@ -1061,6 +1061,22 @@ impl<'a> Parser<'a> {
                                           *self.lexer.get_cur_line()),
                                  *self.lexer.get_cur_line());
                 }
+                TokenKind::Symbol(Symbol::AssignShl) => {
+                    lhs = assign(lhs.clone(),
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(try!(self.read_assign())),
+                                                            node::CBinOps::Shl),
+                                          *self.lexer.get_cur_line()),
+                                 *self.lexer.get_cur_line());
+                }
+                TokenKind::Symbol(Symbol::AssignShr) => {
+                    lhs = assign(lhs.clone(),
+                                 AST::new(ASTKind::BinaryOp(Rc::new(lhs),
+                                                            Rc::new(try!(self.read_assign())),
+                                                            node::CBinOps::Shr),
+                                          *self.lexer.get_cur_line()),
+                                 *self.lexer.get_cur_line());
+                }
                 // TODO: implement more op
                 _ => {
                     self.lexer.unget(tok);
