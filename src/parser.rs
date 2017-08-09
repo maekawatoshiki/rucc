@@ -160,6 +160,8 @@ impl<'a> Parser<'a> {
                            AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0));
         self.env[1].insert(name.clone(),
                            AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0));
+        self.env[1].insert("__func__".to_string(),
+                           AST::new(ASTKind::String(name.clone()), 0));
 
         if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
             let peek = self.lexer.peek();

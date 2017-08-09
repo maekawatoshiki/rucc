@@ -13,6 +13,15 @@ use node::Bits;
 use types::{Type, StorageClass, Sign};
 use error;
 
+macro_rules! matches {
+    ($e:expr, $p:pat) => {
+        match $e {
+            $p => true,
+            _ => false
+        }
+    }
+}
+
 // used by global_varmap and local_varmap(not to use tuples)
 #[derive(Clone)]
 struct VarInfo {
@@ -1153,15 +1162,20 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
-        let (then_val, ty) = try!(self.gen(then_expr));
+        let (then_val, then_ty) = try!(self.gen(then_expr));
         LLVMBuildBr(self.builder, bb_merge);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_else);
         // else block
-        let (else_val, _) = try!(self.gen(else_expr));
+        let (else_val, else_ty) = try!(self.gen(else_expr));
         LLVMBuildBr(self.builder, bb_merge);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_merge);
+
+        if matches!(then_ty.clone().unwrap(), Type::Void) ||
+           matches!(else_ty.unwrap(), Type::Void) {
+            return Ok((ptr::null_mut(), None));
+        }
 
         let phi = LLVMBuildPhi(self.builder,
                                LLVMTypeOf(then_val),
@@ -1175,7 +1189,7 @@ impl Codegen {
                         vec![bb_else].as_mut_slice().as_mut_ptr(),
                         1);
 
-        Ok((phi, ty))
+        Ok((phi, then_ty))
     }
 
     unsafe fn gen_struct_field(&mut self, expr: &node::AST, field_name: String) -> CodegenResult {
@@ -1406,6 +1420,10 @@ impl Codegen {
     pub unsafe fn typecast(&self, val: LLVMValueRef, to: LLVMTypeRef) -> LLVMValueRef {
         let v_ty = LLVMTypeOf(val);
         let inst_name = CString::new("").unwrap().as_ptr();
+
+        if matches!(LLVMGetTypeKind(to), llvm::LLVMTypeKind::LLVMVoidTypeKind) {
+            return val;
+        }
 
         match LLVMGetTypeKind(v_ty) {
             llvm::LLVMTypeKind::LLVMIntegerTypeKind => {

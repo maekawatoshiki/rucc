@@ -821,6 +821,19 @@ impl Lexer {
     fn expand(&mut self, token: ParseR<Token>) -> ParseR<Token> {
         token.and_then(|tok| {
             let name = ident_val!(tok);
+            match name.as_str() {
+                "__LINE__" => {
+                    return Ok(Token::new(TokenKind::IntNumber(*self.get_cur_line() as i64,
+                                                              Bits::Bits32),
+                                         0,
+                                         0,
+                                         0))
+                }
+                "__FILE__" => {
+                    return Ok(Token::new(TokenKind::String(self.get_filename()), 0, 0, 0))
+                } 
+                _ => {}
+            }
             if tok.hideset.contains(name.as_str()) || !self.macro_map.contains_key(name.as_str()) {
                 Ok(tok)
             } else {
