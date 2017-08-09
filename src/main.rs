@@ -28,9 +28,10 @@ fn main() {
             let mut codegen = codegen::Codegen::new("rucc");
             codegen.run(ast);
 
-            let output_file_name = Regex::new(r"\..*$")
-                .unwrap()
-                .replace_all(input_file_name, ".bc");
+            let output_file_name = Regex::new(r"\..*$").unwrap().replace_all(
+                input_file_name,
+                ".bc",
+            );
             codegen.write_llvm_bitcode_to_file(output_file_name.to_string().as_str());
         }
         println!("{}", Colour::Green.paint("Compiling exited successfully."));
