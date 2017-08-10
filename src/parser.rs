@@ -1726,7 +1726,7 @@ impl<'a> Parser<'a> {
     }
 
     fn usual_binary_ty_cov(&mut self, lhs: Type, rhs: Type) -> Type {
-        if lhs.calc_size() < rhs.calc_size() {
+        if lhs.priority() < rhs.priority() {
             rhs
         } else {
             lhs

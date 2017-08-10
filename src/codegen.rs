@@ -846,83 +846,50 @@ impl Codegen {
         // normal binary operators
         let (lhs, lhsty_w) = try!(self.gen(lhsast));
         let (rhs, rhsty_w) = try!(self.gen(rhsast));
-        let lhsty = if let Some(lhsty) = lhsty_w {
-            lhsty
-        } else {
-            panic!("left hand side must return the type of expression");
-        };
-        let rhsty = if let Some(rhsty) = rhsty_w {
-            rhsty
-        } else {
-            panic!("right hand side must return the type of expression");
-        };
 
-        let lhsty_sz = lhsty.calc_size();
-        let rhsty_sz = rhsty.calc_size();
+        let lhsty = lhsty_w.unwrap().conversion();
+        let rhsty = rhsty_w.unwrap().conversion();
 
-        match (lhsty.clone(), rhsty.clone()) {
-            (Type::Ptr(_), Type::Ptr(_)) |
-            (Type::Array(_, _), Type::Ptr(_)) |
-            (Type::Ptr(_), Type::Array(_, _)) |
-            (Type::Array(_, _), Type::Array(_, _)) => {
-                let castlhs = self.typecast(lhs, LLVMInt64Type());
-                let castrhs = self.typecast(rhs, LLVMInt64Type());
-                return Ok((
-                    self.gen_int_binary_op(castlhs, castrhs, op),
-                    Some(Type::LLong(Sign::Signed)),
-                ));
-            }
-            (Type::Char(_), Type::Ptr(elem_ty)) |
-            (Type::Char(_), Type::Array(elem_ty, _)) |
-            (Type::Short(_), Type::Ptr(elem_ty)) |
-            (Type::Short(_), Type::Array(elem_ty, _)) |
-            (Type::Int(_), Type::Ptr(elem_ty)) |
-            (Type::Int(_), Type::Array(elem_ty, _)) |
-            (Type::Long(_), Type::Ptr(elem_ty)) |
-            (Type::Long(_), Type::Array(elem_ty, _)) |
-            (Type::LLong(_), Type::Ptr(elem_ty)) |
-            (Type::LLong(_), Type::Array(elem_ty, _)) => {
-                return self.gen_ptr_binary_op(rhs, lhs, Type::Ptr(elem_ty.clone()), op);
-            }
-            (Type::Ptr(elem_ty), Type::Char(_)) |
-            (Type::Array(elem_ty, _), Type::Char(_)) |
-            (Type::Ptr(elem_ty), Type::Short(_)) |
-            (Type::Array(elem_ty, _), Type::Short(_)) |
-            (Type::Ptr(elem_ty), Type::Int(_)) |
-            (Type::Array(elem_ty, _), Type::Int(_)) |
-            (Type::Ptr(elem_ty), Type::Long(_)) |
-            (Type::Array(elem_ty, _), Type::Long(_)) |
-            (Type::Ptr(elem_ty), Type::LLong(_)) |
-            (Type::Array(elem_ty, _), Type::LLong(_)) => {
-                return self.gen_ptr_binary_op(lhs, rhs, Type::Ptr(elem_ty.clone()), op);
-            }
-            (Type::Double, _) |
-            (Type::Float, _) => {
-                let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
-                return Ok((self.gen_double_binary_op(lhs, castrhs, op), Some(lhsty)));
-            }
-            (_, Type::Double) |
-            (_, Type::Float) => {
-                let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
-                return Ok((self.gen_double_binary_op(castlhs, rhs, op), Some(rhsty)));
-            }
-            (Type::Char(_), _) |
-            (Type::Short(_), _) |
-            (Type::Int(_), _) |
-            (Type::Long(_), _) |
-            (Type::LLong(_), _) => {
-                if lhsty_sz < rhsty_sz {
-                    let castlhs = self.typecast(lhs, LLVMTypeOf(rhs));
-                    return Ok((self.gen_int_binary_op(castlhs, rhs, op), Some(rhsty)));
-                } else if lhsty_sz == rhsty_sz {
-                    return Ok((self.gen_int_binary_op(lhs, rhs, op), Some(lhsty)));
-                } else {
-                    let castrhs = self.typecast(rhs, LLVMTypeOf(lhs));
-                    return Ok((self.gen_int_binary_op(lhs, castrhs, op), Some(lhsty)));
-                }
-            }
-            _ => {}
+        if matches!(lhsty, Type::Ptr(_)) && matches!(rhsty, Type::Ptr(_)) {
+            let castlhs = self.typecast(lhs, LLVMInt64Type());
+            let castrhs = self.typecast(rhs, LLVMInt64Type());
+            return Ok((
+                self.gen_int_binary_op(castlhs, castrhs, op),
+                Some(Type::LLong(Sign::Signed)),
+            ));
         }
+
+        if let Type::Ptr(elem_ty) = lhsty {
+            return self.gen_ptr_binary_op(lhs, rhs, Type::Ptr(elem_ty), op);
+        }
+        if let Type::Ptr(elem_ty) = rhsty {
+            return self.gen_ptr_binary_op(rhs, lhs, Type::Ptr(elem_ty), op);
+        }
+
+        let (conv_ty, conv_llvm_ty) = if lhsty.priority() < rhsty.priority() {
+            (rhsty.clone(), LLVMTypeOf(rhs))
+        } else {
+            (lhsty.clone(), LLVMTypeOf(lhs))
+        };
+
+        if conv_ty.is_float_ty() {
+            let castrhs = self.typecast(rhs, conv_llvm_ty);
+            let castlhs = self.typecast(lhs, conv_llvm_ty);
+            return Ok((
+                self.gen_double_binary_op(castlhs, castrhs, op),
+                Some(conv_ty),
+            ));
+        }
+
+        if conv_ty.is_int_ty() {
+            let castrhs = self.typecast(rhs, conv_llvm_ty);
+            let castlhs = self.typecast(lhs, conv_llvm_ty);
+            return Ok((
+                self.gen_int_binary_op(castlhs, castrhs, op),
+                Some(conv_ty),
+            ));
+        }
+
         Err(Error::MsgWithLine(
             "unsupported operation".to_string(),
             lhsast.line,
@@ -1424,9 +1391,9 @@ impl Codegen {
         let ty = ptr_ty
             .unwrap()
             .get_elem_ty()
-            .or_else(|| {
-                panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type")
-            })
+            .or_else(
+                || panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type"),
+            )
             .unwrap();
         let strct_name = ty.get_name();
         assert!(strct_name.is_some());

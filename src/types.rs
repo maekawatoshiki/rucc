@@ -72,6 +72,14 @@ impl Type {
             _ => None,
         }
     }
+    // TODO: I can't come up with a good name...
+    pub fn conversion(self) -> Type {
+        match self {
+            Type::Array(elem_ty, _) => Type::Ptr(elem_ty),
+            Type::Func(_, _, _) => Type::Ptr(Rc::new(self)),
+            _ => self,
+        }
+    }
     pub fn is_int_ty(&self) -> bool {
         match self { 
             &Type::Char(_) | &Type::Short(_) | &Type::Int(_) | &Type::Long(_) | &Type::LLong(_) => {
@@ -88,6 +96,24 @@ impl Type {
     }
     pub fn is_arith_ty(&self) -> bool {
         self.is_int_ty() || self.is_float_ty()
+    }
+    pub fn priority(&self) -> usize {
+        match self {
+            &Type::Void => 0,
+            &Type::Char(_) => 1,
+            &Type::Short(_) => 2,
+            &Type::Int(_) => 3,
+            &Type::Long(_) => 4,
+            &Type::LLong(_) => 5,
+            &Type::Float => 6,
+            &Type::Double => 7,
+            &Type::Array(_, _) => 8,
+            &Type::Enum => 9,
+            &Type::Ptr(_) => 10,
+            &Type::Struct(_, _) |
+            &Type::Union(_, _, _) => 11,
+            &Type::Func(_, _, _) => 12, 
+        }
     }
 
     pub fn calc_size(&self) -> usize {
