@@ -175,6 +175,7 @@ impl Codegen {
                 self.gen_for(&*init, &*cond, &*step, &*body)
             }
             node::ASTKind::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
+            node::ASTKind::DoWhile(ref cond, ref body) => self.gen_do_while(&*cond, &*body),
             node::ASTKind::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
             node::ASTKind::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
@@ -704,6 +705,37 @@ impl Codegen {
         }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
+        self.continue_labels.pop_back();
+        self.break_labels.pop_back();
+
+        Ok((ptr::null_mut(), None))
+    }
+    unsafe fn gen_do_while(&mut self, cond: &node::AST, body: &node::AST) -> CodegenResult {
+        let func = self.cur_func.unwrap();
+
+        let bb_before_loop =
+            LLVMAppendBasicBlock(func, CString::new("before_loop").unwrap().as_ptr());
+        let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
+        let bb_after_loop =
+            LLVMAppendBasicBlock(func, CString::new("after_loop").unwrap().as_ptr());
+        self.continue_labels.push_back(bb_loop);
+        self.break_labels.push_back(bb_after_loop);
+
+        LLVMBuildBr(self.builder, bb_before_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_before_loop);
+        LLVMBuildBr(self.builder, bb_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_loop);
+        try!(self.gen(body));
+
+        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val = self.val_to_bool(cond_val_tmp);
+        LLVMBuildCondBr(self.builder, cond_val, bb_before_loop, bb_after_loop);
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
+        self.continue_labels.pop_back();
+        self.break_labels.pop_back();
 
         Ok((ptr::null_mut(), None))
     }
@@ -758,6 +790,8 @@ impl Codegen {
         }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
+        self.continue_labels.pop_back();
+        self.break_labels.pop_back();
 
         Ok((ptr::null_mut(), None))
     }

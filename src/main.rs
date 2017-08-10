@@ -63,7 +63,6 @@ fn compile_examples() {
 
         Command::new("./rucc.sh")
             .arg(name.to_string())
-            // .arg("--release")
             .spawn()
             .expect("failed to run")
             .wait()

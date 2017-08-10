@@ -46,6 +46,7 @@ pub enum ASTKind {
     If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
     For(Rc<AST>, Rc<AST>, Rc<AST>, Rc<AST>), // init, cond, step, body
     While(Rc<AST>, Rc<AST>), // cond, body
+    DoWhile(Rc<AST>, Rc<AST>), // cond, body
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
     Break,
@@ -232,6 +233,13 @@ impl AST {
                 print!(" (");
                 body.show();
                 print!(")");
+            }
+            ASTKind::DoWhile(ref cond, ref body) => {
+                print!("(do-while ");
+                cond.show();
+                print!("(");
+                body.clone().show();
+                print!("))");
             }
             ASTKind::While(ref cond, ref body) => {
                 print!("(while ");

@@ -231,6 +231,7 @@ impl<'a> Parser<'a> {
                 Keyword::If => return self.read_if_stmt(),
                 Keyword::For => return self.read_for_stmt(),
                 Keyword::While => return self.read_while_stmt(),
+                Keyword::Do => return self.read_do_while_stmt(),
                 Keyword::Continue => return self.read_continue_stmt(),
                 Keyword::Break => return self.read_break_stmt(),
                 Keyword::Return => return self.read_return_stmt(),
@@ -313,6 +314,23 @@ impl<'a> Parser<'a> {
         }
         let body = try!(self.read_stmt());
         Ok(AST::new(ASTKind::While(Rc::new(cond), Rc::new(body)), 0))
+    }
+    fn read_do_while_stmt(&mut self) -> ParseR<AST> {
+        let body = try!(self.read_stmt());
+        if !try!(self.lexer.skip_keyword(Keyword::While)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected 'while'");
+        }
+        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected '('");
+        }
+        let cond = try!(self.read_expr());
+        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected ')'");
+        }
+        Ok(AST::new(ASTKind::DoWhile(Rc::new(cond), Rc::new(body)), 0))
     }
     fn read_continue_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.get_cur_line();
