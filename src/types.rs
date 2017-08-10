@@ -49,7 +49,7 @@ impl Type {
             _ => None,
         }
     }
-    pub fn get_field_ty(&self, field_name: String) -> Option<Type> {
+    pub fn get_field_ty(&self, field_name: &str) -> Option<Type> {
         match self {
             &Type::Struct(_, ref fields) |
             &Type::Union(_, ref fields, _) => {
@@ -71,6 +71,23 @@ impl Type {
             &Type::Union(ref name, _, _) => Some(name.to_owned()),
             _ => None,
         }
+    }
+    pub fn is_int_ty(&self) -> bool {
+        match self { 
+            &Type::Char(_) | &Type::Short(_) | &Type::Int(_) | &Type::Long(_) | &Type::LLong(_) => {
+                true
+            }
+            _ => false,
+        }
+    }
+    pub fn is_float_ty(&self) -> bool {
+        match self { 
+            &Type::Float | &Type::Double => true,
+            _ => false,
+        }
+    }
+    pub fn is_arith_ty(&self) -> bool {
+        self.is_int_ty() || self.is_float_ty()
     }
 
     pub fn calc_size(&self) -> usize {

@@ -1184,12 +1184,19 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
     fn read_ternary(&mut self, cond: AST) -> ParseR<AST> {
-        let then_expr = try!(self.read_expr());
+        let mut then_expr = try!(self.read_expr());
         if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ':'");
         }
-        let else_expr = try!(self.read_assign());
+        let mut else_expr = try!(self.read_assign());
+        let then_ty = try!(self.get_expr_returning_ty(&then_expr));
+        let else_ty = try!(self.get_expr_returning_ty(&else_expr));
+        if then_ty.is_arith_ty() && else_ty.is_arith_ty() {
+            let ty = self.usual_binary_ty_cov(then_ty, else_ty);
+            then_expr = self.cast_ast(&then_expr, &ty);
+            else_expr = self.cast_ast(&else_expr, &ty);
+        }
         Ok(AST::new(
             ASTKind::TernaryOp(
                 Rc::new(cond),
@@ -1775,6 +1782,12 @@ impl<'a> Parser<'a> {
             ASTKind::UnaryOp(ref expr, node::CUnaryOps::Addr) => {
                 Type::Ptr(Rc::new(try!(self.get_expr_returning_ty(&*expr))))
             }
+            ASTKind::StructRef(ref expr, ref name) => {
+                try!(self.get_expr_returning_ty(expr))
+                    .get_field_ty(name.as_str())
+                    .unwrap()
+            }
+            ASTKind::TypeCast(_, ref ty) => ty.clone(),
             ASTKind::BinaryOp(ref lhs, ref rhs, ref op) => {
                 try!(self.get_binary_expr_ty(&*lhs, &*rhs, &*op))
             }
@@ -1783,12 +1796,19 @@ impl<'a> Parser<'a> {
                 let func_ty = try!(self.get_expr_returning_ty(func));
                 func_ty.get_return_ty().unwrap()
             }
-            _ => panic!(),
+            _ => panic!(format!("unsupported: {:?}", ast.kind)),
         };
         Ok(size)
     }
     fn calc_sizeof(&mut self, ast: &AST) -> ParseR<usize> {
         let ty = try!(self.get_expr_returning_ty(ast));
         Ok(ty.calc_size())
+    }
+
+    fn cast_ast(&mut self, expr: &AST, ty: &Type) -> AST {
+        AST::new(
+            ASTKind::TypeCast(Rc::new(expr.clone()), ty.clone()),
+            expr.line,
+        )
     }
 }
