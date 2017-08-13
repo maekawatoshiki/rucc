@@ -37,6 +37,7 @@ pub enum ASTKind {
     Variable(Type, String),
     VariableDecl(Type, String, StorageClass, Option<Rc<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
+    ConstStruct(Vec<AST>),
     UnaryOp(Rc<AST>, CUnaryOps),
     BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
     TernaryOp(Rc<AST>, Rc<AST>, Rc<AST>), // cond then else
@@ -174,6 +175,13 @@ impl AST {
             }
             ASTKind::ConstArray(ref elems) => {
                 print!("(const-array ");
+                for elem in elems {
+                    elem.show();
+                }
+                print!(")");
+            }
+            ASTKind::ConstStruct(ref elems) => {
+                print!("(const-struct ");
                 for elem in elems {
                     elem.show();
                 }

@@ -39,6 +39,7 @@ impl VarInfo {
     }
 }
 
+#[derive(Clone)]
 struct RectypeInfo {
     field_pos: HashMap<String, u32>,
     field_types: Vec<Type>,
@@ -216,6 +217,13 @@ impl Codegen {
             Error::Msg(msg) => Err(Error::MsgWithLine(msg, ast.line)),
             Error::MsgWithLine(msg, line) => Err(Error::MsgWithLine(msg, line)),
         })
+    }
+    unsafe fn gen_init(&mut self, ast: &node::AST, ty: &Type) -> CodegenResult {
+        match ast.kind {
+            node::ASTKind::ConstArray(ref elems) => self.gen_const_array_for_init(elems, ty),
+            node::ASTKind::ConstStruct(ref elems) => self.gen_const_struct_for_init(elems, ty),
+            _ => self.gen(ast),
+        }
     }
 
     pub unsafe fn gen_func_def(
@@ -396,8 +404,17 @@ impl Codegen {
             }
             Type::Struct(_, _) |
             Type::Union(_, _, _) => {
-                // TODO: implement asap
-                // panic!("sorry. this inst is not supported now.");
+                let init_val = match init_ast.kind {
+                    node::ASTKind::ConstStruct(ref elems) => {
+                        try!(self.gen_const_struct_for_init(elems, ty)).0
+                    }
+                    _ => {
+                        println!("not supported");
+                        init_ast.show();
+                        try!(self.gen(init_ast)).0
+                    }
+                };
+                LLVMSetInitializer(gvar, init_val);
                 Ok((ptr::null_mut(), None))
             }
             _ => {
@@ -442,12 +459,7 @@ impl Codegen {
         let llvm_elem_ty = self.type_to_llvmty(elem_ty);
         let mut elems = Vec::new();
         for e in elems_ast {
-            let elem = match e.kind {
-                node::ASTKind::ConstArray(ref elems) => {
-                    try!(self.gen_const_array_for_init(elems, elem_ty)).0
-                }
-                _ => try!(self.gen(e)).0,
-            };
+            let elem = try!(self.gen_init(e, elem_ty)).0;
             elems.push(self.typecast(elem, llvm_elem_ty));
         }
         for _ in 0..(len - elems_ast.len() as i32) {
@@ -458,6 +470,34 @@ impl Codegen {
                 llvm_elem_ty,
                 elems.as_mut_slice().as_mut_ptr(),
                 len as u32,
+            ),
+            Some(ty.clone()),
+        ))
+    }
+    unsafe fn gen_const_struct_for_init(
+        &mut self,
+        elems_ast: &Vec<node::AST>,
+        ty: &Type,
+    ) -> CodegenResult {
+        let struct_name = ty.get_name().unwrap();
+        let rectype = (*self.llvm_struct_map.get(struct_name.as_str()).unwrap()).clone();
+
+        let mut elems = Vec::new();
+        for ((elem_ast, field_ty), field_llvm_ty) in
+            elems_ast.iter().zip(rectype.field_types.iter()).zip(
+                rectype
+                    .field_llvm_types
+                    .iter(),
+            )
+        {
+            let elem_val = try!(self.gen_init(elem_ast, field_ty)).0;
+            elems.push(self.typecast(elem_val, *field_llvm_ty));
+        }
+        Ok((
+            LLVMConstNamedStruct(
+                rectype.llvm_rectype,
+                elems.as_mut_slice().as_mut_ptr(),
+                elems_ast.len() as u32,
             ),
             Some(ty.clone()),
         ))

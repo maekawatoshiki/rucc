@@ -471,23 +471,60 @@ impl<'a> Parser<'a> {
             false
         }
     }
+    fn is_string(&self, ty: &Type) -> bool {
+        if let &Type::Array(ref elem_ty, _) = ty {
+            if matches!(**elem_ty, Type::Char(Sign::Signed)) {
+                return true;
+            }
+        }
+        false
+    }
     fn read_decl_init(&mut self, ty: &mut Type) -> ParseR<AST> {
         // TODO: implement for like 'int a[] = {...}, char *s="str";'
         if try!(self.lexer.peek_symbol_token_is(Symbol::OpeningBrace)) {
+            return self.read_initializer_list(ty);
+        } else if self.is_string(ty) {
+            let tok = try!(self.lexer.get());
+            if let TokenKind::String(s) = tok.kind {
+                return self.read_string_initializer(s);
+            }
+            self.lexer.unget(tok);
+        }
+        self.read_assign()
+    }
+    fn read_initializer_elem(&mut self, ty: &mut Type) -> ParseR<AST> {
+        if match *ty {
+            Type::Array(_, _) |
+            Type::Struct(_, _) |
+            Type::Union(_, _, _) => true,
+            _ => false,
+        }
+        {
             self.read_initializer_list(ty)
-        } else if let TokenKind::String(s) = try!(self.lexer.peek()).kind {
-            try!(self.lexer.get());
-            self.read_string_initializer(s)
+        } else if try!(self.lexer.peek_symbol_token_is(Symbol::OpeningBrace)) {
+            let elem = self.read_initializer_elem(ty);
+            if !try!(self.lexer.skip_symbol(Symbol::ClosingParen) ) {
+                let peek = try!(self.lexer.peek());
+                self.show_error_token(&peek, "expected '}'");
+                return Err(Error::Something);
+            }
+            elem
         } else {
             self.read_assign()
         }
     }
     fn read_initializer_list(&mut self, ty: &mut Type) -> ParseR<AST> {
-        match ty {
-            &mut Type::Array(_, _) => {
-                try!(self.lexer.skip_symbol(Symbol::OpeningBrace));
-                self.read_array_initializer(ty)
+        if self.is_string(ty) {
+            let tok = try!(self.lexer.get());
+            if let TokenKind::String(s) = tok.kind {
+                return self.read_string_initializer(s);
             }
+            self.lexer.unget(tok);
+        }
+        match ty {
+            &mut Type::Array(_, _) => self.read_array_initializer(ty),
+            &mut Type::Struct(_, _) |
+            &mut Type::Union(_, _, _) => self.read_struct_initializer(ty),
             _ => self.read_assign(),
         }
     }
@@ -502,15 +539,22 @@ impl<'a> Parser<'a> {
         ))
     }
     fn read_array_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
+        let has_brace = try!(self.lexer.skip_symbol(Symbol::OpeningBrace));
+
         if let &mut Type::Array(ref elem_ty, ref mut len) = ty {
             let is_flexible = *len < 0;
             let mut elems = Vec::new();
-            let mut ety = (**elem_ty).clone();
+            let mut elem_ty = (**elem_ty).clone();
             loop {
-                if try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
+                let tok = try!(self.lexer.get());
+                if let TokenKind::Symbol(Symbol::ClosingBrace) = tok.kind {
+                    if !has_brace {
+                        self.lexer.unget(tok);
+                    }
                     break;
                 }
-                let elem = try!(self.read_decl_init(&mut ety));
+                self.lexer.unget(tok);
+                let elem = try!(self.read_initializer_elem((&mut elem_ty)));
                 elems.push(elem);
                 try!(self.lexer.skip_symbol(Symbol::Comma));
             }
@@ -526,6 +570,56 @@ impl<'a> Parser<'a> {
             self.show_error("initializer of array must be array");
             Err(Error::Something)
         }
+    }
+    fn read_struct_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
+        let has_brace = try!(self.lexer.skip_symbol(Symbol::OpeningBrace));
+
+        // TODO: makes no sense. fix!
+        let mut fields_types = if let &mut Type::Struct(_, ref fields) = ty {
+            let mut fields_types = Vec::new();
+            for field in fields {
+                fields_types.push(if let ASTKind::VariableDecl(ref ty, _, _, _) = field.kind {
+                    ty
+                } else {
+                    panic!();
+                });
+            }
+            fields_types
+        } else if let &mut Type::Union(_, ref fields, _) = ty {
+            let mut fields_types = Vec::new();
+            for field in fields {
+                fields_types.push(if let ASTKind::VariableDecl(ref ty, _, _, _) = field.kind {
+                    ty
+                } else {
+                    panic!();
+                });
+            }
+            fields_types
+        } else {
+            // maybe, this block never reach though.
+            self.show_error("initializer of struct must be array");
+            return Err(Error::Something);
+        };
+
+        let mut elems = Vec::new();
+        let mut field_type = fields_types.iter_mut();
+        loop {
+            let tok = try!(self.lexer.get());
+            if let TokenKind::Symbol(Symbol::ClosingBrace) = tok.kind {
+                if !has_brace {
+                    self.lexer.unget(tok);
+                }
+                break;
+            }
+            self.lexer.unget(tok);
+            let elem = try!(self.read_initializer_elem(&mut field_type.next().unwrap().clone()));
+            elems.push(elem);
+            try!(self.lexer.skip_symbol(Symbol::Comma));
+        }
+        Ok(AST::new(
+            ASTKind::ConstStruct(elems),
+            *self.lexer.get_cur_line(),
+        ))
     }
     fn skip_type_qualifiers(&mut self) -> ParseR<()> {
         while try!(self.lexer.skip_keyword(Keyword::Const)) ||
