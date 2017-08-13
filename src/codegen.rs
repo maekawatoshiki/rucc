@@ -550,22 +550,16 @@ impl Codegen {
         varty: &Type,
         init: &node::AST,
     ) -> CodegenResult {
+        let init_val = try!(self.gen_init(init, varty)).0;
         match *varty {
-            Type::Array(_, _) => {
-                let init_val = match init.kind {
-                    node::ASTKind::ConstArray(ref elems) => {
-                        try!(self.gen_const_array_for_init(elems, varty)).0
-                    }
-                    _ => {
-                        println!("not supported");
-                        try!(self.gen(init)).0
-                    }
-                };
+            Type::Array(_, _) |
+            Type::Struct(_, _) |
+            Type::Union(_, _, _) => {
                 let llvm_memcpy = self.global_varmap.get("llvm.memcpy.p0i8.p0i8.i32").unwrap();
                 let init_ary = LLVMAddGlobal(
                     self.module,
                     LLVMGetElementType(LLVMTypeOf(var)),
-                    CString::new("constary").unwrap().as_ptr(),
+                    CString::new("const_initval").unwrap().as_ptr(),
                 );
                 LLVMSetInitializer(init_ary, init_val);
                 Ok((
@@ -594,7 +588,6 @@ impl Codegen {
                 ))
             }
             _ => {
-                let init_val = try!(self.gen(init)).0;
                 Ok((
                     LLVMBuildStore(
                         self.builder,
