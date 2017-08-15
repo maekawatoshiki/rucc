@@ -22,6 +22,14 @@ macro_rules! matches {
     }
 }
 
+fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
+    match ast.kind {
+        node::ASTKind::Load(ref var) |
+        node::ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => var, 
+        _ => ast,
+    }
+}
+
 // used by global_varmap and local_varmap(not to use tuples)
 #[derive(Clone)]
 struct VarInfo {
@@ -830,20 +838,13 @@ impl Codegen {
     }
 
     unsafe fn gen_unary_op(&mut self, expr: &node::AST, op: &node::CUnaryOps) -> CodegenResult {
-        fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
-            match ast.kind {
-                node::ASTKind::Load(ref var) |
-                node::ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => var, 
-                _ => ast,
-            }
-        }
         match *op {
             node::CUnaryOps::LNot => {
                 let (val, ty) = try!(self.gen(expr));
                 Ok((self.val_to_bool_not(val), ty))
             }
             node::CUnaryOps::Deref => self.gen_load(expr),
-            node::CUnaryOps::Addr => self.gen(expr),
+            node::CUnaryOps::Addr => self.gen(retrieve_from_load(expr)),
             node::CUnaryOps::Minus => {
                 let (val, ty) = try!(self.gen(expr));
                 Ok((
@@ -905,7 +906,7 @@ impl Codegen {
             node::CBinOps::LOr => return self.gen_logor_op(lhsast, rhsast),
             // assignment
             node::CBinOps::Assign => {
-                return self.gen_assign(lhsast, rhsast);
+                return self.gen_assign(retrieve_from_load(lhsast), rhsast);
             }
             _ => {}
         }
@@ -1446,7 +1447,7 @@ impl Codegen {
     }
 
     unsafe fn gen_struct_field(&mut self, expr: &node::AST, field_name: String) -> CodegenResult {
-        let (val, ptr_ty) = try!(self.get_struct_field_val(expr, field_name));
+        let (val, ptr_ty) = try!(self.get_struct_field_val(retrieve_from_load(expr), field_name));
         Ok((val, ptr_ty))
     }
     unsafe fn get_struct_field_val(
@@ -1580,7 +1581,7 @@ impl Codegen {
         }
         let args_len = args.len();
 
-        let func = match ast.kind {
+        let func = match retrieve_from_load(ast).kind {
             node::ASTKind::Variable(_, ref name) => {
                 if let Some(varinfo) = self.lookup_var(name) {
                     varinfo
@@ -1592,7 +1593,7 @@ impl Codegen {
                 }
             }
             _ => {
-                let (val, ty) = try!(self.gen(ast));
+                let (val, ty) = try!(self.gen(retrieve_from_load(ast)));
                 VarInfo::new(ty.unwrap(), LLVMTypeOf(val), val)
             }
         };

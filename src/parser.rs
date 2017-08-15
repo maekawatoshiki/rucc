@@ -31,13 +31,6 @@ pub struct Parser<'a> {
     tags: VecDeque<HashMap<String, Type>>,
 }
 
-fn retrieve_from_load(ast: &AST) -> AST {
-    match ast.kind {
-        ASTKind::Load(ref var) |
-        ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => (**var).clone(),
-        _ => (*ast).clone(),
-    }
-}
 macro_rules! matches {
     ($e:expr, $p:pat) => {
         match $e {
@@ -1174,11 +1167,7 @@ impl<'a> Parser<'a> {
         }
         let assign = |lhs, rhs, line| -> AST {
             AST::new(
-                ASTKind::BinaryOp(
-                    Rc::new(retrieve_from_load(&lhs)),
-                    Rc::new(rhs),
-                    node::CBinOps::Assign,
-                ),
+                ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Assign),
                 line,
             )
         };
@@ -1559,7 +1548,7 @@ impl<'a> Parser<'a> {
                 let var = try!(self.read_cast());
                 return Ok(AST::new(
                     ASTKind::BinaryOp(
-                        Rc::new(retrieve_from_load(&var)),
+                        Rc::new(var.clone()),
                         Rc::new(AST::new(
                             ASTKind::BinaryOp(
                                 Rc::new(var),
@@ -1578,7 +1567,7 @@ impl<'a> Parser<'a> {
                 let var = try!(self.read_cast());
                 return Ok(AST::new(
                     ASTKind::BinaryOp(
-                        Rc::new(retrieve_from_load(&var)),
+                        Rc::new(var.clone()),
                         Rc::new(AST::new(
                             ASTKind::BinaryOp(
                                 Rc::new(var),
@@ -1604,7 +1593,7 @@ impl<'a> Parser<'a> {
             TokenKind::Symbol(Symbol::Ampersand) => {
                 return Ok(AST::new(
                     ASTKind::UnaryOp(
-                        Rc::new(retrieve_from_load(&try!(self.read_cast()))),
+                        Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::Addr,
                     ),
                     *self.lexer.get_cur_line(),
@@ -1645,7 +1634,7 @@ impl<'a> Parser<'a> {
         let mut ast = try!(self.read_primary());
         loop {
             if try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-                ast = try!(self.read_func_call(retrieve_from_load(&ast)));
+                ast = try!(self.read_func_call(ast));
                 continue;
             }
             if try!(self.lexer.skip_symbol(Symbol::OpeningBoxBracket)) {
@@ -1657,14 +1646,14 @@ impl<'a> Parser<'a> {
             }
             if try!(self.lexer.skip_symbol(Symbol::Point)) {
                 ast = AST::new(
-                    ASTKind::Load(Rc::new(try!(self.read_field(retrieve_from_load(&ast))))),
+                    ASTKind::Load(Rc::new(try!(self.read_field(ast)))),
                     *self.lexer.get_cur_line(),
                 );
                 continue;
             }
             if try!(self.lexer.skip_symbol(Symbol::Arrow)) {
                 let line = *self.lexer.get_cur_line();
-                let field = try!( self.read_field(AST::new(ASTKind::UnaryOp(Rc::new(retrieve_from_load(&ast)),
+                let field = try!(self.read_field(AST::new(ASTKind::UnaryOp(Rc::new(ast),
                                                               node::CUnaryOps::Deref),
                                              line)));
                 ast = AST::new(ASTKind::Load(Rc::new(field)), line);
@@ -1877,8 +1866,8 @@ impl<'a> Parser<'a> {
             ASTKind::String(ref s) => {
                 Type::Array(Rc::new(Type::Char(Sign::Signed)), s.len() as i32 + 1)
             }
-            ASTKind::Load(ref v) => try!(self.get_expr_returning_ty(&*v)),
-            ASTKind::Variable(ref ty, _) => (*ty).clone(),
+            ASTKind::Load(ref v) => try!(self.get_expr_returning_ty(&*v)).get_elem_ty().unwrap(),
+            ASTKind::Variable(ref ty, _) => Type::Ptr(Rc::new((*ty).clone())),
             ASTKind::UnaryOp(_, node::CUnaryOps::LNot) => Type::Int(Sign::Signed),
             ASTKind::UnaryOp(ref expr, node::CUnaryOps::Minus) |
             ASTKind::UnaryOp(ref expr, node::CUnaryOps::Inc) |
@@ -1895,9 +1884,8 @@ impl<'a> Parser<'a> {
                 Type::Ptr(Rc::new(try!(self.get_expr_returning_ty(&*expr))))
             }
             ASTKind::StructRef(ref expr, ref name) => {
-                try!(self.get_expr_returning_ty(expr))
-                    .get_field_ty(name.as_str())
-                    .unwrap()
+                let ty = try!(self.get_expr_returning_ty(expr));
+                Type::Ptr(Rc::new(ty.get_field_ty(name.as_str()).unwrap()))
             }
             ASTKind::TypeCast(_, ref ty) => ty.clone(),
             ASTKind::BinaryOp(ref lhs, ref rhs, ref op) => {
