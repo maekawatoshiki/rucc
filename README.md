@@ -16,13 +16,19 @@ $ apt-get install llvm-3.8
 
 # RUN
 
-- You had better use ``./rucc.sh``
+- First, do test
 
 ```sh
-$ # slow(cargo build)
-$ ./rucc.sh [filename]
-$ # fast(cargo build --release)
-$ ./rucc.sh [filename] --release
+$ cargo test
+```
+
+- After test exited successfully, you can try rucc easily with ``./rucc.sh``!
+
+```sh
+$ # slow( use binary created with `cargo build` )
+$ ./rucc.sh [filename (*.c)]
+$ # fast( use binary created with `cargo build --release` )
+$ ./rucc.sh [filename (*.c)] --release
 ```
 
 # FORK AND PULL REQUEST LIFECYCLE
