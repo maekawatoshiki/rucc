@@ -36,27 +36,27 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn get_elem_ty(&self) -> Option<Type> {
+    pub fn get_elem_ty<'a>(&'a self) -> Option<&'a Type> {
         match self {
             &Type::Ptr(ref elem_ty) |
-            &Type::Array(ref elem_ty, _) => Some((**elem_ty).clone()),
+            &Type::Array(ref elem_ty, _) => Some(&**elem_ty),
             _ => None,
         }
     }
-    pub fn get_return_ty(&self) -> Option<Type> {
+    pub fn get_return_ty<'a>(&'a self) -> Option<&'a Type> {
         match self {
-            &Type::Func(ref ret_ty, _, _) => Some((**ret_ty).clone()),
+            &Type::Func(ref ret_ty, _, _) => Some(&**ret_ty),
             _ => None,
         }
     }
-    pub fn get_field_ty(&self, field_name: &str) -> Option<Type> {
+    pub fn get_field_ty<'a>(&'a self, field_name: &str) -> Option<&'a Type> {
         match self {
             &Type::Struct(_, ref fields) |
             &Type::Union(_, ref fields, _) => {
                 for field in fields {
                     if let ASTKind::VariableDecl(ref ty, ref name, _, _) = field.kind {
                         if *name == field_name {
-                            return Some((*ty).clone());
+                            return Some(&*ty);
                         }
                     }
                 }

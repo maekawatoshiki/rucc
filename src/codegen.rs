@@ -1085,9 +1085,10 @@ impl Codegen {
     }
 
     unsafe fn gen_assign(&mut self, lhsast: &node::AST, rhsast: &node::AST) -> CodegenResult {
-        let (dst, ptr_dst_ty) = try!(self.gen(lhsast));
+        let (dst, ptr_dst_ty_w) = try!(self.gen(lhsast));
+        let ptr_dst_ty = ptr_dst_ty_w.unwrap();
         // self.gen returns Ptr(real_type)
-        let dst_ty = match ptr_dst_ty.unwrap().get_elem_ty() { 
+        let dst_ty = match ptr_dst_ty.get_elem_ty() { 
             Some(ok) => ok,
             None => {
                 return Err(Error::MsgWithLine(
@@ -1098,7 +1099,7 @@ impl Codegen {
             }
         };
         let (src, _src_ty) = try!(self.gen(rhsast));
-        let a = self.type_to_llvmty(&dst_ty);
+        let a = LLVMGetElementType(LLVMTypeOf(dst));
         let casted_src = self.typecast(src, a);
         LLVMBuildStore(self.builder, casted_src, dst);
         Ok((
@@ -1455,9 +1456,9 @@ impl Codegen {
         expr: &node::AST,
         field_name: String,
     ) -> CodegenResult {
-        let (strct, ptr_ty) = try!(self.gen(expr));
+        let (strct, ptr_ty_w) = try!(self.gen(expr));
+        let ptr_ty = ptr_ty_w.unwrap();
         let ty = ptr_ty
-            .unwrap()
             .get_elem_ty()
             .or_else(
                 || panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type"),

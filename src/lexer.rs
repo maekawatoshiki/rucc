@@ -133,6 +133,22 @@ macro_rules! ident_mut_val {
         }
     }
 }
+macro_rules! retrieve_str {
+    ($e:expr) => {
+        match &$e.kind {
+            &TokenKind::String(ref s) => s.to_string(),
+            _ => panic!()
+        }
+    }
+}
+macro_rules! matches {
+    ($e:expr, $p:pat) => {
+        match $e {
+            $p => true,
+            _ => false
+        }
+    }
+}
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Token {
@@ -900,24 +916,21 @@ impl Lexer {
     }
 
     pub fn get(&mut self) -> ParseR<Token> {
-        self.get_token().and_then(|tok| {
-            match &tok.kind {
-                &TokenKind::String(ref s) => {
-                    if let TokenKind::String(s2) = try!(self.peek()).kind {
-                        // TODO: makes no sense...
-                        try!(self.get());
-                        let mut new_tok = tok.clone();
-                        let mut concat_str = s.clone();
-                        concat_str.push_str(s2.as_str());
-                        new_tok.kind = TokenKind::String(concat_str);
-                        Ok(new_tok)
-                    } else {
-                        Ok(tok.clone())
-                    }
-                }
-                _ => Ok(tok.clone()),
-            }
-        })
+        self.get_token().and_then(
+            |tok| if matches!(tok.kind, TokenKind::String(_)) &&
+                matches!(try!(self.peek()).kind, TokenKind::String(_))
+            {
+                let s1 = retrieve_str!(tok);
+                let s2 = retrieve_str!(try!(self.get()));
+                let mut new_tok = tok;
+                let mut concat_str = s1;
+                concat_str.push_str(s2.as_str());
+                new_tok.kind = TokenKind::String(concat_str);
+                Ok(new_tok)
+            } else {
+                Ok(tok)
+            },
+        )
     }
 
     pub fn peek(&mut self) -> ParseR<Token> {
@@ -959,16 +972,16 @@ impl Lexer {
             "./include/",
             "",
         ];
-        let mut real_filename = String::new();
+        let mut abs_filename = String::new();
         let mut found = false;
         for header_path in header_paths {
-            real_filename = format!("{}{}", header_path, filename);
-            if path::Path::new(real_filename.as_str()).exists() {
+            abs_filename = format!("{}{}", header_path, filename);
+            if path::Path::new(abs_filename.as_str()).exists() {
                 found = true;
                 break;
             }
         }
-        if found { Some(real_filename) } else { None }
+        if found { Some(abs_filename) } else { None }
     }
     fn read_headerfile_name(&mut self) -> ParseR<String> {
         let mut name = "".to_string();
@@ -980,6 +993,7 @@ impl Lexer {
         } else {
             let tok = try!(self.do_read_token());
             if let TokenKind::String(s) = tok.kind {
+                println!("sorry, using \"double quote\" in #include is currently not supported.");
                 name = s;
             } else {
                 error::error_exit(*self.get_cur_line(), "expected '<' or '\"'");
@@ -990,24 +1004,24 @@ impl Lexer {
     fn read_include(&mut self) -> ParseR<()> {
         // this will be a function
         let filename = try!(self.read_headerfile_name());
-        let real_filename = match self.try_include(filename.as_str()) {
+        let abs_filename = match self.try_include(filename.as_str()) {
             Some(f) => f,
             _ => {
                 println!("error: {}: not found '{}'", *self.get_cur_line(), filename);
                 process::exit(-1)
             }
         };
-        // DEBUG: println!("include filename: {}", real_filename);
+        // DEBUG: println!("include filename: {}", abs_filename);
 
         let mut include_file = OpenOptions::new()
             .read(true)
-            .open(real_filename.to_string())
+            .open(abs_filename.to_string())
             .unwrap();
         let mut body = String::with_capacity(512);
         include_file.read_to_string(&mut body).ok().expect(
             "not found file",
         );
-        self.filename.push_back(real_filename);
+        self.filename.push_back(abs_filename);
         unsafe {
             self.peek.push_back(body.as_mut_vec().clone());
         }
@@ -1019,7 +1033,7 @@ impl Lexer {
     fn read_define_obj_macro(&mut self, name: String) -> ParseR<()> {
         // DEBUG: println!("\tmacro: {}", name);
 
-        let mut body: Vec<Token> = Vec::new();
+        let mut body = Vec::new();
         // DEBUG: print!("\tmacro body: ");
         loop {
             let c = try!(self.do_read_token());
@@ -1035,11 +1049,11 @@ impl Lexer {
     }
     fn read_define_func_macro(&mut self, name: String) -> ParseR<()> {
         // read macro arguments
-        let mut args: HashMap<String, usize> = HashMap::new();
+        let mut params = HashMap::new();
         let mut count = 0usize;
         loop {
             let arg = ident_val!(try!(self.get_token()));
-            args.insert(arg, count);
+            params.insert(arg, count);
             if try!(self.skip_symbol(Symbol::ClosingParen)) {
                 break;
             }
@@ -1060,10 +1074,10 @@ impl Lexer {
             //  and set macro_position
             let maybe_macro_name = ident_val!(tok);
             // print!("{}{}", if tok.space { " " } else { "" }, tok.val);
-            if args.contains_key(maybe_macro_name.as_str()) {
+            if params.contains_key(maybe_macro_name.as_str()) {
                 let mut macro_param = tok;
                 macro_param.kind = TokenKind::MacroParam;
-                macro_param.macro_position = *args.get(maybe_macro_name.as_str()).unwrap();
+                macro_param.macro_position = *params.get(maybe_macro_name.as_str()).unwrap();
                 body.push(macro_param);
             } else {
                 body.push(tok);
@@ -1074,7 +1088,7 @@ impl Lexer {
     }
     fn read_define(&mut self) -> ParseR<()> {
         let mcro = try!(self.do_read_token());
-        // assert_eq!(mcro.kind, TokenKind::Identifier);
+        assert!(matches!(mcro.kind, TokenKind::Identifier(_)));
         // println!("define: {}", mcro.val);
 
         let t = try!(self.do_read_token());
@@ -1087,7 +1101,7 @@ impl Lexer {
     }
     fn read_undef(&mut self) -> ParseR<()> {
         let mcro = try!(self.do_read_token());
-        // assert_eq!(mcro.kind, TokenKind::Identifier);
+        assert!(matches!(mcro.kind, TokenKind::Identifier(_)));
         self.macro_map.remove(ident_val!(mcro).as_str());
         Ok(())
     }
@@ -1100,27 +1114,26 @@ impl Lexer {
     }
 
     fn read_defined_op(&mut self) -> ParseR<Token> {
-        // TODO: add err handler
         let mut tok = try!(self.do_read_token());
         if ident_val!(tok) == "(" {
             tok = try!(self.do_read_token());
             try!(self.expect_skip_symbol(Symbol::ClosingParen));
         }
-        Ok(if self.macro_map.contains_key(ident_val!(tok).as_str()) {
-            Token::new(
+        if self.macro_map.contains_key(ident_val!(tok).as_str()) {
+            Ok(Token::new(
                 TokenKind::IntNumber(1, Bits::Bits32),
                 0,
                 0,
                 *self.get_cur_line(),
-            )
+            ))
         } else {
-            Token::new(
+            Ok(Token::new(
                 TokenKind::IntNumber(0, Bits::Bits32),
                 0,
                 0,
                 *self.get_cur_line(),
-            )
-        })
+            ))
+        }
     }
     fn read_intexpr_line(&mut self) -> ParseR<Vec<Token>> {
         let mut v = Vec::new();
@@ -1129,24 +1142,24 @@ impl Lexer {
             tok = try!(self.expand(Ok(tok)));
             if tok.kind == TokenKind::Newline {
                 break;
-            } else {
-                tok = self.convert_to_keyword_or_symbol(tok);
-                match tok.kind {
-                    TokenKind::Identifier(s) => {
-                        if s == "defined" {
-                            v.push(try!(self.read_defined_op()));
-                        } else {
-                            // identifier in expr line is replaced with 0i
-                            v.push(Token::new(
-                                TokenKind::IntNumber(0, Bits::Bits32),
-                                0,
-                                0,
-                                *self.get_cur_line(),
-                            ));
-                        }
+            }
+
+            tok = self.convert_to_keyword_or_symbol(tok);
+            match tok.kind {
+                TokenKind::Identifier(ident) => {
+                    if ident == "defined" {
+                        v.push(try!(self.read_defined_op()));
+                    } else {
+                        // identifier in expr line is replaced with 0i
+                        v.push(Token::new(
+                            TokenKind::IntNumber(0, Bits::Bits32),
+                            0,
+                            0,
+                            *self.get_cur_line(),
+                        ));
                     }
-                    _ => v.push(tok),
                 }
+                _ => v.push(tok),
             }
         }
         Ok(v)
@@ -1177,17 +1190,17 @@ impl Lexer {
         self.do_read_if(cond)
     }
     fn read_ifdef(&mut self) -> ParseR<()> {
-        let mcro_name = ident_val!(try!(self.do_read_token()));
-        let macro_is_defined = self.macro_map.contains_key(mcro_name.as_str());
+        let macro_name = ident_val!(try!(self.do_read_token()));
+        let macro_is_defined = self.macro_map.contains_key(macro_name.as_str());
         self.do_read_if(macro_is_defined)
     }
     fn read_ifndef(&mut self) -> ParseR<()> {
-        let mcro_name = ident_val!(try!(self.do_read_token()));
-        let macro_is_undefined = !self.macro_map.contains_key(mcro_name.as_str());
+        let macro_name = ident_val!(try!(self.do_read_token()));
+        let macro_is_undefined = !self.macro_map.contains_key(macro_name.as_str());
         self.do_read_if(macro_is_undefined)
     }
     fn read_elif(&mut self) -> ParseR<()> {
-        if self.cond_stack[self.cond_stack.len() - 1] || !try!(self.read_constexpr()) {
+        if *self.cond_stack.last().unwrap() || !try!(self.read_constexpr()) {
             try!(self.skip_cond_include());
         } else {
             self.cond_stack.pop();
@@ -1196,7 +1209,7 @@ impl Lexer {
         Ok(())
     }
     fn read_else(&mut self) -> ParseR<()> {
-        if self.cond_stack[self.cond_stack.len() - 1] {
+        if *self.cond_stack.last().unwrap() {
             try!(self.skip_cond_include());
         }
         Ok(())
