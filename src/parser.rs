@@ -223,6 +223,7 @@ impl<'a> Parser<'a> {
                 Keyword::For => return self.read_for_stmt(),
                 Keyword::While => return self.read_while_stmt(),
                 Keyword::Do => return self.read_do_while_stmt(),
+                Keyword::Goto => return self.read_goto_stmt(),
                 Keyword::Continue => return self.read_continue_stmt(),
                 Keyword::Break => return self.read_break_stmt(),
                 Keyword::Return => return self.read_return_stmt(),
@@ -231,6 +232,13 @@ impl<'a> Parser<'a> {
         } else if let &TokenKind::Symbol(Symbol::OpeningBrace) = &tok.kind {
             return self.read_compound_stmt();
         }
+
+        if matches!(tok.kind, TokenKind::Identifier(_)) &&
+            try!(self.lexer.peek_symbol_token_is(Symbol::Colon))
+        {
+            return self.read_label(tok);
+        }
+
         self.lexer.unget(tok);
         let expr = self.read_opt_expr();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
@@ -322,6 +330,24 @@ impl<'a> Parser<'a> {
             self.show_error_token(&try!(peek), "expected ')'");
         }
         Ok(AST::new(ASTKind::DoWhile(Rc::new(cond), Rc::new(body)), 0))
+    }
+    fn read_goto_stmt(&mut self) -> ParseR<AST> {
+        let line = *self.lexer.get_cur_line();
+        let label_name = ident_val!(try!(self.lexer.get()));
+        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected ';'");
+        }
+        Ok(AST::new(ASTKind::Goto(label_name), line))
+    }
+    fn read_label(&mut self, tok: Token) -> ParseR<AST> {
+        let line = *self.lexer.get_cur_line();
+        let label_name = ident_val!(tok);
+        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected ':'");
+        }
+        Ok(AST::new(ASTKind::Label(label_name), line))
     }
     fn read_continue_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.get_cur_line();

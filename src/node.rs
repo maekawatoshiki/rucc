@@ -48,6 +48,8 @@ pub enum ASTKind {
     For(Rc<AST>, Rc<AST>, Rc<AST>, Rc<AST>), // init, cond, step, body
     While(Rc<AST>, Rc<AST>), // cond, body
     DoWhile(Rc<AST>, Rc<AST>), // cond, body
+    Goto(String), // label name // TODO: managing label names with String looks not good
+    Label(String), // label name // TODO: managing label names with String looks not good
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
     Break,
@@ -255,6 +257,12 @@ impl AST {
                 print!("(");
                 body.clone().show();
                 print!("))");
+            }
+            ASTKind::Goto(ref label_name) => {
+                print!("(goto {})", label_name);
+            }
+            ASTKind::Label(ref name) => {
+                print!("(label {})", name);
             }
             ASTKind::FuncCall(ref f, ref args) => {
                 print!("(func-call ");

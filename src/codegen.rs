@@ -86,6 +86,7 @@ pub struct Codegen {
     builder: LLVMBuilderRef,
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
+    label_map: HashMap<String, LLVMBasicBlockRef>,
     llvm_struct_map: HashMap<String, RectypeInfo>,
     break_labels: VecDeque<LLVMBasicBlockRef>,
     continue_labels: VecDeque<LLVMBasicBlockRef>,
@@ -138,6 +139,7 @@ impl Codegen {
             builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
             global_varmap: global_varmap,
             local_varmap: Vec::new(),
+            label_map: HashMap::new(),
             llvm_struct_map: HashMap::new(),
             continue_labels: VecDeque::new(),
             break_labels: VecDeque::new(),
@@ -185,6 +187,8 @@ impl Codegen {
             }
             node::ASTKind::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
             node::ASTKind::DoWhile(ref cond, ref body) => self.gen_do_while(&*cond, &*body),
+            node::ASTKind::Goto(ref label_name) => self.gen_goto(label_name),
+            node::ASTKind::Label(ref label_name) => self.gen_label(label_name),
             node::ASTKind::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
             node::ASTKind::BinaryOp(ref lhs, ref rhs, ref op) => {
                 self.gen_binary_op(&**lhs, &**rhs, &*op)
@@ -834,6 +838,42 @@ impl Codegen {
         self.continue_labels.pop_back();
         self.break_labels.pop_back();
 
+        Ok((ptr::null_mut(), None))
+    }
+
+    unsafe fn gen_goto(&mut self, label_name: &String) -> CodegenResult {
+        let func = self.cur_func.unwrap();
+        match self.label_map.entry(label_name.to_string()) {
+            hash_map::Entry::Occupied(o) => {
+                let label = o.into_mut();
+                LLVMBuildBr(self.builder, *label);
+            }
+            hash_map::Entry::Vacant(v) => {
+                let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
+                LLVMBuildBr(self.builder, label);
+                v.insert(label);
+            }
+        };
+        let tmp_label = LLVMAppendBasicBlock(func, CString::new("tmp_label").unwrap().as_ptr());
+        LLVMPositionBuilderAtEnd(self.builder, tmp_label);
+
+        Ok((ptr::null_mut(), None))
+    }
+
+    unsafe fn gen_label(&mut self, label_name: &String) -> CodegenResult {
+        let func = self.cur_func.unwrap();
+        match self.label_map.entry(label_name.to_string()) {
+            hash_map::Entry::Occupied(o) => {
+                let label = o.into_mut();
+                LLVMPositionBuilderAtEnd(self.builder, *label);
+            }
+            hash_map::Entry::Vacant(v) => {
+                let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
+                v.insert(label);
+                LLVMBuildBr(self.builder, label);
+                LLVMPositionBuilderAtEnd(self.builder, label);
+            }
+        };
         Ok((ptr::null_mut(), None))
     }
 
