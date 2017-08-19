@@ -78,6 +78,10 @@ pub enum Error {
     Msg(String),
 }
 
+unsafe fn cur_bb_has_no_terminator(builder: LLVMBuilderRef) -> bool {
+    LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(builder))) == ptr::null_mut()
+}
+
 type CodegenResult = Result<(LLVMValueRef, Option<Type>), Error>;
 
 pub struct Codegen {
@@ -87,6 +91,7 @@ pub struct Codegen {
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
     label_map: HashMap<String, LLVMBasicBlockRef>,
+    switch_list: VecDeque<(LLVMValueRef, LLVMBasicBlockRef)>,
     llvm_struct_map: HashMap<String, RectypeInfo>,
     break_labels: VecDeque<LLVMBasicBlockRef>,
     continue_labels: VecDeque<LLVMBasicBlockRef>,
@@ -140,6 +145,7 @@ impl Codegen {
             global_varmap: global_varmap,
             local_varmap: Vec::new(),
             label_map: HashMap::new(),
+            switch_list: VecDeque::new(),
             llvm_struct_map: HashMap::new(),
             continue_labels: VecDeque::new(),
             break_labels: VecDeque::new(),
@@ -187,6 +193,9 @@ impl Codegen {
             }
             node::ASTKind::While(ref cond, ref body) => self.gen_while(&*cond, &*body),
             node::ASTKind::DoWhile(ref cond, ref body) => self.gen_do_while(&*cond, &*body),
+            node::ASTKind::Switch(ref cond, ref body) => self.gen_switch(&*cond, &*body),
+            node::ASTKind::Case(ref expr) => self.gen_case(&*expr),
+            node::ASTKind::DefaultL => self.gen_default(),
             node::ASTKind::Goto(ref label_name) => self.gen_goto(label_name),
             node::ASTKind::Label(ref label_name) => self.gen_label(label_name),
             node::ASTKind::UnaryOp(ref expr, ref op) => self.gen_unary_op(&*expr, op),
@@ -698,21 +707,14 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
         try!(self.gen(then_stmt));
-        // if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) is
-        // not ptr::null_mut(), it means the current basic block has terminator(s). So we don't
-        // add the inst 'br' not to conflict.
-        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
-            ptr::null_mut()
-        {
+        if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_merge);
         }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_else);
         // else block
         try!(self.gen(else_stmt));
-        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
-            ptr::null_mut()
-        {
+        if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_merge);
         }
 
@@ -743,9 +745,7 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
         try!(self.gen(body));
 
-        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
-            ptr::null_mut()
-        {
+        if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_before_loop);
         }
 
@@ -774,13 +774,85 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
         try!(self.gen(body));
 
-        let cond_val_tmp = try!(self.gen(cond)).0;
-        let cond_val = self.val_to_bool(cond_val_tmp);
-        LLVMBuildCondBr(self.builder, cond_val, bb_before_loop, bb_after_loop);
+        if cur_bb_has_no_terminator(self.builder) {
+            let cond_val_tmp = try!(self.gen(cond)).0;
+            let cond_val = self.val_to_bool(cond_val_tmp);
+            LLVMBuildCondBr(self.builder, cond_val, bb_before_loop, bb_after_loop);
+        }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_after_loop);
         self.continue_labels.pop_back();
         self.break_labels.pop_back();
+
+        Ok((ptr::null_mut(), None))
+    }
+
+    unsafe fn gen_switch(&mut self, cond: &node::AST, body: &node::AST) -> CodegenResult {
+        let func = self.cur_func.unwrap();
+        let cond_val = try!(self.gen(cond)).0;
+        let bb_after_switch =
+            LLVMAppendBasicBlock(func, CString::new("after_switch").unwrap().as_ptr());
+        let default = LLVMAppendBasicBlock(func, CString::new("default").unwrap().as_ptr());
+        let switch = LLVMBuildSwitch(self.builder, cond_val, default, 10);
+        self.break_labels.push_back(bb_after_switch);
+        self.switch_list.push_back((switch, default));
+
+        try!(self.gen(body));
+
+        // if the last (case|default) doesn't have 'break'
+        // switch(X) {
+        //  (case A|default): <--- this
+        //   puts("...");
+        // }
+        if cur_bb_has_no_terminator(self.builder) {
+            LLVMBuildBr(self.builder, bb_after_switch);
+        }
+
+        // TODO: if d is null, that means default block exists. BUT not good implementation
+        //       Is there a good function like 'GetInsertPoint'?
+        let d = self.switch_list.pop_back().unwrap().1;
+        if d != ptr::null_mut() {
+            LLVMPositionBuilderAtEnd(self.builder, default);
+            LLVMBuildBr(self.builder, bb_after_switch);
+        }
+
+        LLVMPositionBuilderAtEnd(self.builder, bb_after_switch);
+
+        self.break_labels.pop_back();
+        Ok((ptr::null_mut(), None))
+    }
+    unsafe fn gen_case(&mut self, expr: &node::AST) -> CodegenResult {
+        let func = self.cur_func.unwrap();
+        let expr_val = try!(self.gen(expr)).0;
+        let switch = (*self.switch_list.back().unwrap()).0;
+        let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
+
+        // if the above case doesn't have 'break'
+        // switch(X) {
+        //  case A:
+        //  case B: <--- this
+        if cur_bb_has_no_terminator(self.builder) {
+            LLVMBuildBr(self.builder, label);
+        }
+
+        LLVMPositionBuilderAtEnd(self.builder, label);
+        LLVMAddCase(switch, expr_val, label);
+        Ok((ptr::null_mut(), None))
+    }
+    unsafe fn gen_default(&mut self) -> CodegenResult {
+        let mut default = self.switch_list.back_mut().unwrap();
+
+        // if the above case doesn't have 'break'
+        // switch(X) {
+        //  case A:
+        //  default: <--- this
+        if cur_bb_has_no_terminator(self.builder) {
+            LLVMBuildBr(self.builder, (*default).1);
+        }
+
+        LLVMPositionBuilderAtEnd(self.builder, (*default).1);
+        // TODO: danger... refer to gen_switch...
+        (*default).1 = ptr::null_mut();
 
         Ok((ptr::null_mut(), None))
     }
@@ -828,9 +900,7 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_step);
         try!(self.gen(step));
-        if LLVMIsATerminatorInst(LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder))) ==
-            ptr::null_mut()
-        {
+        if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_before_loop);
         }
 

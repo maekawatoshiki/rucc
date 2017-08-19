@@ -48,6 +48,9 @@ pub enum ASTKind {
     For(Rc<AST>, Rc<AST>, Rc<AST>, Rc<AST>), // init, cond, step, body
     While(Rc<AST>, Rc<AST>), // cond, body
     DoWhile(Rc<AST>, Rc<AST>), // cond, body
+    Switch(Rc<AST>, Rc<AST>), // cond, stmt
+    Case(Rc<AST>),
+    DefaultL,
     Goto(String), // label name // TODO: managing label names with String looks not good
     Label(String), // label name // TODO: managing label names with String looks not good
     FuncCall(Rc<AST>, Vec<AST>),
@@ -248,15 +251,30 @@ impl AST {
                 print!("(do-while ");
                 cond.show();
                 print!("(");
-                body.clone().show();
+                body.show();
                 print!("))");
             }
             ASTKind::While(ref cond, ref body) => {
                 print!("(while ");
                 cond.show();
                 print!("(");
-                body.clone().show();
+                body.show();
                 print!("))");
+            }
+            ASTKind::Switch(ref cond, ref body) => {
+                print!("(switch ");
+                cond.show();
+                print!("(");
+                body.show();
+                print!("))");
+            }
+            ASTKind::Case(ref expr) => {
+                print!("(case ");
+                expr.show();
+                print!(")");
+            }
+            ASTKind::DefaultL => {
+                print!("(default)");
             }
             ASTKind::Goto(ref label_name) => {
                 print!("(goto {})", label_name);

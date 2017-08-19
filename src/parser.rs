@@ -223,6 +223,9 @@ impl<'a> Parser<'a> {
                 Keyword::For => return self.read_for_stmt(),
                 Keyword::While => return self.read_while_stmt(),
                 Keyword::Do => return self.read_do_while_stmt(),
+                Keyword::Switch => return self.read_switch_stmt(),
+                Keyword::Case => return self.read_case_label(),
+                Keyword::Default => return self.read_default_label(),
                 Keyword::Goto => return self.read_goto_stmt(),
                 Keyword::Continue => return self.read_continue_stmt(),
                 Keyword::Break => return self.read_break_stmt(),
@@ -330,6 +333,34 @@ impl<'a> Parser<'a> {
             self.show_error_token(&try!(peek), "expected ')'");
         }
         Ok(AST::new(ASTKind::DoWhile(Rc::new(cond), Rc::new(body)), 0))
+    }
+    fn read_switch_stmt(&mut self) -> ParseR<AST> {
+        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected '('");
+        }
+        let cond = try!(self.read_expr());
+        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected ')'");
+        }
+        let body = Rc::new(try!(self.read_stmt()));
+        Ok(AST::new(ASTKind::Switch(Rc::new(cond), body), 0))
+    }
+    fn read_case_label(&mut self) -> ParseR<AST> {
+        let expr = try!(self.read_expr());
+        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected ':'");
+        }
+        Ok(AST::new(ASTKind::Case(Rc::new(expr)), 0))
+    }
+    fn read_default_label(&mut self) -> ParseR<AST> {
+        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
+            let peek = self.lexer.peek();
+            self.show_error_token(&try!(peek), "expected ':'");
+        }
+        Ok(AST::new(ASTKind::DefaultL, 0))
     }
     fn read_goto_stmt(&mut self) -> ParseR<AST> {
         let line = *self.lexer.get_cur_line();
