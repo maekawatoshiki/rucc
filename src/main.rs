@@ -11,11 +11,12 @@ fn main() {
     if args.len() < 2 {
         version_info::show_version();
         version_info::show_usage();
-    } else {
-        let ref input_file_name = args[1];
-        common::run_file(input_file_name);
-        println!("{}", Colour::Green.paint("Compiling exited successfully."));
+        return;
     }
+
+    let ref input_file_name = args[1];
+    common::run_file(input_file_name);
+    println!("{}", Colour::Green.paint("Compiling exited successfully."));
 }
 
 

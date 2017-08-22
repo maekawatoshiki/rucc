@@ -24,7 +24,6 @@ pub fn run_file<'a>(filename: &'a str) {
     unsafe {
         let mut codegen = codegen::Codegen::new("rucc");
         loop {
-            nodes.clear();
             match parser.read_toplevel(&mut nodes) {
                 Err(parser::Error::EOF) => break,
                 Err(_) => continue,
@@ -50,6 +49,7 @@ pub fn run_file<'a>(filename: &'a str) {
                 }
                 _ => panic!("this is a bug. fix soon"),
             }
+            nodes.clear();
         }
         parser.show_total_errors();
 
