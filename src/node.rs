@@ -1,18 +1,19 @@
 use std::rc::Rc;
 use types::{Type, StorageClass};
 use std::marker::Send;
+use lexer::Pos;
 
 #[derive(Debug, Clone)]
 pub struct AST {
     pub kind: ASTKind,
-    pub line: i32,
+    pub pos: Pos,
 }
 
 impl AST {
-    pub fn new(kind: ASTKind, line: i32) -> AST {
+    pub fn new(kind: ASTKind, pos: Pos) -> AST {
         AST {
             kind: kind,
-            line: line,
+            pos: pos,
         }
     }
 }

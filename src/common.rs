@@ -1,12 +1,19 @@
+use lexer;
 use parser;
 use codegen;
+use std::io::{stderr, Write};
 
 extern crate regex;
 use self::regex::Regex;
 
+extern crate ansi_term;
+use self::ansi_term::Colour;
+
 // parse -> codegen -> write llvm bitcode to output file
 pub fn run_file<'a>(filename: &'a str) {
-    let nodes = parser::Parser::run_file(filename.to_string());
+    let mut lexer = lexer::Lexer::new(filename.to_string());
+    let mut nodes = Vec::new();
+    parser::Parser::new(&mut lexer).run(&mut nodes);
 
     // DEBUG: for node in &ast {
     // DEBUG:     node.show();
@@ -15,7 +22,25 @@ pub fn run_file<'a>(filename: &'a str) {
     // DEBUG: println!("\nllvm-ir test output:");
     unsafe {
         let mut codegen = codegen::Codegen::new("rucc");
-        codegen.run(nodes);
+        match codegen.run(nodes) {
+            Ok(_) => {}
+            Err(codegen::Error::MsgWithPos(msg, pos)) => {
+                writeln!(
+                    &mut stderr(),
+                    "{}: {}: {}",
+                    Colour::Red.bold().paint("error:"),
+                    pos.line,
+                    msg
+                ).unwrap();
+                writeln!(
+                    &mut stderr(),
+                    "{}",
+                    lexer.get_surrounding_code_with_err_point(pos.pos)
+                ).unwrap();
+                panic!()
+            }
+            _ => panic!("this is a bug. fix soon"),
+        }
 
         let output_file_name = Regex::new(r"\..*$").unwrap().replace_all(filename, ".bc");
         codegen.write_llvm_bitcode_to_file(output_file_name.to_string().as_str());

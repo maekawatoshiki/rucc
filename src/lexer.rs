@@ -109,6 +109,21 @@ pub enum Symbol {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub struct Pos {
+    pub line: usize,
+    pub pos: usize,
+}
+
+impl Pos {
+    pub fn new(line: usize, pos: usize) -> Pos {
+        Pos {
+            line: line,
+            pos: pos,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum TokenKind {
     MacroParam,
     Keyword(Keyword),
@@ -160,26 +175,24 @@ pub struct Token {
     pub space: bool, // leading space
     pub macro_position: usize,
     pub hideset: HashSet<String>,
-    pub pos: usize,
-    pub line: i32,
+    pub pos: Pos,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, macro_position: usize, pos: usize, line: i32) -> Token {
+    pub fn new(kind: TokenKind, macro_position: usize, pos: usize, line: usize) -> Token {
         Token {
             kind: kind,
             space: false,
             macro_position: macro_position,
             hideset: HashSet::new(),
-            pos: pos,
-            line: line,
+            pos: Pos::new(line, pos),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct Lexer {
-    pub cur_line: VecDeque<i32>,
+    pub cur_line: VecDeque<usize>,
     filename: VecDeque<String>,
     macro_map: HashMap<String, Macro>,
     pub peek: VecDeque<Vec<u8>>,
@@ -242,10 +255,13 @@ impl Lexer {
     pub fn get_filename(&mut self) -> String {
         self.filename.back().unwrap().to_owned()
     }
-    pub fn get_cur_line(&mut self) -> &i32 {
+    pub fn get_cur_pos(&mut self) -> Pos {
+        Pos::new(*self.get_cur_line(), *self.peek_pos.back().unwrap())
+    }
+    pub fn get_cur_line(&mut self) -> &usize {
         self.cur_line.back().unwrap()
     }
-    pub fn get_mut_cur_line(&mut self) -> &mut i32 {
+    pub fn get_mut_cur_line(&mut self) -> &mut usize {
         self.cur_line.back_mut().unwrap()
     }
     fn peek_get(&mut self) -> ParseR<char> {
@@ -563,7 +579,7 @@ impl Lexer {
         };
         if try!(self.peek_next()) != '\'' {
             error::error_exit(
-                *self.cur_line.back().unwrap(),
+                *self.cur_line.back().unwrap() as i32,
                 "missing terminating \' char",
             );
         }
@@ -647,8 +663,8 @@ impl Lexer {
         })
     }
     fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
-        let pos = token.pos;
-        let line = token.line;
+        let pos = token.pos.pos;
+        let line = token.pos.line;
         let val = ident_val!(token);
 
         if val == "sizeof" {
@@ -812,7 +828,7 @@ impl Lexer {
         // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
         let expect_bracket = try!(self.read_token());
         if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
-            error::error_exit(*self.get_cur_line(), "expected '('");
+            error::error_exit(*self.get_cur_line() as i32, "expected '('");
         }
 
         let mut args = Vec::new();
@@ -1004,7 +1020,7 @@ impl Lexer {
                 println!("sorry, using \"double quote\" in #include is currently not supported.");
                 name = s;
             } else {
-                error::error_exit(*self.get_cur_line(), "expected '<' or '\"'");
+                error::error_exit(*self.get_cur_line() as i32, "expected '<' or '\"'");
             }
         }
         Ok(name)

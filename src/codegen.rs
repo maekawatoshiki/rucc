@@ -10,6 +10,7 @@ use self::llvm::prelude::*;
 
 use node;
 use node::Bits;
+use lexer::Pos;
 use types::{Type, StorageClass, Sign};
 use error;
 
@@ -74,7 +75,7 @@ impl RectypeInfo {
 }
 
 pub enum Error {
-    MsgWithLine(String, i32),
+    MsgWithPos(String, Pos),
     Msg(String),
 }
 
@@ -153,19 +154,15 @@ impl Codegen {
         }
     }
 
-    pub unsafe fn run(&mut self, node: Vec<node::AST>) {
+    pub unsafe fn run(&mut self, node: Vec<node::AST>) -> Result<(), Error> {
         for ast in node {
             match self.gen(&ast) {
                 Ok(_) => {}
-                Err(err) => {
-                    match err {
-                        Error::Msg(msg) => error::error_exit(ast.line, msg.as_str()),
-                        Error::MsgWithLine(msg, line) => error::error_exit(line, msg.as_str()),
-                    }
-                }
+                Err(err) => return Err(err),
             }
         }
         // LLVMDumpModule(self.module);
+        Ok(())
     }
 
     pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
@@ -235,8 +232,8 @@ impl Codegen {
             }
         };
         result.or_else(|cr: Error| match cr {
-            Error::Msg(msg) => Err(Error::MsgWithLine(msg, ast.line)),
-            Error::MsgWithLine(msg, line) => Err(Error::MsgWithLine(msg, line)),
+            Error::Msg(msg) => Err(Error::MsgWithPos(msg, ast.pos.clone())),
+            Error::MsgWithPos(msg, pos) => Err(Error::MsgWithPos(msg, pos)),
         })
     }
     unsafe fn gen_init(&mut self, ast: &node::AST, ty: &Type) -> CodegenResult {
@@ -973,12 +970,13 @@ impl Codegen {
                     &node::AST::new(
                         node::ASTKind::BinaryOp(
                             Rc::new(expr.clone()),
-                            Rc::new(
-                                node::AST::new(node::ASTKind::Int(1, Bits::Bits32), 0),
-                            ),
+                            Rc::new(node::AST::new(
+                                node::ASTKind::Int(1, Bits::Bits32),
+                                Pos::new(0, 0),
+                            )),
                             node::CBinOps::Add,
                         ),
-                        0,
+                        Pos::new(0, 0),
                     ),
                 ));
                 Ok(before_inc)
@@ -990,12 +988,13 @@ impl Codegen {
                     &node::AST::new(
                         node::ASTKind::BinaryOp(
                             Rc::new(expr.clone()),
-                            Rc::new(
-                                node::AST::new(node::ASTKind::Int(1, Bits::Bits32), 0),
-                            ),
+                            Rc::new(node::AST::new(
+                                node::ASTKind::Int(1, Bits::Bits32),
+                                Pos::new(0, 0),
+                            )),
                             node::CBinOps::Sub,
                         ),
-                        0,
+                        Pos::new(0, 0),
                     ),
                 ));
                 Ok(before_dec)
@@ -1068,9 +1067,9 @@ impl Codegen {
             ));
         }
 
-        Err(Error::MsgWithLine(
+        Err(Error::MsgWithPos(
             "unsupported operation".to_string(),
-            lhsast.line,
+            lhsast.pos.clone(),
         ))
     }
 
@@ -1201,10 +1200,10 @@ impl Codegen {
         let dst_ty = match ptr_dst_ty.get_elem_ty() { 
             Some(ok) => ok,
             None => {
-                return Err(Error::MsgWithLine(
+                return Err(Error::MsgWithPos(
                     "gen_assign: ptr_dst_ty must be a pointer to the value's type"
                         .to_string(),
-                    lhsast.line,
+                    lhsast.pos.clone(),
                 ))
             }
         };
@@ -1697,9 +1696,9 @@ impl Codegen {
                 if let Some(varinfo) = self.lookup_var(name) {
                     varinfo
                 } else {
-                    return Err(Error::MsgWithLine(
+                    return Err(Error::MsgWithPos(
                         format!("gen_func_call: not found function '{}'", name),
-                        ast.line,
+                        ast.pos.clone(),
                     ));
                 }
             }
@@ -1719,7 +1718,12 @@ impl Codegen {
                     panic!();
                 }
             }
-            _ => panic!(),
+            _ => {
+                return Err(Error::MsgWithPos(
+                    format!("gen_func_call: function type doesn't match"),
+                    ast.pos.clone(),
+                ))
+            }
         };
 
         let (llvm_func, llvm_functy) = match LLVMGetTypeKind(func.llvm_ty) {
@@ -1744,10 +1748,10 @@ impl Codegen {
 
         // do implicit type casting
         if !func_is_vararg && params_count < args_len {
-            error::error_exit(ast.line, "too many arguments");
+            error::error_exit(ast.pos.line as i32, "too many arguments");
         }
         if !func_is_vararg && params_count > args_len {
-            error::error_exit(ast.line, "too little arguments");
+            error::error_exit(ast.pos.line as i32, "too little arguments");
         }
         for i in 0..args_len {
             args_val.push(if params_count <= i {

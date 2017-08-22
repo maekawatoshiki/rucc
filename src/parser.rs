@@ -1,4 +1,4 @@
-use lexer::{Lexer, Token, TokenKind, Keyword, Symbol};
+use lexer::{Lexer, Token, TokenKind, Keyword, Symbol, Pos};
 use node::{AST, ASTKind, Bits};
 use node;
 use types::{Type, StorageClass, Sign};
@@ -81,13 +81,15 @@ impl<'a> Parser<'a> {
             "{}: {} {}: {}",
             self.lexer.get_filename(),
             Colour::Red.bold().paint("error:"),
-            token.line,
+            token.pos.line,
             msg
         ).unwrap();
         writeln!(
             &mut stderr(),
             "{}",
-            self.lexer.get_surrounding_code_with_err_point(token.pos)
+            self.lexer.get_surrounding_code_with_err_point(
+                token.pos.pos,
+            )
         ).unwrap();
     }
     pub fn run_file(filename: String) -> Vec<AST> {
@@ -152,15 +154,21 @@ impl<'a> Parser<'a> {
         // TODO: [0] is global env, [1] is local env. so we have to insert to both.
         self.env[0].insert(
             name.clone(),
-            AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0),
+            AST::new(
+                ASTKind::Variable(functy.clone(), name.clone()),
+                Pos::new(0, 0),
+            ),
         );
         self.env[1].insert(
             name.clone(),
-            AST::new(ASTKind::Variable(functy.clone(), name.clone()), 0),
+            AST::new(
+                ASTKind::Variable(functy.clone(), name.clone()),
+                Pos::new(0, 0),
+            ),
         );
         self.env[1].insert(
             "__func__".to_string(),
-            AST::new(ASTKind::String(name.clone()), 0),
+            AST::new(ASTKind::String(name.clone()), Pos::new(0, 0)),
         );
 
         if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
@@ -183,7 +191,7 @@ impl<'a> Parser<'a> {
                 name,
                 Rc::new(body),
             ),
-            0,
+            Pos::new(0, 0),
         ))
     }
     fn read_func_body(&mut self, _functy: &Type) -> ParseR<AST> {
@@ -213,7 +221,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Ok(AST::new(ASTKind::Block(stmts), 0))
+        Ok(AST::new(ASTKind::Block(stmts), Pos::new(0, 0)))
     }
     fn read_stmt(&mut self) -> ParseR<AST> {
         let tok = try!(self.lexer.get());
@@ -264,11 +272,11 @@ impl<'a> Parser<'a> {
         let else_stmt = if try!(self.lexer.skip_keyword(Keyword::Else)) {
             Rc::new(try!(self.read_stmt()))
         } else {
-            Rc::new(AST::new(ASTKind::Block(Vec::new()), 0))
+            Rc::new(AST::new(ASTKind::Block(Vec::new()), Pos::new(0, 0)))
         };
         Ok(AST::new(
             ASTKind::If(Rc::new(cond), then_stmt, else_stmt),
-            0,
+            Pos::new(0, 0),
         ))
     }
     fn read_for_stmt(&mut self) -> ParseR<AST> {
@@ -285,7 +293,7 @@ impl<'a> Parser<'a> {
             self.show_error_token(&try!(peek), "expected ';'");
         }
         let step = if try!(self.lexer.peek_symbol_token_is(Symbol::ClosingParen)) {
-            AST::new(ASTKind::Compound(Vec::new()), *self.lexer.get_cur_line())
+            AST::new(ASTKind::Compound(Vec::new()), self.lexer.get_cur_pos())
         } else {
             try!(self.read_opt_expr())
         };
@@ -301,7 +309,7 @@ impl<'a> Parser<'a> {
                 Rc::new(step),
                 Rc::new(body),
             ),
-            0,
+            Pos::new(0, 0),
         ))
     }
     fn read_while_stmt(&mut self) -> ParseR<AST> {
@@ -315,7 +323,10 @@ impl<'a> Parser<'a> {
             self.show_error_token(&try!(peek), "expected ')'");
         }
         let body = try!(self.read_stmt());
-        Ok(AST::new(ASTKind::While(Rc::new(cond), Rc::new(body)), 0))
+        Ok(AST::new(
+            ASTKind::While(Rc::new(cond), Rc::new(body)),
+            Pos::new(0, 0),
+        ))
     }
     fn read_do_while_stmt(&mut self) -> ParseR<AST> {
         let body = try!(self.read_stmt());
@@ -332,7 +343,10 @@ impl<'a> Parser<'a> {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ')'");
         }
-        Ok(AST::new(ASTKind::DoWhile(Rc::new(cond), Rc::new(body)), 0))
+        Ok(AST::new(
+            ASTKind::DoWhile(Rc::new(cond), Rc::new(body)),
+            Pos::new(0, 0),
+        ))
     }
     fn read_switch_stmt(&mut self) -> ParseR<AST> {
         if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
@@ -345,7 +359,10 @@ impl<'a> Parser<'a> {
             self.show_error_token(&try!(peek), "expected ')'");
         }
         let body = Rc::new(try!(self.read_stmt()));
-        Ok(AST::new(ASTKind::Switch(Rc::new(cond), body), 0))
+        Ok(AST::new(
+            ASTKind::Switch(Rc::new(cond), body),
+            Pos::new(0, 0),
+        ))
     }
     fn read_case_label(&mut self) -> ParseR<AST> {
         let expr = try!(self.read_expr());
@@ -353,60 +370,60 @@ impl<'a> Parser<'a> {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ':'");
         }
-        Ok(AST::new(ASTKind::Case(Rc::new(expr)), 0))
+        Ok(AST::new(ASTKind::Case(Rc::new(expr)), Pos::new(0, 0)))
     }
     fn read_default_label(&mut self) -> ParseR<AST> {
         if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ':'");
         }
-        Ok(AST::new(ASTKind::DefaultL, 0))
+        Ok(AST::new(ASTKind::DefaultL, Pos::new(0, 0)))
     }
     fn read_goto_stmt(&mut self) -> ParseR<AST> {
-        let line = *self.lexer.get_cur_line();
+        let pos = self.lexer.get_cur_pos();
         let label_name = ident_val!(try!(self.lexer.get()));
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
-        Ok(AST::new(ASTKind::Goto(label_name), line))
+        Ok(AST::new(ASTKind::Goto(label_name), pos))
     }
     fn read_label(&mut self, tok: Token) -> ParseR<AST> {
-        let line = *self.lexer.get_cur_line();
+        let pos = self.lexer.get_cur_pos();
         let label_name = ident_val!(tok);
         if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ':'");
         }
-        Ok(AST::new(ASTKind::Label(label_name), line))
+        Ok(AST::new(ASTKind::Label(label_name), pos))
     }
     fn read_continue_stmt(&mut self) -> ParseR<AST> {
-        let line = *self.lexer.get_cur_line();
+        let pos = self.lexer.get_cur_pos();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
-        Ok(AST::new(ASTKind::Continue, line))
+        Ok(AST::new(ASTKind::Continue, pos))
     }
     fn read_break_stmt(&mut self) -> ParseR<AST> {
-        let line = *self.lexer.get_cur_line();
+        let pos = self.lexer.get_cur_pos();
         if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected ';'");
         }
-        Ok(AST::new(ASTKind::Break, line))
+        Ok(AST::new(ASTKind::Break, pos))
     }
     fn read_return_stmt(&mut self) -> ParseR<AST> {
-        let line = *self.lexer.get_cur_line();
+        let pos = self.lexer.get_cur_pos();
         if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            Ok(AST::new(ASTKind::Return(None), line))
+            Ok(AST::new(ASTKind::Return(None), pos))
         } else {
             let retval = Some(Rc::new(try!(self.read_expr())));
             if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
                 let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "expected ';'");
             }
-            Ok(AST::new(ASTKind::Return(retval), line))
+            Ok(AST::new(ASTKind::Return(retval), pos))
         }
     }
     fn is_function_def(&mut self) -> ParseR<bool> {
@@ -579,11 +596,11 @@ impl<'a> Parser<'a> {
     fn read_string_initializer(&mut self, string: String) -> ParseR<AST> {
         let mut char_ary = Vec::new();
         for c in string.chars() {
-            char_ary.push(AST::new(ASTKind::Char(c as i32), 0));
+            char_ary.push(AST::new(ASTKind::Char(c as i32), Pos::new(0, 0)));
         }
         Ok(AST::new(
             ASTKind::ConstArray(char_ary),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
     fn read_array_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
@@ -611,7 +628,7 @@ impl<'a> Parser<'a> {
             }
             Ok(AST::new(
                 ASTKind::ConstArray(elems),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             ))
         } else {
             // maybe, this block never reach though.
@@ -666,7 +683,7 @@ impl<'a> Parser<'a> {
         }
         Ok(AST::new(
             ASTKind::ConstStruct(elems),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
     fn skip_type_qualifiers(&mut self) -> ParseR<()> {
@@ -690,7 +707,7 @@ impl<'a> Parser<'a> {
             if is_typedef {
                 let typedef = AST::new(
                     ASTKind::Typedef(ty, name.to_string()),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
                 self.env.back_mut().unwrap().insert(name, typedef);
                 return Ok(());
@@ -703,11 +720,14 @@ impl<'a> Parser<'a> {
             };
             self.env.back_mut().unwrap().insert(
                 name.clone(),
-                AST::new(ASTKind::Variable(ty.clone(), name.clone()), 0),
+                AST::new(
+                    ASTKind::Variable(ty.clone(), name.clone()),
+                    Pos::new(0, 0),
+                ),
             );
             ast.push(AST::new(
                 ASTKind::VariableDecl(ty, name, sclass.clone(), init),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             ));
 
             if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
@@ -723,16 +743,16 @@ impl<'a> Parser<'a> {
     }
     fn read_opt_decl_or_stmt(&mut self) -> ParseR<AST> {
         if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            return Ok(AST::new(ASTKind::Compound(Vec::new()), 0));
+            return Ok(AST::new(ASTKind::Compound(Vec::new()), Pos::new(0, 0)));
         }
 
         let peek_tok = try!(self.lexer.peek());
         if self.is_type(&peek_tok) {
             // variable declaration
             let mut stmts = Vec::new();
-            let line = *self.lexer.get_cur_line();
+            let pos = self.lexer.get_cur_pos();
             try!(self.read_decl(&mut stmts));
-            Ok(AST::new(ASTKind::Compound(stmts), line))
+            Ok(AST::new(ASTKind::Compound(stmts), pos))
         } else {
             self.read_stmt()
         }
@@ -843,7 +863,7 @@ impl<'a> Parser<'a> {
                     name.clone(),
                     AST::new(
                         ASTKind::Variable(ty.clone(), name.clone()),
-                        0,
+                        Pos::new(0, 0),
                     ),
                 );
             }
@@ -1110,7 +1130,7 @@ impl<'a> Parser<'a> {
                 }
                 decls.push(AST::new(
                     ASTKind::VariableDecl(ty, name, StorageClass::Auto, None),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ));
                 if try!(self.lexer.skip_symbol(Symbol::Comma)) {
                     continue;
@@ -1172,7 +1192,7 @@ impl<'a> Parser<'a> {
             if try!(self.lexer.skip_symbol(Symbol::Assign)) {
                 val = try!(self.read_assign()).eval_constexpr();
             }
-            let constval = AST::new(ASTKind::Int(val, Bits::Bits32), *self.lexer.get_cur_line());
+            let constval = AST::new(ASTKind::Int(val, Bits::Bits32), self.lexer.get_cur_pos());
             val += 1;
             self.env.back_mut().unwrap().insert(name, constval);
             if try!(self.lexer.skip_symbol(Symbol::Comma)) {
@@ -1194,7 +1214,7 @@ impl<'a> Parser<'a> {
         if try!(self.lexer.peek()).kind == TokenKind::Symbol(Symbol::Semicolon) {
             Ok(AST::new(
                 ASTKind::Compound(Vec::new()),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             ))
         } else {
             self.read_expr()
@@ -1206,7 +1226,7 @@ impl<'a> Parser<'a> {
             let rhs = try!(self.read_assign());
             lhs = AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Comma),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             )
         }
         Ok(lhs)
@@ -1216,17 +1236,17 @@ impl<'a> Parser<'a> {
         if try!(self.lexer.skip_symbol(Symbol::Question)) {
             return self.read_ternary(lhs);
         }
-        let assign = |lhs, rhs, line| -> AST {
+        let assign = |lhs, rhs, pos| -> AST {
             AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Assign),
-                line,
+                pos,
             )
         };
         loop {
             let tok = try!(self.lexer.get());
             match tok.kind {
                 TokenKind::Symbol(Symbol::Assign) => {
-                    lhs = assign(lhs, try!(self.read_assign()), *self.lexer.get_cur_line());
+                    lhs = assign(lhs, try!(self.read_assign()), self.lexer.get_cur_pos());
                 }
                 TokenKind::Symbol(Symbol::AssignAdd) => {
                     lhs = assign(
@@ -1237,9 +1257,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Add,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 TokenKind::Symbol(Symbol::AssignSub) => {
@@ -1251,9 +1271,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Sub,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 TokenKind::Symbol(Symbol::AssignMul) => {
@@ -1265,9 +1285,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Mul,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 TokenKind::Symbol(Symbol::AssignDiv) => {
@@ -1279,9 +1299,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Div,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 TokenKind::Symbol(Symbol::AssignMod) => {
@@ -1293,9 +1313,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Rem,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 TokenKind::Symbol(Symbol::AssignShl) => {
@@ -1307,9 +1327,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Shl,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 TokenKind::Symbol(Symbol::AssignShr) => {
@@ -1321,9 +1341,9 @@ impl<'a> Parser<'a> {
                                 Rc::new(try!(self.read_assign())),
                                 node::CBinOps::Shr,
                             ),
-                            *self.lexer.get_cur_line(),
+                            self.lexer.get_cur_pos(),
                         ),
-                        *self.lexer.get_cur_line(),
+                        self.lexer.get_cur_pos(),
                     );
                 }
                 // TODO: implement more op
@@ -1355,7 +1375,7 @@ impl<'a> Parser<'a> {
                 Rc::new(then_expr),
                 Rc::new(else_expr),
             ),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
     fn read_logor(&mut self) -> ParseR<AST> {
@@ -1364,7 +1384,7 @@ impl<'a> Parser<'a> {
             let rhs = try!(self.read_logand());
             lhs = AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LOr),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             );
         }
         Ok(lhs)
@@ -1375,7 +1395,7 @@ impl<'a> Parser<'a> {
             let rhs = try!(self.read_or());
             lhs = AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::LAnd),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             );
         }
         Ok(lhs)
@@ -1386,7 +1406,7 @@ impl<'a> Parser<'a> {
             let rhs = try!(self.read_xor());
             lhs = AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Or),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             );
         }
         Ok(lhs)
@@ -1397,7 +1417,7 @@ impl<'a> Parser<'a> {
             let rhs = try!(self.read_and());
             lhs = AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Xor),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             );
         }
         Ok(lhs)
@@ -1408,7 +1428,7 @@ impl<'a> Parser<'a> {
             let rhs = try!(self.read_eq_ne());
             lhs = AST::new(
                 ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::And),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             );
         }
         Ok(lhs)
@@ -1420,13 +1440,13 @@ impl<'a> Parser<'a> {
                 let rhs = try!(self.read_relation());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Eq),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Ne)) {
                 let rhs = try!(self.read_relation());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ne),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else {
                 break;
@@ -1441,25 +1461,25 @@ impl<'a> Parser<'a> {
                 let rhs = try!(self.read_shl_shr());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Lt),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Le)) {
                 let rhs = try!(self.read_shl_shr());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Le),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Gt)) {
                 let rhs = try!(self.read_shl_shr());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Gt),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Ge)) {
                 let rhs = try!(self.read_shl_shr());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Ge),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else {
                 break;
@@ -1474,13 +1494,13 @@ impl<'a> Parser<'a> {
                 let rhs = try!(self.read_add_sub());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shl),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Shr)) {
                 let rhs = try!(self.read_add_sub());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Shr),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else {
                 break;
@@ -1495,13 +1515,13 @@ impl<'a> Parser<'a> {
                 let rhs = try!(self.read_mul_div_rem());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Add),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Sub)) {
                 let rhs = try!(self.read_mul_div_rem());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Sub),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else {
                 break;
@@ -1516,19 +1536,19 @@ impl<'a> Parser<'a> {
                 let rhs = try!(self.read_cast());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Mul),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Div)) {
                 let rhs = try!(self.read_cast());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Div),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else if try!(self.lexer.skip_symbol(Symbol::Mod)) {
                 let rhs = try!(self.read_cast());
                 lhs = AST::new(
                     ASTKind::BinaryOp(Rc::new(lhs), Rc::new(rhs), node::CBinOps::Rem),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
             } else {
                 break;
@@ -1548,7 +1568,7 @@ impl<'a> Parser<'a> {
             }
             return Ok(AST::new(
                 ASTKind::TypeCast(Rc::new(try!(self.read_cast())), ty),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             ));
         } else {
             self.lexer.unget(tok);
@@ -1564,7 +1584,7 @@ impl<'a> Parser<'a> {
                         Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::LNot,
                     ),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ))
             }
             TokenKind::Symbol(Symbol::BitwiseNot) => {
@@ -1573,7 +1593,7 @@ impl<'a> Parser<'a> {
                         Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::BNot,
                     ),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ))
             }
             TokenKind::Symbol(Symbol::Add) => {
@@ -1582,7 +1602,7 @@ impl<'a> Parser<'a> {
                         Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::Plus,
                     ),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ))
             }
             TokenKind::Symbol(Symbol::Sub) => {
@@ -1591,11 +1611,11 @@ impl<'a> Parser<'a> {
                         Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::Minus,
                     ),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ))
             }
             TokenKind::Symbol(Symbol::Inc) => {
-                let line = *self.lexer.get_cur_line();
+                let pos = self.lexer.get_cur_pos();
                 let var = try!(self.read_cast());
                 return Ok(AST::new(
                     ASTKind::BinaryOp(
@@ -1603,18 +1623,20 @@ impl<'a> Parser<'a> {
                         Rc::new(AST::new(
                             ASTKind::BinaryOp(
                                 Rc::new(var),
-                                Rc::new(AST::new(ASTKind::Int(1, Bits::Bits32), line)),
+                                Rc::new(
+                                    AST::new(ASTKind::Int(1, Bits::Bits32), pos.clone()),
+                                ),
                                 node::CBinOps::Add,
                             ),
-                            line,
+                            pos.clone(),
                         )),
                         node::CBinOps::Assign,
                     ),
-                    line,
+                    pos,
                 ));
             }
             TokenKind::Symbol(Symbol::Dec) => {
-                let line = *self.lexer.get_cur_line();
+                let pos = self.lexer.get_cur_pos();
                 let var = try!(self.read_cast());
                 return Ok(AST::new(
                     ASTKind::BinaryOp(
@@ -1622,14 +1644,16 @@ impl<'a> Parser<'a> {
                         Rc::new(AST::new(
                             ASTKind::BinaryOp(
                                 Rc::new(var),
-                                Rc::new(AST::new(ASTKind::Int(1, Bits::Bits32), line)),
+                                Rc::new(
+                                    AST::new(ASTKind::Int(1, Bits::Bits32), pos.clone()),
+                                ),
                                 node::CBinOps::Sub,
                             ),
-                            line,
+                            pos.clone(),
                         )),
                         node::CBinOps::Assign,
                     ),
-                    line,
+                    pos,
                 ));
             }
             TokenKind::Symbol(Symbol::Asterisk) => {
@@ -1638,7 +1662,7 @@ impl<'a> Parser<'a> {
                         Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::Deref,
                     ),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ))
             }
             TokenKind::Symbol(Symbol::Ampersand) => {
@@ -1647,7 +1671,7 @@ impl<'a> Parser<'a> {
                         Rc::new(try!(self.read_cast())),
                         node::CUnaryOps::Addr,
                     ),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ))
             }
             TokenKind::Symbol(Symbol::Sizeof) => {
@@ -1668,7 +1692,7 @@ impl<'a> Parser<'a> {
             try!(self.lexer.skip_symbol(Symbol::ClosingParen));
             return Ok(AST::new(
                 ASTKind::Int(ty.calc_size() as i64, Bits::Bits32),
-                *self.lexer.get_cur_line(),
+                self.lexer.get_cur_pos(),
             ));
         }
         self.lexer.unget(tok);
@@ -1678,7 +1702,7 @@ impl<'a> Parser<'a> {
                 try!(self.calc_sizeof(&expr)) as i64,
                 Bits::Bits32,
             ),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
     fn read_postfix(&mut self) -> ParseR<AST> {
@@ -1691,35 +1715,35 @@ impl<'a> Parser<'a> {
             if try!(self.lexer.skip_symbol(Symbol::OpeningBoxBracket)) {
                 ast = AST::new(
                     ASTKind::Load(Rc::new(try!(self.read_index(ast)))),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
                 continue;
             }
             if try!(self.lexer.skip_symbol(Symbol::Point)) {
                 ast = AST::new(
                     ASTKind::Load(Rc::new(try!(self.read_field(ast)))),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 );
                 continue;
             }
             if try!(self.lexer.skip_symbol(Symbol::Arrow)) {
-                let line = *self.lexer.get_cur_line();
+                let pos = self.lexer.get_cur_pos();
                 let field = try!(self.read_field(AST::new(ASTKind::UnaryOp(Rc::new(ast),
                                                               node::CUnaryOps::Deref),
-                                             line)));
-                ast = AST::new(ASTKind::Load(Rc::new(field)), line);
+                                             pos.clone())));
+                ast = AST::new(ASTKind::Load(Rc::new(field)), pos);
                 continue;
             }
             if try!(self.lexer.skip_symbol(Symbol::Inc)) {
                 return Ok(AST::new(
                     ASTKind::UnaryOp(Rc::new(ast), node::CUnaryOps::Inc),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ));
             }
             if try!(self.lexer.skip_symbol(Symbol::Dec)) {
                 return Ok(AST::new(
                     ASTKind::UnaryOp(Rc::new(ast), node::CUnaryOps::Dec),
-                    *self.lexer.get_cur_line(),
+                    self.lexer.get_cur_pos(),
                 ));
             }
             break;
@@ -1727,6 +1751,7 @@ impl<'a> Parser<'a> {
         Ok(ast)
     }
     fn read_func_call(&mut self, f: AST) -> ParseR<AST> {
+        let pos = self.lexer.get_cur_pos();
         let mut args = Vec::new();
         if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
             loop {
@@ -1746,10 +1771,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        Ok(AST::new(
-            ASTKind::FuncCall(Rc::new(f), args),
-            *self.lexer.get_cur_line(),
-        ))
+        Ok(AST::new(ASTKind::FuncCall(Rc::new(f), args), pos))
     }
     fn read_index(&mut self, ast: AST) -> ParseR<AST> {
         let idx = try!(self.read_expr());
@@ -1763,7 +1785,7 @@ impl<'a> Parser<'a> {
                 Rc::new(idx),
                 node::CBinOps::Add,
             ),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
 
@@ -1778,7 +1800,7 @@ impl<'a> Parser<'a> {
         let field_name = ident_val!(field);
         Ok(AST::new(
             ASTKind::StructRef(Rc::new(ast), field_name),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
 
@@ -1798,7 +1820,7 @@ impl<'a> Parser<'a> {
         }
         Ok(AST::new(
             ASTKind::ConstArray(elems),
-            *self.lexer.get_cur_line(),
+            self.lexer.get_cur_pos(),
         ))
     }
     fn read_primary(&mut self) -> ParseR<AST> {
@@ -1816,18 +1838,16 @@ impl<'a> Parser<'a> {
 
         match tok.kind.clone() {
             TokenKind::IntNumber(n, bits) => {
-                Ok(AST::new(ASTKind::Int(n, bits), *self.lexer.get_cur_line()))
+                Ok(AST::new(ASTKind::Int(n, bits), self.lexer.get_cur_pos()))
             }
-            TokenKind::FloatNumber(f) => {
-                Ok(AST::new(ASTKind::Float(f), *self.lexer.get_cur_line()))
-            }
+            TokenKind::FloatNumber(f) => Ok(AST::new(ASTKind::Float(f), self.lexer.get_cur_pos())),
             TokenKind::Identifier(ident) => {
                 if let Some(ast) = self.env.back().unwrap().get(ident.as_str()) {
                     return match ast.kind {
                         ASTKind::Variable(_, _) => {
                             Ok(AST::new(
                                 ASTKind::Load(Rc::new((*ast).clone())),
-                                *self.lexer.get_cur_line(),
+                                self.lexer.get_cur_pos(),
                             ))
                         } 
                         _ => Ok((*ast).clone()),
@@ -1840,13 +1860,8 @@ impl<'a> Parser<'a> {
                 );
                 Err(Error::Something)
             }
-            TokenKind::String(s) => Ok(AST::new(ASTKind::String(s), *self.lexer.get_cur_line())),
-            TokenKind::Char(ch) => {
-                Ok(AST::new(
-                    ASTKind::Char(ch as i32),
-                    *self.lexer.get_cur_line(),
-                ))
-            }
+            TokenKind::String(s) => Ok(AST::new(ASTKind::String(s), self.lexer.get_cur_pos())),
+            TokenKind::Char(ch) => Ok(AST::new(ASTKind::Char(ch as i32), self.lexer.get_cur_pos())),
             TokenKind::Symbol(sym) => {
                 match sym {
                     Symbol::OpeningParen => {
@@ -1962,7 +1977,7 @@ impl<'a> Parser<'a> {
     fn cast_ast(&mut self, expr: &AST, ty: &Type) -> AST {
         AST::new(
             ASTKind::TypeCast(Rc::new(expr.clone()), ty.clone()),
-            expr.line,
+            expr.pos.clone(),
         )
     }
 }
