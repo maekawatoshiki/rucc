@@ -1,10 +1,6 @@
 extern crate rucc;
 use rucc::version_info;
-use rucc::parser;
-use rucc::codegen;
-
-extern crate regex;
-use regex::Regex;
+use rucc::common;
 
 extern crate ansi_term;
 use self::ansi_term::Colour;
@@ -17,23 +13,7 @@ fn main() {
         version_info::show_usage();
     } else {
         let ref input_file_name = args[1];
-        let ast = parser::Parser::run_file(input_file_name.to_string());
-
-        // DEBUG: for node in &ast {
-        // DEBUG:     node.show();
-        // DEBUG: }
-
-        // DEBUG: println!("\nllvm-ir test output:");
-        unsafe {
-            let mut codegen = codegen::Codegen::new("rucc");
-            codegen.run(ast);
-
-            let output_file_name = Regex::new(r"\..*$").unwrap().replace_all(
-                input_file_name,
-                ".bc",
-            );
-            codegen.write_llvm_bitcode_to_file(output_file_name.to_string().as_str());
-        }
+        common::run_file(input_file_name);
         println!("{}", Colour::Green.paint("Compiling exited successfully."));
     }
 }
@@ -52,7 +32,7 @@ fn compile_examples() {
         let name = path.unwrap().path().to_str().unwrap().to_string();
         println!("testing {}...", name);
 
-        // // for coverage...
+        // for coverage...
         // let ast = parser::Parser::run_file(name.to_string());
         // for node in &ast {
         //     node.show();
