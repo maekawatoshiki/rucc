@@ -25,7 +25,7 @@ pub enum Error {
 pub type ParseR<T> = Result<T, Error>;
 
 pub struct Parser<'a> {
-    lexer: &'a mut Lexer,
+    pub lexer: &'a mut Lexer,
     err_counts: usize,
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
@@ -113,6 +113,12 @@ impl<'a> Parser<'a> {
     }
     pub fn run(&mut self, node: &mut Vec<AST>) {
         while matches!(self.read_toplevel(node), Ok(_)) {}
+        self.show_total_errors();
+    }
+    pub fn run_as_expr(&mut self) -> ParseR<AST> {
+        self.read_expr()
+    }
+    pub fn show_total_errors(&mut self) {
         if self.err_counts > 0 {
             println!("{} error{} generated.",
                      self.err_counts,
@@ -120,27 +126,21 @@ impl<'a> Parser<'a> {
             panic!();
         }
     }
-    pub fn run_as_expr(&mut self) -> ParseR<AST> {
-        self.read_expr()
-    }
-
-    fn read_toplevel(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
+    pub fn read_toplevel(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
         // TODO: refine
-        match try!(self.is_function_def()) {
-            true => {
-                match self.read_func_def() {
-                    Ok(ok) => ast.push(ok),
-                    Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
-                    Err(_) => {}
-                }
+        if try!(self.is_function_def()) {
+            match self.read_func_def() {
+                Ok(ok) => ast.push(ok),
+                Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
+                Err(e) => return Err(e),
             }
-            false => {
-                match self.read_decl(ast) {
-                    Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
-                    _ => {}
-                }
+        } else {
+            match self.read_decl(ast) {
+                Err(Error::EOF) => self.show_error("expected a token, but reached EOF"),
+                Err(e) => return Err(e),
+                _ => {}
             }
-        };
+        }
         Ok(())
     }
     fn read_func_def(&mut self) -> ParseR<AST> {

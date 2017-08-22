@@ -154,7 +154,7 @@ impl Codegen {
         }
     }
 
-    pub unsafe fn run(&mut self, node: Vec<node::AST>) -> Result<(), Error> {
+    pub unsafe fn run(&mut self, node: &Vec<node::AST>) -> Result<(), Error> {
         for ast in node {
             match self.gen(&ast) {
                 Ok(_) => {}
