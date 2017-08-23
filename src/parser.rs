@@ -47,6 +47,14 @@ macro_rules! ident_val {
         }
     }
 }
+macro_rules! expect_symbol_error {
+    ($slf:expr, $sym:expr, $msg:expr) => {{
+        if !try!($slf.lexer.skip_symbol($sym)) {
+            let peek = $slf.lexer.peek();
+            $slf.show_error_token(&try!(peek), $msg);
+        }
+    }}
+}
 
 
 impl<'a> Parser<'a> {
@@ -123,7 +131,7 @@ impl<'a> Parser<'a> {
             println!("{} error{} generated.",
                      self.err_counts,
                      if self.err_counts > 1 { "s" } else { "" });
-            panic!();
+            ::std::process::exit(-1);
         }
     }
     pub fn read_toplevel(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
@@ -171,10 +179,7 @@ impl<'a> Parser<'a> {
             AST::new(ASTKind::String(name.clone()), Pos::new(0, 0)),
         );
 
-        if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '('");
-        }
+        expect_symbol_error!(self, Symbol::OpeningBrace, "expected '('");
         let body = try!(self.read_func_body(&functy));
 
         self.env.pop_back();
@@ -252,22 +257,13 @@ impl<'a> Parser<'a> {
 
         self.lexer.unget(tok);
         let expr = self.read_opt_expr();
-        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ';'");
-        }
+        expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
         expr
     }
     fn read_if_stmt(&mut self) -> ParseR<AST> {
-        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '('");
-        }
+        expect_symbol_error!(self, Symbol::OpeningParen, "expected '('");
         let cond = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ')'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingParen, "expected ')'");
         let then_stmt = Rc::new(try!(self.read_stmt()));
         let else_stmt = if try!(self.lexer.skip_keyword(Keyword::Else)) {
             Rc::new(try!(self.read_stmt()))
@@ -280,27 +276,18 @@ impl<'a> Parser<'a> {
         ))
     }
     fn read_for_stmt(&mut self) -> ParseR<AST> {
-        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '('");
-        }
+        expect_symbol_error!(self, Symbol::OpeningParen, "expected '('");
         let init = try!(self.read_opt_decl_or_stmt());
         // TODO: make read_expr return Option<AST>.
         //       when cur tok is ';', returns None.
         let cond = try!(self.read_opt_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ';'");
-        }
+        expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
         let step = if try!(self.lexer.peek_symbol_token_is(Symbol::ClosingParen)) {
             AST::new(ASTKind::Compound(Vec::new()), self.lexer.get_cur_pos())
         } else {
             try!(self.read_opt_expr())
         };
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ')'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingParen, "expected ')'");
         let body = try!(self.read_stmt());
         Ok(AST::new(
             ASTKind::For(
@@ -313,15 +300,9 @@ impl<'a> Parser<'a> {
         ))
     }
     fn read_while_stmt(&mut self) -> ParseR<AST> {
-        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '('");
-        }
+        expect_symbol_error!(self, Symbol::OpeningParen, "expected '('");
         let cond = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ')'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingParen, "expected ')'");
         let body = try!(self.read_stmt());
         Ok(AST::new(
             ASTKind::While(Rc::new(cond), Rc::new(body)),
@@ -334,30 +315,19 @@ impl<'a> Parser<'a> {
             let peek = self.lexer.peek();
             self.show_error_token(&try!(peek), "expected 'while'");
         }
-        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '('");
-        }
+        expect_symbol_error!(self, Symbol::OpeningParen, "expected '('");
         let cond = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ')'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingParen, "expected ')'");
+        expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
         Ok(AST::new(
             ASTKind::DoWhile(Rc::new(cond), Rc::new(body)),
             Pos::new(0, 0),
         ))
     }
     fn read_switch_stmt(&mut self) -> ParseR<AST> {
-        if !try!(self.lexer.skip_symbol(Symbol::OpeningParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '('");
-        }
+        expect_symbol_error!(self, Symbol::OpeningParen, "expected '('");
         let cond = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ')'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingParen, "expected ')'");
         let body = Rc::new(try!(self.read_stmt()));
         Ok(AST::new(
             ASTKind::Switch(Rc::new(cond), body),
@@ -366,51 +336,33 @@ impl<'a> Parser<'a> {
     }
     fn read_case_label(&mut self) -> ParseR<AST> {
         let expr = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ':'");
-        }
+        expect_symbol_error!(self, Symbol::Colon, "expected ':'");
         Ok(AST::new(ASTKind::Case(Rc::new(expr)), Pos::new(0, 0)))
     }
     fn read_default_label(&mut self) -> ParseR<AST> {
-        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ':'");
-        }
+        expect_symbol_error!(self, Symbol::Colon, "expected ':'");
         Ok(AST::new(ASTKind::DefaultL, Pos::new(0, 0)))
     }
     fn read_goto_stmt(&mut self) -> ParseR<AST> {
         let pos = self.lexer.get_cur_pos();
         let label_name = ident_val!(try!(self.lexer.get()));
-        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ';'");
-        }
+        expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
         Ok(AST::new(ASTKind::Goto(label_name), pos))
     }
     fn read_label(&mut self, tok: Token) -> ParseR<AST> {
         let pos = self.lexer.get_cur_pos();
         let label_name = ident_val!(tok);
-        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ':'");
-        }
+        expect_symbol_error!(self, Symbol::Colon, "expected ':'");
         Ok(AST::new(ASTKind::Label(label_name), pos))
     }
     fn read_continue_stmt(&mut self) -> ParseR<AST> {
         let pos = self.lexer.get_cur_pos();
-        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ';'");
-        }
+        expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
         Ok(AST::new(ASTKind::Continue, pos))
     }
     fn read_break_stmt(&mut self) -> ParseR<AST> {
         let pos = self.lexer.get_cur_pos();
-        if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ';'");
-        }
+        expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
         Ok(AST::new(ASTKind::Break, pos))
     }
     fn read_return_stmt(&mut self) -> ParseR<AST> {
@@ -419,10 +371,7 @@ impl<'a> Parser<'a> {
             Ok(AST::new(ASTKind::Return(None), pos))
         } else {
             let retval = Some(Rc::new(try!(self.read_expr())));
-            if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-                let peek = self.lexer.peek();
-                self.show_error_token(&try!(peek), "expected ';'");
-            }
+            expect_symbol_error!(self, Symbol::Semicolon, "expected ';'");
             Ok(AST::new(ASTKind::Return(retval), pos))
         }
     }
@@ -568,11 +517,7 @@ impl<'a> Parser<'a> {
             self.read_initializer_list(ty)
         } else if try!(self.lexer.peek_symbol_token_is(Symbol::OpeningBrace)) {
             let elem = self.read_initializer_elem(ty);
-            if !try!(self.lexer.skip_symbol(Symbol::ClosingParen) ) {
-                let peek = try!(self.lexer.peek());
-                self.show_error_token(&peek, "expected '}'");
-                return Err(Error::Something);
-            }
+            expect_symbol_error!(self, Symbol::ClosingBrace, "expected '}'");
             elem
         } else {
             self.read_assign()
@@ -808,10 +753,7 @@ impl<'a> Parser<'a> {
             len = -1;
         } else {
             len = try!(self.read_expr()).eval_constexpr() as i32;
-            if !try!(self.lexer.skip_symbol(Symbol::ClosingBoxBracket)) {
-                let peek = self.lexer.peek();
-                self.show_error_token(&try!(peek), "expected ']'");
-            }
+            expect_symbol_error!(self, Symbol::ClosingBoxBracket,  "expected ']'");
         }
         let ty = try!(self.read_declarator_tail(basety)).0;
         Ok(Type::Array(Rc::new(ty), len))
@@ -848,10 +790,7 @@ impl<'a> Parser<'a> {
                     );
                     return Err(Error::Something);
                 }
-                if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-                    let peek = self.lexer.peek();
-                    self.show_error_token(&try!(peek), "expected ')'");
-                }
+                expect_symbol_error!(self, Symbol::ClosingParen,  "expected ')'");
                 return Ok((paramtypes, paramnames, true));
             }
 
@@ -1135,18 +1074,12 @@ impl<'a> Parser<'a> {
                 if try!(self.lexer.skip_symbol(Symbol::Comma)) {
                     continue;
                 } else {
-                    if !try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
-                        let peek = self.lexer.peek();
-                        self.show_error_token(&try!(peek), "expected ';'");
-                    }
+                    expect_symbol_error!(self, Symbol::Semicolon,  "expected ';'");
                 }
                 break;
             }
         }
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected '}'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingBrace,  "expected '}'");
         Ok(decls)
     }
     fn read_enum_def(&mut self) -> ParseR<Type> {
@@ -1357,10 +1290,7 @@ impl<'a> Parser<'a> {
     }
     fn read_ternary(&mut self, cond: AST) -> ParseR<AST> {
         let mut then_expr = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::Colon)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ':'");
-        }
+        expect_symbol_error!(self, Symbol::Colon,  "expected ':'");
         let mut else_expr = try!(self.read_assign());
         let then_ty = try!(self.get_expr_returning_ty(&then_expr));
         let else_ty = try!(self.get_expr_returning_ty(&else_expr));
@@ -1562,10 +1492,7 @@ impl<'a> Parser<'a> {
         if tok.kind == TokenKind::Symbol(Symbol::OpeningParen) && self.is_type(&peek) {
             let basety = try!(self.read_type_spec()).0;
             let ty = try!(self.read_declarator(basety)).0;
-            if !try!(self.lexer.skip_symbol(Symbol::ClosingParen)) {
-                let peek = self.lexer.peek();
-                self.show_error_token(&try!(peek), "expected ')'");
-            }
+            expect_symbol_error!(self, Symbol::ClosingParen,  "expected ')'");
             return Ok(AST::new(
                 ASTKind::TypeCast(Rc::new(try!(self.read_cast())), ty),
                 self.lexer.get_cur_pos(),
@@ -1775,10 +1702,7 @@ impl<'a> Parser<'a> {
     }
     fn read_index(&mut self, ast: AST) -> ParseR<AST> {
         let idx = try!(self.read_expr());
-        if !try!(self.lexer.skip_symbol(Symbol::ClosingBoxBracket)) {
-            let peek = self.lexer.peek();
-            self.show_error_token(&try!(peek), "expected ']'");
-        }
+        expect_symbol_error!(self, Symbol::ClosingBoxBracket,  "expected ']'");
         Ok(AST::new(
             ASTKind::BinaryOp(
                 Rc::new(ast),

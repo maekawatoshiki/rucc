@@ -45,7 +45,7 @@ pub fn run_file<'a>(filename: &'a str) {
                         "{}",
                         parser.lexer.get_surrounding_code_with_err_point(pos.pos)
                     ).unwrap();
-                    panic!()
+                    ::std::process::exit(-1);
                 }
                 _ => panic!("this is a bug. fix soon"),
             }

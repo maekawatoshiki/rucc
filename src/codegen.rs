@@ -1748,10 +1748,16 @@ impl Codegen {
 
         // do implicit type casting
         if !func_is_vararg && params_count < args_len {
-            error::error_exit(ast.pos.line as i32, "too many arguments");
+            return Err(Error::MsgWithPos(
+                "too many arguments".to_string(),
+                ast.pos.clone(),
+            ));
         }
         if !func_is_vararg && params_count > args_len {
-            error::error_exit(ast.pos.line as i32, "too little arguments");
+            return Err(Error::MsgWithPos(
+                "too little arguments".to_string(),
+                ast.pos.clone(),
+            ));
         }
         for i in 0..args_len {
             args_val.push(if params_count <= i {
@@ -1962,13 +1968,14 @@ impl Codegen {
 
         // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
-            match field.kind {
-                node::ASTKind::VariableDecl(ref ty, ref name, ref _sclass, ref _init) => {
-                    fields_llvm_types.push(self.type_to_llvmty(ty));
-                    fields_types.push(ty.clone());
-                    fields_names_map.insert(name.to_string(), i as u32);
-                }
-                _ => error::error_exit(0, "impossible"),
+            if let node::ASTKind::VariableDecl(ref ty, ref name, ref _sclass, ref _init) =
+                field.kind
+            {
+                fields_llvm_types.push(self.type_to_llvmty(ty));
+                fields_types.push(ty.clone());
+                fields_names_map.insert(name.to_string(), i as u32);
+            } else {
+                panic!("if reach here, this is a bug");
             }
         }
         (false, new_struct)
