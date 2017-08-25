@@ -254,7 +254,7 @@ impl Codegen {
         let func_ty = self.type_to_llvmty(functy);
         let (func_retty, func_args_types, _func_is_vararg) = match functy {
             &Type::Func(ref retty, ref args_types, ref is_vararg) => (retty, args_types, is_vararg),
-            _ => return Err(Error::Msg("gen_func_def: never reach!".to_string())),
+            _ => panic!("never reach"),
         };
         let func = match self.global_varmap.entry(name.to_string()) {
             hash_map::Entry::Occupied(o) => o.into_mut().llvm_val,
@@ -1628,9 +1628,7 @@ impl Codegen {
         let varinfo_w = self.lookup_var(name.as_str());
         match varinfo_w {
             Some(varinfo) => Ok((varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty))))),
-            None => Err(Error::Msg(
-                format!("gen_var: not found variable '{}'", name),
-            )),
+            None => panic!("not found variable"),
         }
     }
 
@@ -1780,13 +1778,26 @@ impl Codegen {
         ))
     }
     unsafe fn gen_continue(&mut self) -> CodegenResult {
-        let continue_bb = *self.continue_labels.back().unwrap();
+        let continue_bb = if let Some(l) = self.continue_labels.back() {
+            *l
+        } else {
+            return Err(Error::Msg(
+                "continue error (maybe not in loop or switch stmt)"
+                    .to_string(),
+            ));
+        };
         LLVMBuildBr(self.builder, continue_bb);
         Ok((ptr::null_mut(), None))
     }
 
     unsafe fn gen_break(&mut self) -> CodegenResult {
-        let break_bb = *self.break_labels.back().unwrap();
+        let break_bb = if let Some(l) = self.break_labels.back() {
+            *l
+        } else {
+            return Err(Error::Msg(
+                "break error (maybe not in loop or switch stmt)".to_string(),
+            ));
+        };
         LLVMBuildBr(self.builder, break_bb);
         Ok((ptr::null_mut(), None))
     }

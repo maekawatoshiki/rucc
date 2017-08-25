@@ -35,7 +35,8 @@ pub fn run_file<'a>(filename: &'a str) {
                 Err(codegen::Error::MsgWithPos(msg, pos)) => {
                     writeln!(
                         &mut stderr(),
-                        "{}: {}: {}",
+                        "{}: {} {}: {}",
+                        parser.lexer.get_filename(),
                         Colour::Red.bold().paint("error:"),
                         pos.line,
                         msg
@@ -45,6 +46,11 @@ pub fn run_file<'a>(filename: &'a str) {
                         "{}",
                         parser.lexer.get_surrounding_code_with_err_point(pos.pos)
                     ).unwrap();
+                    println!(
+                        "{} error{} generated.",
+                        parser.err_counts + 1,
+                        if parser.err_counts + 1 > 1 { "s" } else { "" }
+                    );
                     ::std::process::exit(-1);
                 }
                 _ => panic!("this is a bug. fix soon"),

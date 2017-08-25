@@ -188,6 +188,9 @@ impl Token {
             pos: Pos::new(line, pos),
         }
     }
+    pub fn add_to_hideset(&mut self, s: String) {
+        self.hideset.insert(s);
+    }
 }
 
 #[derive(Clone)]
@@ -355,22 +358,21 @@ impl Lexer {
     }
     pub fn unget_all(&mut self, tv: Vec<Token>) {
         let buf = self.buf.back_mut().unwrap();
-        for t in tv.iter().rev() {
-            buf.push_back(t.clone());
-        }
+        buf.extend(tv.iter().rev().map(|tok| tok.clone()));
     }
 
     pub fn read_identifier(&mut self) -> ParseR<Token> {
         let mut ident = String::with_capacity(16);
         let pos = *self.peek_pos.back().unwrap();
         loop {
-            let c = try!(self.peek_get());
-            match c {
-                'a'...'z' | 'A'...'Z' | '_' | '0'...'9' => ident.push(c),
-                _ => break,
-            };
-            *self.peek_pos.back_mut().unwrap() += 1;
+            let c = try!(self.peek_next());
+            if c.is_alphanumeric() || c == '_' {
+                ident.push(c);
+            } else {
+                break;
+            }
         }
+        *self.peek_pos.back_mut().unwrap() -= 1;
         Ok(Token::new(
             TokenKind::Identifier(ident),
             0,
@@ -384,7 +386,7 @@ impl Lexer {
         let mut last = try!(self.peek_get());
         let pos = *self.peek_pos.back().unwrap();
         loop {
-            let c = try!(self.peek_get());
+            let c = try!(self.peek_next());
             num.push(c);
             is_float = is_float || c == '.';
             let is_f = "eEpP".contains(last) && "+-".contains(c);
@@ -394,8 +396,8 @@ impl Lexer {
                 break;
             }
             last = c;
-            *self.peek_pos.back_mut().unwrap() += 1;
         }
+        *self.peek_pos.back_mut().unwrap() -= 1;
         if is_float {
             // TODO: this is to delete suffix like 'F', but not efficient
             loop {
@@ -536,9 +538,10 @@ impl Lexer {
                 let mut hex = "".to_string();
                 loop {
                     let c = try!(self.peek_get());
-                    match c {
-                        '0'...'9' | 'a'...'f' | 'A'...'F' => hex.push(c),
-                        _ => break,
+                    if c.is_alphanumeric() {
+                        hex.push(c);
+                    } else {
+                        break;
                     }
                     try!(self.peek_next());
                 }
@@ -767,14 +770,14 @@ impl Lexer {
     }
 
     fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
-        let mut body = Vec::new();
-        for tok in macro_body {
-            body.push({
-                let mut t = (*tok).clone();
-                t.hideset.insert(name.to_string());
+        let body = macro_body
+            .iter()
+            .map(|tok| {
+                let mut t = tok.clone();
+                t.add_to_hideset(name.to_string());
                 t
-            });
-        }
+            })
+            .collect();
         self.unget_all(body);
         Ok(())
     }
@@ -785,12 +788,13 @@ impl Lexer {
             let tok = try!(self.do_read_token());
             let val = ident_val!(tok);
             if n == 0 {
-                if val == ")" {
-                    *end = true;
-                    // self.unget(tok);
-                    break;
-                } else if val == "," {
-                    break;
+                match val.as_str() {
+                    ")" => {
+                        *end = true;
+                        break;
+                    }
+                    "," => break,
+                    _ => {}
                 }
             }
             match val.as_str() {
@@ -803,25 +807,25 @@ impl Lexer {
         Ok(arg)
     }
     fn stringize(&mut self, tokens: &Vec<Token>) -> Token {
-        let mut string = String::new();
-        for token in tokens {
-            string += format!(
-                "{}{}",
-                (if token.space && !string.is_empty() {
-                     " "
-                 } else {
-                     ""
-                 }),
-                match token.kind {
-                    TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
-                    TokenKind::IntNumber(ref i, _) => format!("{}", *i),
-                    TokenKind::FloatNumber(ref f) => format!("{}", *f),
-                    TokenKind::Identifier(ref i) => format!("{}", *i),
-                    TokenKind::Char(ref c) => format!("\'{}\'", *c),
-                    _ => "".to_string(),
-                }
-            ).as_str();
-        }
+        let string = tokens
+            .iter()
+            .map(|token| {
+                format!(
+                    "{}{}",
+                    if token.space { " " } else { "" },
+                    match token.kind {
+                        TokenKind::String(ref s) => format!("\"{}\"", s.as_str()),
+                        TokenKind::IntNumber(ref i, _) => format!("{}", *i),
+                        TokenKind::FloatNumber(ref f) => format!("{}", *f),
+                        TokenKind::Identifier(ref i) => format!("{}", *i),
+                        TokenKind::Char(ref c) => format!("\'{}\'", *c),
+                        _ => "".to_string(),
+                    }
+                )
+            })
+            .fold("".to_string(), |a, s| a + s.as_str())
+            .trim_left()
+            .to_string();
         Token::new(TokenKind::String(string), 0, 0, *self.get_cur_line())
     }
     fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
@@ -885,7 +889,7 @@ impl Lexer {
         }
 
         for tok in &mut expanded {
-            tok.hideset.insert(name.to_string());
+            tok.add_to_hideset(name.to_string());
         }
 
         self.unget_all(expanded);
@@ -1009,6 +1013,7 @@ impl Lexer {
     }
     fn read_headerfile_name(&mut self) -> ParseR<String> {
         let mut name = "".to_string();
+        // Lt -> '<'
         if try!(self.skip_symbol(Symbol::Lt)) {
             while !try!(self.peek_char_is('>')) {
                 name.push(try!(self.peek_next()));

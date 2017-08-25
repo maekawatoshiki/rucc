@@ -26,7 +26,7 @@ pub type ParseR<T> = Result<T, Error>;
 
 pub struct Parser<'a> {
     pub lexer: &'a mut Lexer,
-    err_counts: usize,
+    pub err_counts: usize,
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
 }
