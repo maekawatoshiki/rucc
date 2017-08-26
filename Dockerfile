@@ -15,4 +15,4 @@ ADD . /opt/rucc
 
 WORKDIR /opt/rucc
 
-RUN cargo test
+# RUN cargo test
