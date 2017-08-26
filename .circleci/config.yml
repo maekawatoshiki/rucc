@@ -1,0 +1,12 @@
+version: 2
+
+jobs:
+  build:
+    working_directory: /opt/rucc
+
+    docker:
+      - image: uint256/rucc:latest
+
+    steps:
+      - run:
+          command: cargo test
