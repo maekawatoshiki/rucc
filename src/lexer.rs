@@ -805,7 +805,7 @@ impl Lexer {
         }
         Ok(arg)
     }
-    fn stringize(&mut self, tokens: &Vec<Token>) -> Token {
+    fn stringize(&mut self, pos: &Pos, tokens: &Vec<Token>) -> Token {
         let string = tokens
             .iter()
             .map(|token| {
@@ -823,9 +823,9 @@ impl Lexer {
                 )
             })
             .fold("".to_string(), |a, s| a + s.as_str())
-            .trim_left()
+            .trim_left() // remove leading spaces
             .to_string();
-        Token::new(TokenKind::String(string), 0, 0, *self.get_cur_line())
+        Token::new(TokenKind::String(string), 0, pos.pos, pos.line)
     }
     fn expand_func_macro(
         &mut self,
@@ -845,11 +845,11 @@ impl Lexer {
             args.push(try!(self.read_one_arg(&mut end)));
         }
 
-        let mut expanded: Vec<Token> = Vec::new();
+        let mut expanded = Vec::new();
         let mut is_stringize = false;
         let mut is_combine = false;
+        // TODO: refine code
         for macro_tok in macro_body {
-            // TODO: refine code
             if ident_val!(macro_tok) == "#" {
                 if is_stringize {
                     // means ##
@@ -860,11 +860,12 @@ impl Lexer {
                 }
                 continue;
             }
+
             if macro_tok.kind == TokenKind::MacroParam {
                 let position = macro_tok.macro_position;
 
                 if is_stringize {
-                    let stringized = self.stringize(&args[position]);
+                    let stringized = self.stringize(&token.pos, &args[position]);
                     expanded.push(stringized);
                     is_stringize = false;
                 } else if is_combine {
@@ -911,12 +912,17 @@ impl Lexer {
                             Bits::Bits32,
                         ),
                         0,
-                        0,
-                        0,
+                        tok.pos.pos,
+                        tok.pos.line,
                     ))
                 }
                 "__FILE__" => {
-                    return Ok(Token::new(TokenKind::String(self.get_filename()), 0, 0, 0))
+                    return Ok(Token::new(
+                        TokenKind::String(self.get_filename()),
+                        0,
+                        tok.pos.pos,
+                        tok.pos.line,
+                    ))
                 } 
                 _ => {}
             }

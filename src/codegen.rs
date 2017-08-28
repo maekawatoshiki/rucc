@@ -405,40 +405,18 @@ impl Codegen {
         gvar: LLVMValueRef,
         init_ast: &node::AST,
     ) -> CodegenResult {
+        let init_val = try!(self.gen_init(init_ast, ty)).0;
         match *ty {
             // TODO: support only if const array size is the same as var's array size
-            Type::Array(ref _ary_ty, ref _len) => {
-                let init_val = match init_ast.kind {
-                    node::ASTKind::ConstArray(ref elems) => {
-                        try!(self.gen_const_array_for_init(elems, ty)).0
-                    }
-                    _ => {
-                        println!("not supported");
-                        try!(self.gen(init_ast)).0
-                    }
-                };
-                LLVMSetInitializer(gvar, init_val);
-                Ok((ptr::null_mut(), None))
-            }
             Type::Struct(_, _) |
-            Type::Union(_, _, _) => {
-                let init_val = match init_ast.kind {
-                    node::ASTKind::ConstStruct(ref elems) => {
-                        try!(self.gen_const_struct_for_init(elems, ty)).0
-                    }
-                    _ => {
-                        println!("not supported");
-                        init_ast.show();
-                        try!(self.gen(init_ast)).0
-                    }
-                };
+            Type::Union(_, _, _) |
+            Type::Array(_, _) => {
                 LLVMSetInitializer(gvar, init_val);
                 Ok((ptr::null_mut(), None))
             }
             _ => {
                 let cast_ty = LLVMGetElementType(LLVMTypeOf(gvar));
-                let init_val = try!(self.gen(init_ast));
-                LLVMSetInitializer(gvar, self.typecast(init_val.0, cast_ty));
+                LLVMSetInitializer(gvar, self.typecast(init_val, cast_ty));
                 Ok((ptr::null_mut(), None))
             }
         }
@@ -532,6 +510,7 @@ impl Codegen {
         let builder = LLVMCreateBuilderInContext(self.context);
         let entry_bb = LLVMGetEntryBasicBlock(func);
         let first_inst = LLVMGetFirstInstruction(entry_bb);
+        // local var is always declared at the first of entry block
         if first_inst == ptr::null_mut() {
             LLVMPositionBuilderAtEnd(builder, entry_bb);
         } else {
