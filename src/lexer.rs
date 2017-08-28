@@ -399,17 +399,11 @@ impl Lexer {
         }
         *self.peek_pos.back_mut().unwrap() -= 1;
         if is_float {
-            // TODO: this is to delete suffix like 'F', but not efficient
-            loop {
-                if let Some(last) = num.chars().last() {
-                    if last.is_alphabetic() {
-                        num.pop();
-                    } else {
-                        break;
-                    }
-                }
-            }
-
+            // TODO: now rucc ignores suffix
+            num = num.trim_right_matches(|c| match c {
+                'a'...'z' | 'A'...'Z' | '+' | '-' => true,
+                _ => false,
+            }).to_string();
             let f: f64 = num.parse().unwrap();
             Ok(Token::new(
                 TokenKind::FloatNumber(f),

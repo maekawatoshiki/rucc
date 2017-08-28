@@ -69,12 +69,16 @@ impl Type {
         match self {
             &Type::Struct(_, ref fields) |
             &Type::Union(_, ref fields, _) => {
-                let mut fields_types = Vec::new();
-                for field in fields {
-                    if let ASTKind::VariableDecl(ref ty, _, _, _) = field.kind {
-                        fields_types.push(&*ty);
-                    }
-                }
+                let fields_types = fields
+                    .iter()
+                    .map(|field| if let ASTKind::VariableDecl(ref ty, _, _, _) =
+                        field.kind
+                    {
+                        &*ty
+                    } else {
+                        panic!()
+                    })
+                    .collect();
                 Some(fields_types)
             }
             _ => None,
