@@ -392,7 +392,7 @@ impl<'a> Parser<'a> {
             }
 
             if tok.kind == TokenKind::Symbol(Symbol::OpeningParen) {
-                try!(self.skip_parens(&mut buf));
+                try!(self.skip_parens(&tok, &mut buf));
                 continue;
             }
 
@@ -404,8 +404,9 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            buf.push(try!(self.lexer.get()));
-            try!(self.skip_parens(&mut buf));
+            let opening_paren = try!(self.lexer.get());
+            buf.push(opening_paren.clone());
+            try!(self.skip_parens(&opening_paren, &mut buf));
 
             tok = try!(self.lexer.peek());
             is_funcdef = tok.kind == TokenKind::Symbol(Symbol::OpeningBrace);
@@ -415,20 +416,18 @@ impl<'a> Parser<'a> {
         self.lexer.unget_all(buf);
         Ok(is_funcdef)
     }
-    fn skip_parens(&mut self, buf: &mut Vec<Token>) -> ParseR<()> {
+    fn skip_parens(&mut self, opening_paren: &Token, buf: &mut Vec<Token>) -> ParseR<()> {
         loop {
-            let tok = match self.lexer.get() {
-                Ok(tok) => tok,
-                Err(_) => {
-                    let peek = self.lexer.peek();
-                    self.show_error_token(&try!(peek), "expected ')', but reach EOF");
-                    return Err(Error::EOF);
-                }
-            };
+            let tok = try!(self.lexer
+                .get()
+                .or_else(|_| {
+                    self.show_error_token(&opening_paren, "expected ')', but reach EOF");
+                    return Err(Error::Something);
+                }));
             buf.push(tok.clone());
 
             match tok.kind {
-                TokenKind::Symbol(Symbol::OpeningParen) => try!(self.skip_parens(buf)),
+                TokenKind::Symbol(Symbol::OpeningParen) => try!(self.skip_parens(&tok, buf)),
                 TokenKind::Symbol(Symbol::ClosingParen) => break,
                 _ => {}
             };
@@ -436,16 +435,12 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn skip_until(&mut self, sym: Symbol) {
-        loop {
-            match self.lexer.get() {
-                Ok(tok) => {
-                    if tok.kind == TokenKind::Symbol(sym.clone()) {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
+        let ts = TokenKind::Symbol(sym);
+        while match self.lexer.get() {
+            Ok(tok) => tok.kind != ts,
+            Err(_) => false,
         }
+        {}
     }
 
     fn get_typedef(&mut self, name: &str) -> ParseR<Option<Type>> {
@@ -582,32 +577,13 @@ impl<'a> Parser<'a> {
         }
     }
     fn read_struct_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
-        let has_brace = try!(self.lexer.skip_symbol(Symbol::OpeningBrace));
+        let tok = try!(self.lexer.get());
+        let has_brace = tok.kind == TokenKind::Symbol(Symbol::OpeningBrace);
 
-        // TODO: makes no sense. fix!
-        let mut fields_types = if let &mut Type::Struct(_, ref fields) = ty {
-            let mut fields_types = Vec::new();
-            for field in fields {
-                fields_types.push(if let ASTKind::VariableDecl(ref ty, _, _, _) = field.kind {
-                    ty
-                } else {
-                    panic!();
-                });
-            }
-            fields_types
-        } else if let &mut Type::Union(_, ref fields, _) = ty {
-            let mut fields_types = Vec::new();
-            for field in fields {
-                fields_types.push(if let ASTKind::VariableDecl(ref ty, _, _, _) = field.kind {
-                    ty
-                } else {
-                    panic!();
-                });
-            }
+        let mut fields_types = if let Some(fields_types) = ty.get_all_fields_types() {
             fields_types
         } else {
-            // maybe, this block never reach though.
-            self.show_error("initializer of struct must be array");
+            self.show_error_token(&tok, "initializer of struct must be array");
             return Err(Error::Something);
         };
 
@@ -1756,7 +1732,7 @@ impl<'a> Parser<'a> {
                     &try!(peek),
                     "expected primary(number, string...), but reach EOF",
                 );
-                return Err(Error::EOF);
+                return Err(Error::Something);
             }
         };
 

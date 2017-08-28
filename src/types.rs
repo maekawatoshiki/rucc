@@ -65,6 +65,21 @@ impl Type {
             _ => None,
         }
     }
+    pub fn get_all_fields_types<'a>(&'a self) -> Option<Vec<&'a Type>> {
+        match self {
+            &Type::Struct(_, ref fields) |
+            &Type::Union(_, ref fields, _) => {
+                let mut fields_types = Vec::new();
+                for field in fields {
+                    if let ASTKind::VariableDecl(ref ty, _, _, _) = field.kind {
+                        fields_types.push(&*ty);
+                    }
+                }
+                Some(fields_types)
+            }
+            _ => None,
+        }
+    }
     pub fn get_name(&self) -> Option<String> {
         match self {
             &Type::Struct(ref name, _) |

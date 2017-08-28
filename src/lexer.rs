@@ -188,7 +188,7 @@ impl Token {
             pos: Pos::new(line, pos),
         }
     }
-    pub fn add_to_hideset(&mut self, s: String) {
+    pub fn add_hideset(&mut self, s: String) {
         self.hideset.insert(s);
     }
 }
@@ -442,42 +442,41 @@ impl Lexer {
         }
     }
     fn read_dec_num(&mut self, num_literal: &str) -> (i64, String) {
-        let mut n = 0u64;
         let mut suffix = "".to_string();
-        for c in num_literal.chars() {
-            match c {
-                '0'...'9' => n = n * 10 + c.to_digit(10).unwrap() as u64,
-                _ => suffix.push(c), 
-            }
-        }
+        let n = num_literal.chars().fold(0, |n, c| match c {
+            '0'...'9' => n * 10 + c.to_digit(10).unwrap() as u64,
+            _ => {
+                suffix.push(c);
+                n
+            } 
+        });
         (n as i64, suffix)
     }
     fn read_oct_num(&mut self, num_literal: &str) -> (i64, String) {
-        let mut n = 0i64;
         let mut suffix = "".to_string();
-        for c in num_literal.chars() {
-            match c {
-                '0'...'7' => n = n * 8 + c.to_digit(8).unwrap() as i64,
-                _ => suffix.push(c), 
-            }
-        }
-        (n, suffix)
+        let n = num_literal.chars().fold(0, |n, c| match c {
+            '0'...'7' => n * 8 + c.to_digit(8).unwrap() as u64,
+            _ => {
+                suffix.push(c);
+                n
+            } 
+        });
+        (n as i64, suffix)
     }
     fn read_hex_num(&mut self, num_literal: &str) -> (i64, String) {
-        let mut n = 0u64;
         let mut suffix = "".to_string();
-        for c in num_literal.chars() {
-            match c {
-                '0'...'9' | 'A'...'F' | 'a'...'f' => n = n * 16 + c.to_digit(16).unwrap() as u64,
-                _ => suffix.push(c), 
-            }
-        }
+        let n = num_literal.chars().fold(0, |n, c| match c {
+            '0'...'9' | 'A'...'F' | 'a'...'f' => n * 16 + c.to_digit(16).unwrap() as u64,
+            _ => {
+                suffix.push(c);
+                n
+            } 
+        });
         (n as i64, suffix)
     }
     pub fn read_newline(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
         try!(self.peek_next());
-        // *self.get_mut_cur_line() += 1;
         Ok(Token::new(TokenKind::Newline, 0, pos, *self.get_cur_line()))
     }
     pub fn read_symbol(&mut self) -> ParseR<Token> {
@@ -769,12 +768,18 @@ impl Lexer {
         Token::new(symbol, 0, pos, line)
     }
 
-    fn expand_obj_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
+    fn expand_obj_macro(
+        &mut self,
+        token: Token,
+        name: String,
+        macro_body: &Vec<Token>,
+    ) -> ParseR<()> {
         let body = macro_body
             .iter()
             .map(|tok| {
                 let mut t = tok.clone();
-                t.add_to_hideset(name.to_string());
+                t.add_hideset(name.to_string());
+                t.pos = token.pos.clone();
                 t
             })
             .collect();
@@ -828,7 +833,12 @@ impl Lexer {
             .to_string();
         Token::new(TokenKind::String(string), 0, 0, *self.get_cur_line())
     }
-    fn expand_func_macro(&mut self, name: String, macro_body: &Vec<Token>) -> ParseR<()> {
+    fn expand_func_macro(
+        &mut self,
+        token: Token,
+        name: String,
+        macro_body: &Vec<Token>,
+    ) -> ParseR<()> {
         // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
         let expect_bracket = try!(self.read_token());
         if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
@@ -889,7 +899,8 @@ impl Lexer {
         }
 
         for tok in &mut expanded {
-            tok.add_to_hideset(name.to_string());
+            tok.add_hideset(name.to_string());
+            tok.pos = token.pos.clone();
         }
 
         self.unget_all(expanded);
@@ -920,8 +931,8 @@ impl Lexer {
             } else {
                 // if cur token is macro:
                 try!(match self.macro_map.get(name.as_str()).unwrap().clone() {
-                    Macro::Object(ref body) => self.expand_obj_macro(name, body),
-                    Macro::FuncLike(ref body) => self.expand_func_macro(name, body),
+                    Macro::Object(ref body) => self.expand_obj_macro(tok, name, body),
+                    Macro::FuncLike(ref body) => self.expand_func_macro(tok, name, body),
                 });
                 self.get_token()
             }
@@ -972,22 +983,17 @@ impl Lexer {
 
     fn read_cpp_directive(&mut self) -> ParseR<()> {
         let tok = self.do_read_token(); // cpp directive
-        match tok { 
-            Ok(t) => {
-                match ident_val!(t).as_str() {
-                    "include" => self.read_include(),
-                    "define" => self.read_define(),
-                    "undef" => self.read_undef(),
-                    "if" => self.read_if(),
-                    "ifdef" => self.read_ifdef(),
-                    "ifndef" => self.read_ifndef(),
-                    "elif" => self.read_elif(),
-                    "else" => self.read_else(),
-                    _ => Ok(()),
-                }
-            }
-            Err(e) => Err(e),
-        }
+        tok.and_then(|t| match ident_val!(t).as_str() {
+            "include" => self.read_include(),
+            "define" => self.read_define(),
+            "undef" => self.read_undef(),
+            "if" => self.read_if(),
+            "ifdef" => self.read_ifdef(),
+            "ifndef" => self.read_ifndef(),
+            "elif" => self.read_elif(),
+            "else" => self.read_else(),
+            _ => Ok(()),
+        })
     }
 
     fn try_include(&mut self, filename: &str) -> Option<String> {
@@ -1000,16 +1006,13 @@ impl Lexer {
             "./include/",
             "",
         ];
-        let mut abs_filename = String::new();
-        let mut found = false;
-        for header_path in header_paths {
-            abs_filename = format!("{}{}", header_path, filename);
-            if path::Path::new(abs_filename.as_str()).exists() {
-                found = true;
-                break;
-            }
-        }
-        if found { Some(abs_filename) } else { None }
+        header_paths
+            .iter()
+            .find(|header_path| {
+                let abs_filename = format!("{}{}", header_path, filename);
+                path::Path::new(abs_filename.as_str()).exists()
+            })
+            .and_then(|a| Some(a.to_string() + filename))
     }
     fn read_headerfile_name(&mut self) -> ParseR<String> {
         let mut name = "".to_string();
@@ -1033,13 +1036,12 @@ impl Lexer {
     fn read_include(&mut self) -> ParseR<()> {
         // this will be a function
         let filename = try!(self.read_headerfile_name());
-        let abs_filename = match self.try_include(filename.as_str()) {
-            Some(f) => f,
-            _ => {
+        let abs_filename = self.try_include(filename.as_str())
+            .or_else(|| {
                 println!("error: {}: not found '{}'", *self.get_cur_line(), filename);
-                process::exit(-1)
-            }
-        };
+                process::exit(-1);
+            })
+            .unwrap();
         // DEBUG: println!("include filename: {}", abs_filename);
 
         let mut include_file = OpenOptions::new()
@@ -1275,7 +1277,6 @@ impl Lexer {
                 "endif" => nest -= 1,
                 _ => {}
             }
-            // TODO: if nest < 0 then?
         }
     }
 
