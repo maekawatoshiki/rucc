@@ -929,6 +929,17 @@ impl Codegen {
                 let (val, ty) = try!(self.gen(expr));
                 Ok((self.val_to_bool_not(val), ty))
             }
+            node::CUnaryOps::BNot => {
+                let (val, ty) = try!(self.gen(expr));
+                Ok((
+                    LLVMBuildNeg(
+                        self.builder,
+                        val,
+                        CString::new("neg").unwrap().as_ptr(),
+                    ),
+                    ty,
+                ))
+            }
             node::CUnaryOps::Deref => self.gen_load(expr),
             node::CUnaryOps::Addr => self.gen(retrieve_from_load(expr)),
             node::CUnaryOps::Minus => {

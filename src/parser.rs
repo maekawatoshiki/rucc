@@ -1273,6 +1273,34 @@ impl<'a> Parser<'a> {
                         self.lexer.get_cur_pos(),
                     );
                 }
+                TokenKind::Symbol(Symbol::AssignAnd) => {
+                    lhs = assign(
+                        lhs.clone(),
+                        AST::new(
+                            ASTKind::BinaryOp(
+                                Rc::new(lhs),
+                                Rc::new(try!(self.read_assign())),
+                                node::CBinOps::And,
+                            ),
+                            self.lexer.get_cur_pos(),
+                        ),
+                        self.lexer.get_cur_pos(),
+                    );
+                }
+                TokenKind::Symbol(Symbol::AssignOr) => {
+                    lhs = assign(
+                        lhs.clone(),
+                        AST::new(
+                            ASTKind::BinaryOp(
+                                Rc::new(lhs),
+                                Rc::new(try!(self.read_assign())),
+                                node::CBinOps::Or,
+                            ),
+                            self.lexer.get_cur_pos(),
+                        ),
+                        self.lexer.get_cur_pos(),
+                    );
+                }
                 // TODO: implement more op
                 _ => {
                     self.lexer.unget(tok);
