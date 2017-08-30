@@ -1337,7 +1337,8 @@ impl Codegen {
                     CString::new("xor").unwrap().as_ptr(),
                 )
             }
-            _ => ptr::null_mut(),
+            node::CBinOps::Comma => rhs, 
+            _ => panic!(),
         }
     }
 
