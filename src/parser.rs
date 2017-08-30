@@ -447,7 +447,25 @@ impl<'a> Parser<'a> {
         match self.env.back().unwrap().get(name) {
             Some(ast) => {
                 match ast.kind {
-                    ASTKind::Typedef(ref from, ref _to) => return Ok(Some((*from).clone())),
+                    ASTKind::Typedef(ref from, ref _to) => {
+                        let ty = match from {
+                            &Type::Struct(ref name, ref fields) |
+                            &Type::Union(ref name, ref fields, _) => {
+                                if fields.is_empty() {
+                                    self.tags
+                                        .back()
+                                        .unwrap()
+                                        .get(name.as_str())
+                                        .unwrap()
+                                        .clone()
+                                } else {
+                                    from.clone()
+                                }
+                            }
+                            _ => from.clone(),
+                        };
+                        return Ok(Some(ty));
+                    }
                     _ => {}
                 }
             }

@@ -1086,6 +1086,7 @@ impl Codegen {
                 CString::new("eql").unwrap().as_ptr(),
             )
         };
+        let y = LLVMGetInsertBlock(self.builder);
         LLVMBuildBr(self.builder, bb_merge);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_merge);
@@ -1106,7 +1107,7 @@ impl Codegen {
         LLVMAddIncoming(
             phi,
             vec![rhs_val].as_mut_slice().as_mut_ptr(),
-            vec![bb_then].as_mut_slice().as_mut_ptr(),
+            vec![y].as_mut_slice().as_mut_ptr(),
             1,
         );
 

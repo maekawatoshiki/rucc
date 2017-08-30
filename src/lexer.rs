@@ -682,6 +682,7 @@ impl Lexer {
                 "unsigned" => TokenKind::Keyword(Keyword::Unsigned),
                 "char" => TokenKind::Keyword(Keyword::Char),
                 "int" => TokenKind::Keyword(Keyword::Int),
+                "bool" => TokenKind::Keyword(Keyword::Int),
                 "short" => TokenKind::Keyword(Keyword::Short),
                 "long" => TokenKind::Keyword(Keyword::Long),
                 "float" => TokenKind::Keyword(Keyword::Float),
@@ -1083,12 +1084,17 @@ impl Lexer {
         let mut params = HashMap::new();
         let mut count = 0usize;
         loop {
-            let arg = ident_val!(try!(self.get_token()));
-            params.insert(arg, count);
-            if try!(self.skip_symbol(Symbol::ClosingParen)) {
+            let mut arg = ident_val!(try!(self.do_read_token()));
+            if arg == ")" {
                 break;
             }
-            try!(self.expect_skip_symbol(Symbol::Comma));
+            if count > 0 {
+                if arg != "," {
+                    error::error_exit(*self.get_cur_line() as i32, "expected comma");
+                }
+                arg = ident_val!(try!(self.do_read_token()));
+            }
+            params.insert(arg, count);
             count += 1;
         }
 
