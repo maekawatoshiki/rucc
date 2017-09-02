@@ -92,7 +92,7 @@ pub struct Codegen {
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
     label_map: HashMap<String, LLVMBasicBlockRef>,
-    switch_list: VecDeque<(LLVMValueRef, LLVMBasicBlockRef)>,
+    switch_list: VecDeque<(LLVMValueRef, LLVMBasicBlockRef, LLVMTypeRef)>,
     llvm_struct_map: HashMap<String, RectypeInfo>,
     break_labels: VecDeque<LLVMBasicBlockRef>,
     continue_labels: VecDeque<LLVMBasicBlockRef>,
@@ -864,7 +864,9 @@ impl Codegen {
         let default = LLVMAppendBasicBlock(func, CString::new("default").unwrap().as_ptr());
         let switch = LLVMBuildSwitch(self.builder, cond_val, default, 10);
         self.break_labels.push_back(bb_after_switch);
-        self.switch_list.push_back((switch, default));
+        self.switch_list.push_back(
+            (switch, default, LLVMTypeOf(cond_val)),
+        );
 
         try!(self.gen(body));
 
@@ -893,7 +895,7 @@ impl Codegen {
     unsafe fn gen_case(&mut self, expr: &node::AST) -> CodegenResult {
         let func = self.cur_func.unwrap();
         let expr_val = try!(self.gen(expr)).0;
-        let switch = (*self.switch_list.back().unwrap()).0;
+        let (switch, _, ty) = *self.switch_list.back().unwrap();
         let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
 
         // if the above case doesn't have 'break'
@@ -905,7 +907,7 @@ impl Codegen {
         }
 
         LLVMPositionBuilderAtEnd(self.builder, label);
-        LLVMAddCase(switch, expr_val, label);
+        LLVMAddCase(switch, self.typecast(expr_val, ty), label);
         Ok((ptr::null_mut(), None))
     }
     unsafe fn gen_default(&mut self) -> CodegenResult {
