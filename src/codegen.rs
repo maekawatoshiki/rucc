@@ -587,11 +587,7 @@ impl Codegen {
         elems_ast: &Vec<node::AST>,
         ty: &Type,
     ) -> CodegenResult {
-        let (elem_ty, len) = if let &Type::Array(ref elem_ty, len) = ty {
-            (&**elem_ty, len)
-        } else {
-            panic!("never reach");
-        };
+        let elem_ty = ty.get_elem_ty().unwrap();
 
         try!(self.fill_with_0(var, ty));
 
