@@ -139,6 +139,40 @@ impl Codegen {
             VarInfo::new(llvm_memcpy_ty, llvm_memcpy_llvm_ty, llvm_memcpy),
         );
 
+        let llvm_memset_ty = Type::Func(
+            Rc::new(Type::Void),
+            vec![
+                Type::Ptr(Rc::new(Type::Char(Sign::Signed))),
+                Type::Int(Sign::Signed),
+                Type::Int(Sign::Signed),
+                Type::Int(Sign::Signed),
+                Type::Int(Sign::Signed),
+            ],
+            false,
+        );
+        let llvm_memset_llvm_ty = LLVMFunctionType(
+            LLVMVoidType(),
+            vec![
+                LLVMPointerType(LLVMInt8Type(), 0),
+                LLVMInt8Type(),
+                LLVMInt32Type(),
+                LLVMInt32Type(),
+                LLVMInt1Type(),
+            ].as_mut_slice()
+                .as_mut_ptr(),
+            5,
+            0,
+        );
+        let llvm_memset = LLVMAddFunction(
+            module,
+            CString::new("llvm.memset.p0i8.i32").unwrap().as_ptr(),
+            llvm_memset_llvm_ty,
+        );
+        global_varmap.insert(
+            "llvm.memset.p0i8.i32".to_string(),
+            VarInfo::new(llvm_memset_ty, llvm_memset_llvm_ty, llvm_memset),
+        );
+
         Codegen {
             context: LLVMContextCreate(),
             module: module,
@@ -236,11 +270,39 @@ impl Codegen {
             Error::MsgWithPos(msg, pos) => Err(Error::MsgWithPos(msg, pos)),
         })
     }
-    unsafe fn gen_init(&mut self, ast: &node::AST, ty: &Type) -> CodegenResult {
+    unsafe fn gen_init_global(&mut self, ast: &node::AST, ty: &Type) -> CodegenResult {
         match ast.kind {
-            node::ASTKind::ConstArray(ref elems) => self.gen_const_array_for_init(elems, ty),
-            node::ASTKind::ConstStruct(ref elems) => self.gen_const_struct_for_init(elems, ty),
+            node::ASTKind::ConstArray(ref elems) => self.gen_const_array_for_global_init(elems, ty),
+            node::ASTKind::ConstStruct(ref elems) => {
+                self.gen_const_struct_for_global_init(elems, ty)
+            }
             _ => self.gen(ast),
+        }
+    }
+    unsafe fn gen_init_local(
+        &mut self,
+        var: LLVMValueRef,
+        ast: &node::AST,
+        ty: &Type,
+    ) -> CodegenResult {
+        match ast.kind {
+            node::ASTKind::ConstArray(ref elems) => {
+                self.gen_const_array_for_local_init(var, elems, ty)
+            }
+            node::ASTKind::ConstStruct(ref elems) => {
+                self.gen_const_struct_for_local_init(var, elems, ty)
+            }
+            _ => {
+                let val = try!(self.gen(ast)).0;
+                Ok((
+                    LLVMBuildStore(
+                        self.builder,
+                        self.typecast(val, (LLVMGetElementType(LLVMTypeOf(var)))),
+                        var,
+                    ),
+                    None,
+                ))
+            }
         }
     }
 
@@ -405,7 +467,7 @@ impl Codegen {
         gvar: LLVMValueRef,
         init_ast: &node::AST,
     ) -> CodegenResult {
-        let init_val = try!(self.gen_init(init_ast, ty)).0;
+        let init_val = try!(self.gen_init_global(init_ast, ty)).0;
         match *ty {
             // TODO: support only if const array size is the same as var's array size
             Type::Struct(_, _) |
@@ -441,7 +503,7 @@ impl Codegen {
             ),
         ))
     }
-    unsafe fn gen_const_array_for_init(
+    unsafe fn gen_const_array_for_global_init(
         &mut self,
         elems_ast: &Vec<node::AST>,
         ty: &Type,
@@ -455,7 +517,7 @@ impl Codegen {
         let llvm_elem_ty = self.type_to_llvmty(elem_ty);
         let mut elems = Vec::new();
         for e in elems_ast {
-            let elem = try!(self.gen_init(e, elem_ty)).0;
+            let elem = try!(self.gen_init_global(e, elem_ty)).0;
             elems.push(self.typecast(elem, llvm_elem_ty));
         }
         for _ in 0..(len - elems_ast.len() as i32) {
@@ -470,7 +532,7 @@ impl Codegen {
             Some(ty.clone()),
         ))
     }
-    unsafe fn gen_const_struct_for_init(
+    unsafe fn gen_const_struct_for_global_init(
         &mut self,
         elems_ast: &Vec<node::AST>,
         ty: &Type,
@@ -486,7 +548,7 @@ impl Codegen {
                     .iter(),
             )
         {
-            let elem_val = try!(self.gen_init(elem_ast, field_ty)).0;
+            let elem_val = try!(self.gen_init_global(elem_ast, field_ty)).0;
             elems.push(self.typecast(elem_val, *field_llvm_ty));
         }
         Ok((
@@ -497,6 +559,91 @@ impl Codegen {
             ),
             Some(ty.clone()),
         ))
+    }
+    unsafe fn fill_with_0(&mut self, var: LLVMValueRef, ty: &Type) -> CodegenResult {
+        let llvm_memset = self.global_varmap
+            .get("llvm.memset.p0i8.i32")
+            .unwrap()
+            .clone();
+        LLVMBuildCall(
+            self.builder,
+            llvm_memset.llvm_val,
+            vec![
+                self.typecast(var, LLVMPointerType(LLVMInt8Type(), 0)),
+                try!(self.make_int(0, &Bits::Bits8, false)).0,
+                LLVMConstInt(LLVMInt32Type(), ty.calc_size() as u64, 0),
+                LLVMConstInt(LLVMInt32Type(), 4, 0),
+                LLVMConstInt(LLVMInt1Type(), 0, 0),
+            ].as_mut_slice()
+                .as_mut_ptr(),
+            5,
+            CString::new("").unwrap().as_ptr(),
+        );
+        Ok((ptr::null_mut(), None))
+    }
+    unsafe fn gen_const_array_for_local_init(
+        &mut self,
+        var: LLVMValueRef,
+        elems_ast: &Vec<node::AST>,
+        ty: &Type,
+    ) -> CodegenResult {
+        let (elem_ty, len) = if let &Type::Array(ref elem_ty, len) = ty {
+            (&**elem_ty, len)
+        } else {
+            panic!("never reach");
+        };
+
+        try!(self.fill_with_0(var, ty));
+
+        for (i, e) in elems_ast.iter().enumerate() {
+            // TODO: makes very very no sense...
+            let load = LLVMBuildGEP(
+                self.builder,
+                var,
+                vec![
+                    try!(self.make_int(0, &Bits::Bits32, false)).0,
+                    try!(self.make_int(0, &Bits::Bits32, false)).0,
+                ].as_mut_slice()
+                    .as_mut_ptr(),
+                2,
+                CString::new("gep").unwrap().as_ptr(),
+            );
+            let idx = LLVMBuildGEP(
+                self.builder,
+                load,
+                vec![try!(self.make_int(i as u64, &Bits::Bits32, false)).0]
+                    .as_mut_slice()
+                    .as_mut_ptr(),
+                1,
+                CString::new("gep").unwrap().as_ptr(),
+            );
+            try!(self.gen_init_local(idx, e, elem_ty));
+        }
+        Ok((ptr::null_mut(), None))
+    }
+    unsafe fn gen_const_struct_for_local_init(
+        &mut self,
+        var: LLVMValueRef,
+        elems_ast: &Vec<node::AST>,
+        ty: &Type,
+    ) -> CodegenResult {
+        let struct_name = ty.get_name().unwrap();
+        let rectype = (*self.llvm_struct_map.get(struct_name.as_str()).unwrap()).clone();
+
+        try!(self.fill_with_0(var, ty));
+
+        for (i, (elem_ast, field_ty)) in
+            elems_ast.iter().zip(rectype.field_types.iter()).enumerate()
+        {
+            let idx = LLVMBuildStructGEP(
+                self.builder,
+                var,
+                i as u32,
+                CString::new("structref").unwrap().as_ptr(),
+            );
+            try!(self.gen_init_local(idx, elem_ast, field_ty));
+        }
+        Ok((ptr::null_mut(), None))
     }
     unsafe fn gen_local_var_decl(
         &mut self,
@@ -547,57 +694,7 @@ impl Codegen {
         varty: &Type,
         init: &node::AST,
     ) -> CodegenResult {
-        let init_val = try!(self.gen_init(init, varty)).0;
-        match *varty {
-            Type::Array(_, _) |
-            Type::Struct(_, _) |
-            Type::Union(_, _, _) => {
-                let llvm_memcpy = self.global_varmap.get("llvm.memcpy.p0i8.p0i8.i32").unwrap();
-                let init_ary = LLVMAddGlobal(
-                    self.module,
-                    LLVMGetElementType(LLVMTypeOf(var)),
-                    CString::new("const_initval").unwrap().as_ptr(),
-                );
-                LLVMSetInitializer(init_ary, init_val);
-                Ok((
-                    LLVMBuildCall(
-                        self.builder,
-                        llvm_memcpy.llvm_val,
-                        vec![
-                            self.typecast(var, LLVMPointerType(LLVMInt8Type(), 0)),
-                            self.typecast(
-                                init_ary,
-                                LLVMPointerType(LLVMInt8Type(), 0)
-                            ),
-                            LLVMConstInt(
-                                LLVMInt32Type(),
-                                varty.calc_size() as u64,
-                                0
-                            ),
-                            LLVMConstInt(LLVMInt32Type(), 4, 0),
-                            LLVMConstInt(LLVMInt1Type(), 0, 0),
-                        ].as_mut_slice()
-                            .as_mut_ptr(),
-                        5,
-                        CString::new("").unwrap().as_ptr(),
-                    ),
-                    None,
-                ))
-            }
-            _ => {
-                Ok((
-                    LLVMBuildStore(
-                        self.builder,
-                        self.typecast(
-                            init_val,
-                            (LLVMGetElementType(LLVMTypeOf(var))),
-                        ),
-                        var,
-                    ),
-                    None,
-                ))
-            }
-        }
+        self.gen_init_local(var, init, varty)
     }
 
     unsafe fn gen_block(&mut self, block: &Vec<node::AST>) -> CodegenResult {

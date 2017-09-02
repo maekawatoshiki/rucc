@@ -1,6 +1,8 @@
 #include <stdio.h>
 
 int main() {
+  int q[] = {123, 456, 789};
+  int *has_ptr_to_local_var[] = {q};
   char s[][8] = {"hello", "rucc", "world"};
   int a[2];
   a[0] = 12;
