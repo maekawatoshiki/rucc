@@ -519,7 +519,6 @@ impl Lexer {
         let c = try!(self.peek_next());
         match c {
             '\'' | '"' | '?' | '\\' => Ok(c),
-            '0' => Ok('\x00'),
             'a' => Ok('\x07'),
             'b' => Ok('\x08'),
             'f' => Ok('\x0c'),
@@ -539,6 +538,25 @@ impl Lexer {
                     try!(self.peek_next());
                 }
                 Ok(self.read_hex_num(hex.as_str()).0 as i32 as u8 as char)
+            }
+            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' => {
+                // if '0', check whether octal number \nnn or null \0
+                if try!(self.peek_get()).is_numeric() {
+                    let mut oct = "0".to_string();
+                    loop {
+                        let c = try!(self.peek_next());
+                        oct.push(c);
+                        if !c.is_numeric() {
+                            oct.pop();
+                            break;
+                        }
+                    }
+                    *self.peek_pos.back_mut().unwrap() -= 1;
+                    Ok(self.read_oct_num(oct.as_str()).0 as i32 as u8 as char)
+                } else {
+                    assert!(c == '0');
+                    Ok('\x00')
+                }
             }
             _ => Ok(c),
         }

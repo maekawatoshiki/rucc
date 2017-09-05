@@ -513,7 +513,7 @@ impl<'a> Parser<'a> {
         } else if self.is_string(ty) {
             let tok = try!(self.lexer.get());
             if let TokenKind::String(s) = tok.kind {
-                return self.read_string_initializer(s);
+                return self.read_string_initializer(ty, s);
             }
             self.lexer.unget(tok);
         }
@@ -540,7 +540,7 @@ impl<'a> Parser<'a> {
         if self.is_string(ty) {
             let tok = try!(self.lexer.get());
             if let TokenKind::String(s) = tok.kind {
-                return self.read_string_initializer(s);
+                return self.read_string_initializer(ty, s);
             }
             self.lexer.unget(tok);
         }
@@ -551,10 +551,15 @@ impl<'a> Parser<'a> {
             _ => self.read_assign(),
         }
     }
-    fn read_string_initializer(&mut self, string: String) -> ParseR<AST> {
+    fn read_string_initializer(&mut self, ty: &mut Type, string: String) -> ParseR<AST> {
         let mut char_ary = Vec::new();
         for c in string.chars() {
             char_ary.push(AST::new(ASTKind::Char(c as i32), Pos::new(0, 0)));
+        }
+        if let &mut Type::Array(_, ref mut len) = ty {
+            *len = char_ary.len() as i32 + 1;
+        } else {
+            panic!()
         }
         Ok(AST::new(
             ASTKind::ConstArray(char_ary),
