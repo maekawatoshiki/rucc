@@ -1,5 +1,8 @@
 extern crate llvm_sys as llvm;
 
+extern crate rand;
+use self::rand::Rng;
+
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
@@ -440,7 +443,7 @@ impl Codegen {
 
             match *ty {
                 // function is not initialized
-                Type::Func(_, _, _) => return Ok((ptr::null_mut(), None)),
+                Type::Func(_, _, _) => return Ok((gvar, Some(ty.clone()))),
                 _ => {}
             }
 
@@ -458,7 +461,7 @@ impl Codegen {
             if *sclass == StorageClass::Auto || *sclass == StorageClass::Static {
                 LLVMSetInitializer(gvar, LLVMConstNull(self.type_to_llvmty(ty)));
             }
-            Ok((ptr::null_mut(), None))
+            Ok((gvar, Some(ty.clone())))
         }
     }
     unsafe fn const_init_global_var(
@@ -474,12 +477,12 @@ impl Codegen {
             Type::Union(_, _, _) |
             Type::Array(_, _) => {
                 LLVMSetInitializer(gvar, init_val);
-                Ok((ptr::null_mut(), None))
+                Ok((gvar, Some(ty.clone())))
             }
             _ => {
                 let cast_ty = LLVMGetElementType(LLVMTypeOf(gvar));
                 LLVMSetInitializer(gvar, self.typecast(init_val, cast_ty));
-                Ok((ptr::null_mut(), None))
+                Ok((gvar, Some(ty.clone())))
             }
         }
     }
@@ -648,6 +651,24 @@ impl Codegen {
         sclass: &StorageClass,
         init: &Option<Rc<node::AST>>,
     ) -> CodegenResult {
+        let llvm_var_ty = self.type_to_llvmty(ty);
+
+        // TODO: refine code
+        if *sclass == StorageClass::Static {
+            let randid: String = rand::thread_rng().gen_ascii_chars().take(8).collect();
+            let (static_var, static_var_ty) = try!(self.gen_global_var_decl(
+                ty,
+                &format!("x{}.{}", randid, name),
+                &StorageClass::Auto,
+                init,
+            ));
+            self.local_varmap.last_mut().unwrap().insert(
+                name.as_str().to_string(),
+                VarInfo::new(ty.clone(), llvm_var_ty, static_var),
+            );
+            return Ok((static_var, static_var_ty));
+        }
+
         // Allocate a varaible, always at the first of the entry block
         let func = self.cur_func.unwrap();
         let builder = LLVMCreateBuilderInContext(self.context);
@@ -659,7 +680,6 @@ impl Codegen {
         } else {
             LLVMPositionBuilderBefore(builder, first_inst);
         }
-        let llvm_var_ty = self.type_to_llvmty(ty);
         let var = LLVMBuildAlloca(
             builder,
             llvm_var_ty,
@@ -668,11 +688,6 @@ impl Codegen {
         self.local_varmap.last_mut().unwrap().insert(
             name.as_str().to_string(),
             VarInfo::new(ty.clone(), llvm_var_ty, var),
-        );
-
-        assert!(
-            *sclass != StorageClass::Static,
-            "not supported 'static' for local var"
         );
 
         if init.is_some() {
