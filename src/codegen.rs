@@ -447,6 +447,7 @@ impl Codegen {
                 _ => {}
             }
 
+
             LLVMSetLinkage(
                 gvar,
                 match *sclass {
@@ -471,6 +472,7 @@ impl Codegen {
         init_ast: &node::AST,
     ) -> CodegenResult {
         let init_val = try!(self.gen_init_global(init_ast, ty)).0;
+
         match *ty {
             // TODO: support only if const array size is the same as var's array size
             Type::Struct(_, _) |
@@ -1041,11 +1043,19 @@ impl Codegen {
             }
             node::CUnaryOps::BNot => {
                 let (val, ty) = try!(self.gen(expr));
+                // bitwise-not learned from clang'
+                let minus_one = LLVMBuildSub(
+                    self.builder,
+                    try!(self.make_int(0, &Bits::Bits32, false)).0,
+                    try!(self.make_int(1, &Bits::Bits32, false)).0,
+                    CString::new("sub").unwrap().as_ptr(),
+                );
                 Ok((
-                    LLVMBuildNeg(
+                    LLVMBuildXor(
                         self.builder,
                         val,
-                        CString::new("neg").unwrap().as_ptr(),
+                        minus_one,
+                        CString::new("bitwisenot").unwrap().as_ptr(),
                     ),
                     ty,
                 ))
