@@ -13,8 +13,8 @@ else
 fi
 
 if [[ $? == 0 ]]; then
-  # opt-3.8 -std-link-opts $bc -o $bc 
-  llc-3.8 $bc
+  # opt-3.9 -std-link-opts $bc -o $bc 
+  llc-3.9 $bc
   clang $s -lm
   rm -f $bc $s
 fi
