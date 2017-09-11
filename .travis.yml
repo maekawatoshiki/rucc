@@ -10,18 +10,18 @@ addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
-      - llvm-toolchain-precise-3.8
+      - llvm-toolchain-precise-3.9
     packages:
-      - llvm-3.8
-      - llvm-3.8-dev
-      - clang-3.8
+      - llvm-3.9
+      - llvm-3.9-dev
+      - clang-3.9
       - libedit-dev
 rust:
   - 1.19.0
 
 script:
   - which llvm-config
-  - sudo ln -sf /usr/bin/llvm-config-3.8 /usr/local/clang-3.9.0/bin/llvm-config # fix.
+  # - sudo ln -sf /usr/bin/llvm-config-3.8 /usr/local/clang-3.9.0/bin/llvm-config # fix.
   - llvm-config --version
   - cargo build --verbose
   - cargo test --verbose

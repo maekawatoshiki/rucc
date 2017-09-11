@@ -1,5 +1,11 @@
 extern crate llvm_sys as llvm;
 
+extern crate libc;
+
+// for LLVMLinkInInterpreter
+#[link(name = "ffi")]
+extern "C" {}
+
 extern crate rand;
 use self::rand::Rng;
 
@@ -35,7 +41,7 @@ fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
 }
 
 // used by global_varmap and local_varmap(not to use tuples)
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct VarInfo {
     ty: Type,
     llvm_ty: LLVMTypeRef,
@@ -92,6 +98,8 @@ pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
+    exec_engine: llvm::execution_engine::LLVMExecutionEngineRef,
+    constexpr_list: Vec<(LLVMValueRef, Vec<LLVMValueRef>, LLVMValueRef)>, // func, args, args count, oldval
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
     label_map: HashMap<String, LLVMBasicBlockRef>,
@@ -104,9 +112,28 @@ pub struct Codegen {
 
 impl Codegen {
     pub unsafe fn new(mod_name: &str) -> Codegen {
+        llvm::execution_engine::LLVMLinkInInterpreter();
+        llvm::target::LLVM_InitializeAllTargetMCs();
+        llvm::target::LLVM_InitializeNativeTarget();
+        llvm::target::LLVM_InitializeNativeAsmPrinter();
+        llvm::target::LLVM_InitializeNativeAsmParser();
+
+        let context = LLVMContextCreate();
+
         let c_mod_name = CString::new(mod_name).unwrap();
-        let module = LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), LLVMContextCreate());
+        let module = LLVMModuleCreateWithNameInContext(c_mod_name.as_ptr(), context);
         let mut global_varmap = HashMap::new();
+
+        let mut ee = 0 as llvm::execution_engine::LLVMExecutionEngineRef;
+        let mut error = 0 as *mut i8;
+        if llvm::execution_engine::LLVMCreateExecutionEngineForModule(
+            &mut ee,
+            module,
+            &mut error,
+        ) != 0
+        {
+            println!("err");
+        }
 
         let llvm_memcpy_ty = Type::Func(
             Rc::new(Type::Void),
@@ -177,9 +204,11 @@ impl Codegen {
         );
 
         Codegen {
-            context: LLVMContextCreate(),
+            context: context,
             module: module,
-            builder: LLVMCreateBuilderInContext(LLVMContextCreate()),
+            builder: LLVMCreateBuilderInContext(context),
+            exec_engine: ee,
+            constexpr_list: Vec::new(),
             global_varmap: global_varmap,
             local_varmap: Vec::new(),
             label_map: HashMap::new(),
@@ -198,8 +227,92 @@ impl Codegen {
                 Err(err) => return Err(err),
             }
         }
-        // LLVMDumpModule(self.module);
+
+        for (llvm_func, llvm_args, user) in self.constexpr_list.clone() {
+            let mut generic_args = Vec::new();
+
+            for llvm_arg in llvm_args {
+                generic_args.push(self.val_to_genericval(llvm_arg));
+            }
+
+            let genericval = llvm::execution_engine::LLVMRunFunction(
+                self.exec_engine,
+                llvm_func,
+                generic_args.len() as u32,
+                generic_args.as_mut_slice().as_mut_ptr(),
+            );
+
+            let llvm_ret_ty = LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(llvm_func)));
+            let newval = self.genericval_to_val(genericval, llvm_ret_ty);
+
+            LLVMDumpValue(newval);
+            LLVMSetOperand(user, 0, newval);
+        }
+        self.constexpr_list.clear();
+
+        LLVMDumpModule(self.module);
         Ok(())
+    }
+
+    unsafe fn val_to_genericval(
+        &mut self,
+        val: LLVMValueRef,
+    ) -> llvm::execution_engine::LLVMGenericValueRef {
+        let ty = LLVMTypeOf(val);
+        match LLVMGetTypeKind(ty) {
+            llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                llvm::execution_engine::LLVMCreateGenericValueOfInt(
+                    ty,
+                    LLVMConstIntGetZExtValue(val),
+                    0,
+                )
+            }
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                llvm::execution_engine::LLVMCreateGenericValueOfFloat(
+                    ty,
+                    LLVMConstRealGetDouble(val, vec![0].as_mut_slice().as_mut_ptr()),
+                )
+            }
+            _ => {
+                LLVMDumpType(ty);
+                panic!()
+            }
+        }
+    }
+
+    unsafe fn genericval_to_val(
+        &mut self,
+        gv: llvm::execution_engine::LLVMGenericValueRef,
+        expect_ty: LLVMTypeRef,
+    ) -> LLVMValueRef {
+        match LLVMGetTypeKind(expect_ty) {
+            llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                LLVMConstInt(
+                    expect_ty,
+                    llvm::execution_engine::LLVMGenericValueToInt(gv, 0),
+                    0,
+                )
+            }
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
+            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                let f = llvm::execution_engine::LLVMGenericValueToFloat(expect_ty, gv);
+                LLVMConstReal(expect_ty, f)
+            }
+            // llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => {
+                let ptrval = LLVMConstInt(
+                    LLVMInt64Type(),
+                    llvm::execution_engine::LLVMGenericValueToPointer(gv) as u64,
+                    0,
+                );
+                LLVMConstIntToPtr(ptrval, expect_ty)
+            }
+            _ => {
+                LLVMDumpType(expect_ty);
+                panic!()
+            }
+        }
     }
 
     pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
@@ -1869,7 +1982,11 @@ impl Codegen {
                 ast.pos.clone(),
             ));
         }
+        let mut is_args_const = true;
         for i in 0..args_len {
+            if is_args_const == true && LLVMIsConstant(maybe_incorrect_args_val[i]) == 0 {
+                is_args_const = false;
+            }
             args_val.push(if params_count <= i {
                 maybe_incorrect_args_val[i]
             } else {
@@ -1877,7 +1994,28 @@ impl Codegen {
             })
         }
 
+
+        if is_args_const {
+            let val = LLVMConstNull(LLVMGetReturnType(llvm_functy));
+
+            let (v, _) = try!(self.gen_local_var_decl(&func_retty, &"constexpr-result-var".to_string(), &StorageClass::Auto, &None));
+            LLVMBuildStore(self.builder, val, v);
+            let inst = LLVMGetLastInstruction(LLVMGetInsertBlock(self.builder));
+
+            self.constexpr_list.push((llvm_func, args_val, inst));
+
+            return Ok((
+                LLVMBuildLoad(
+                    self.builder,
+                    a,
+                    CString::new("constexpr-result-load").unwrap().as_ptr(),
+                ),
+                Some((*func_retty).clone()),
+            ));
+        }
+
         let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
+
         Ok((
             LLVMBuildCall(
                 self.builder,
