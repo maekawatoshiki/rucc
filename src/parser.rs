@@ -1,4 +1,5 @@
 use lexer::{Lexer, Token, TokenKind, Keyword, Symbol, Pos};
+use codegen;
 use node::{AST, ASTKind, Bits};
 use node;
 use types::{Type, StorageClass, Sign};
@@ -6,7 +7,9 @@ use types::{Type, StorageClass, Sign};
 use std::{str, u32};
 use std::rc::Rc;
 use std::io::{stderr, Write};
-use std::collections::{HashMap, VecDeque, hash_map};
+use std::collections::{HashMap, VecDeque, hash_map, HashSet};
+
+use CODEGEN;
 
 extern crate llvm_sys as llvm;
 
@@ -29,6 +32,8 @@ pub struct Parser<'a> {
     pub err_counts: usize,
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
+    // TODO: better implementation needed
+    constexpr_func_map: HashSet<String>,
 }
 
 macro_rules! matches {
@@ -69,6 +74,7 @@ impl<'a> Parser<'a> {
             err_counts: 0,
             env: env,
             tags: tags,
+            constexpr_func_map: HashSet::new(),
         }
     }
     fn show_error(&mut self, msg: &str) {
@@ -157,8 +163,12 @@ impl<'a> Parser<'a> {
         self.env.push_back(localenv);
         self.tags.push_back(localtags);
 
-        let ret_ty = try!(self.read_type_spec()).0;
+        let (ret_ty, _, is_constexpr) = try!(self.read_type_spec());
         let (functy, name, param_names) = try!(self.read_declarator(ret_ty));
+
+        if is_constexpr {
+            self.constexpr_func_map.insert(name.clone());
+        }
         // TODO: [0] is global env, [1] is local env. so we have to insert to both.
         self.env[0].insert(
             name.clone(),
@@ -638,7 +648,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn read_decl(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
-        let (basety, sclass) = try!(self.read_type_spec());
+        let (basety, sclass, _) = try!(self.read_type_spec());
         let is_typedef = sclass == StorageClass::Typedef;
 
         if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
@@ -751,7 +761,15 @@ impl<'a> Parser<'a> {
         if try!(self.lexer.skip_symbol(Symbol::ClosingBoxBracket)) {
             len = -1;
         } else {
-            len = try!(self.read_expr()).eval_constexpr() as i32;
+            len = match try!(self.read_expr()).eval_constexpr() {
+                Ok(len) => len as i32,
+                Err(Error::Something) => {
+                    let peek = try!(self.lexer.peek());
+                    self.show_error_token(&peek, "array size must be constant");
+                    0
+                }
+                Err(e) => return Err(e),
+            };
             expect_symbol_error!(self, Symbol::ClosingBoxBracket,  "expected ']'");
         }
         let ty = try!(self.read_declarator_tail(basety)).0;
@@ -827,7 +845,7 @@ impl<'a> Parser<'a> {
             _ => Ok((ty, name)),
         }
     }
-    fn read_type_spec(&mut self) -> ParseR<(Type, StorageClass)> {
+    fn read_type_spec(&mut self) -> ParseR<(Type, StorageClass, bool)> {
         #[derive(PartialEq, Debug, Clone)]
         enum Size {
             Short,
@@ -849,6 +867,7 @@ impl<'a> Parser<'a> {
         let mut size = Size::Normal;
         let mut sclass = StorageClass::Auto;
         let mut userty: Option<Type> = None;
+        let mut constexpr = false;
 
         loop {
             let tok = try!(self.lexer.get());
@@ -857,7 +876,7 @@ impl<'a> Parser<'a> {
                 if let &TokenKind::Identifier(ref maybe_userty_name) = &tok.kind {
                     let maybe_userty = try!(self.get_typedef(maybe_userty_name));
                     if maybe_userty.is_some() {
-                        return Ok((maybe_userty.unwrap(), sclass));
+                        return Ok((maybe_userty.unwrap(), sclass, constexpr));
                     }
                 }
             }
@@ -873,6 +892,7 @@ impl<'a> Parser<'a> {
                     &Keyword::Static => sclass = StorageClass::Static,
                     &Keyword::Auto => sclass = StorageClass::Auto,
                     &Keyword::Register => sclass = StorageClass::Register,
+                    &Keyword::ConstExpr => constexpr = true,
                     &Keyword::Const |
                     &Keyword::Volatile |
                     &Keyword::Inline |
@@ -956,15 +976,15 @@ impl<'a> Parser<'a> {
 
         // TODO: add err handler
         if userty.is_some() {
-            return Ok((userty.unwrap(), sclass));
+            return Ok((userty.unwrap(), sclass, constexpr));
         }
 
         if kind.is_some() {
             match kind.unwrap() {
-                PrimitiveType::Void => return Ok((Type::Void, sclass)),
-                PrimitiveType::Char => return Ok((Type::Char(sign.unwrap()), sclass)),
-                PrimitiveType::Float => return Ok((Type::Float, sclass)),
-                PrimitiveType::Double => return Ok((Type::Double, sclass)),
+                PrimitiveType::Void => return Ok((Type::Void, sclass, constexpr)),
+                PrimitiveType::Char => return Ok((Type::Char(sign.unwrap()), sclass, constexpr)),
+                PrimitiveType::Float => return Ok((Type::Float, sclass, constexpr)),
+                PrimitiveType::Double => return Ok((Type::Double, sclass, constexpr)),
                 _ => {}
             }
         }
@@ -976,7 +996,7 @@ impl<'a> Parser<'a> {
             Size::LLong => Type::LLong(sign.unwrap()),
         };
 
-        Ok((ty, sclass))
+        Ok((ty, sclass, constexpr))
     }
 
     fn read_struct_def(&mut self) -> ParseR<Type> {
@@ -1059,7 +1079,7 @@ impl<'a> Parser<'a> {
             if !self.is_type(&peek) {
                 break;
             }
-            let (basety, _) = try!(self.read_type_spec());
+            let (basety, _, _) = try!(self.read_type_spec());
             loop {
                 let (ty, name, _) = try!(self.read_declarator(basety.clone()));
                 if try!(self.lexer.skip_symbol(Symbol::Colon)) {
@@ -1122,7 +1142,15 @@ impl<'a> Parser<'a> {
             }
             let name = ident_val!(try!(self.lexer.get()));
             if try!(self.lexer.skip_symbol(Symbol::Assign)) {
-                val = try!(self.read_assign()).eval_constexpr();
+                val = match try!(self.read_assign()).eval_constexpr() {
+                    Ok(val) => val,
+                    Err(Error::Something) => {
+                        let peek = try!(self.lexer.peek());
+                        self.show_error_token(&peek, "enum initialize value must be constant");
+                        0
+                    }
+                    Err(e) => return Err(e),
+                };
             }
             let constval = AST::new(ASTKind::Int(val, Bits::Bits32), self.lexer.get_cur_pos());
             val += 1;
@@ -1641,7 +1669,7 @@ impl<'a> Parser<'a> {
         let tok = try!(self.lexer.get());
         let peek = try!(self.lexer.peek());
         if matches!(tok.kind, TokenKind::Symbol(Symbol::OpeningParen)) && self.is_type(&peek) {
-            let (basety, _) = try!(self.read_type_spec());
+            let (basety, _, _) = try!(self.read_type_spec());
             let (ty, _, _) = try!(self.read_declarator(basety));
             try!(self.lexer.skip_symbol(Symbol::ClosingParen));
             return Ok(AST::new(
@@ -1725,6 +1753,26 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+
+        if let Some(name) = codegen::retrieve_from_load(&f).get_variable_name() {
+            if self.constexpr_func_map.contains(name) {
+                let mut are_args_const = true;
+                for arg in &args {
+                    if are_args_const && !arg.is_const() {
+                        are_args_const = false;
+                        break;
+                    }
+                }
+                if are_args_const {
+                    unsafe {
+                        if let Ok(ret) = CODEGEN.lock().unwrap().call_constexpr_func(name, &args) {
+                            return Ok(ret);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(AST::new(ASTKind::FuncCall(Rc::new(f), args), pos))
     }
     fn read_index(&mut self, ast: AST) -> ParseR<AST> {

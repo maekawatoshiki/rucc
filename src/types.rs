@@ -49,6 +49,12 @@ impl Type {
             _ => None,
         }
     }
+    pub fn get_params_count(&self) -> Option<usize> {
+        match self {
+            &Type::Func(_, ref params, _) => Some(params.len()),
+            _ => None,
+        }
+    }
     pub fn get_field_ty<'a>(&'a self, field_name: &str) -> Option<&'a Type> {
         match self {
             &Type::Struct(_, ref fields) |

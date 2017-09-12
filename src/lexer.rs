@@ -27,6 +27,7 @@ pub enum Keyword {
     Restrict,
     Register,
     Const,
+    ConstExpr,
     Volatile,
     Void,
     Signed,
@@ -694,6 +695,7 @@ impl Lexer {
                 "static" => TokenKind::Keyword(Keyword::Static),
                 "restrict" => TokenKind::Keyword(Keyword::Restrict),
                 "const" => TokenKind::Keyword(Keyword::Const),
+                "constexpr" => TokenKind::Keyword(Keyword::ConstExpr),
                 "volatile" => TokenKind::Keyword(Keyword::Volatile),
                 "void" => TokenKind::Keyword(Keyword::Void),
                 "signed" => TokenKind::Keyword(Keyword::Signed),
@@ -1230,7 +1232,12 @@ impl Lexer {
 
         self.buf.pop_back();
 
-        Ok(node.eval_constexpr() != 0)
+        if let Ok(e) = node.eval_constexpr() {
+            Ok(e != 0)
+        } else {
+            println!("error: lexer constexpr");
+            Err(Error::Something)
+        }
     }
 
     fn do_read_if(&mut self, cond: bool) -> ParseR<()> {
