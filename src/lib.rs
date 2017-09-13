@@ -16,9 +16,9 @@ use std::marker::Send;
 unsafe impl Send for codegen::Codegen {}
 
 lazy_static! {
-        static ref CODEGEN: Mutex<codegen::Codegen> = {
-            unsafe {
-                Mutex::new(codegen::Codegen::new("rucc"))
-            }
-        };
+    static ref CODEGEN: Mutex<codegen::Codegen> = {
+        unsafe {
+            Mutex::new(codegen::Codegen::new("rucc"))
+        }
+    };
 }
