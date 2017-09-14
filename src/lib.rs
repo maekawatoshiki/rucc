@@ -7,6 +7,10 @@ pub mod codegen;
 pub mod types;
 pub mod version_info;
 
+// for LLVMLinkInInterpreter
+#[link(name = "ffi")]
+extern "C" {}
+
 #[macro_use]
 extern crate lazy_static;
 

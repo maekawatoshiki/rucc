@@ -9,4 +9,6 @@ jobs:
 
     steps:
       - run:
+          command: echo "[build]" > ~/.cargo/config
+          command: echo "rustflags = [\"-C]\", \"link-args=-lffi\"]" >> ~/.cargo/config
           command: RUSTFLAGS='-C link-args=-lffi' cargo test

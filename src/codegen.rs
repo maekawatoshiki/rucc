@@ -2,10 +2,6 @@ extern crate llvm_sys as llvm;
 
 extern crate libc;
 
-// for LLVMLinkInInterpreter
-#[link(name = "ffi")]
-extern "C" {}
-
 extern crate rand;
 use self::rand::Rng;
 
@@ -309,15 +305,10 @@ impl Codegen {
                     node::ASTKind::Int(i as i64, node::Bits::Bits32),
                     Pos::new(0, 0),
                 )
-                // LLVMConstInt(
-                //     expect_ty,
-                //     0,
-                // )
             }
             llvm::LLVMTypeKind::LLVMDoubleTypeKind |
             llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 let f = llvm::execution_engine::LLVMGenericValueToFloat(expect_ty, gv);
-                println!("float: {}", f);
                 node::AST::new(node::ASTKind::Float(f), Pos::new(0, 0))
             }
             // llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
