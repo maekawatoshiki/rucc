@@ -9,4 +9,4 @@ jobs:
 
     steps:
       - run:
-        command: RUSTFLAGS="-C link-args=-lffi" cargo test
+          command: RUSTFLAGS="-C link-args=-lffi" cargo test
