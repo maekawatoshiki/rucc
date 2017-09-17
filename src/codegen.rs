@@ -247,10 +247,23 @@ impl Codegen {
         LLVMGetParamTypes(func_info.llvm_ty, ptr_params_types);
         let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
 
+        let mut cstrings = VecDeque::new();
+
         for (ast_arg, llvm_param_ty) in ast_args.iter().zip(llvm_params_types.iter()) {
-            let llvm_arg = try!(self.gen(ast_arg)).0;
-            let casted = self.typecast(llvm_arg, *llvm_param_ty);
-            generic_args.push(self.val_to_genericval(casted));
+            if let node::ASTKind::String(ref s) = ast_arg.kind {
+                let alloc_ptr = libc::malloc(s.len() + 2);
+                cstrings.push_back(alloc_ptr);
+                // bug?
+                libc::memset(alloc_ptr, 0, s.len() + 2);
+                libc::memcpy(alloc_ptr, s.as_ptr() as *mut _, s.len());
+                generic_args.push(llvm::execution_engine::LLVMCreateGenericValueOfPointer(
+                    alloc_ptr,
+                ));
+            } else {
+                let llvm_arg = try!(self.gen(ast_arg)).0;
+                let casted = self.typecast(llvm_arg, *llvm_param_ty);
+                generic_args.push(self.val_to_genericval(casted));
+            };
         }
 
         let genericval = llvm::execution_engine::LLVMRunFunction(
@@ -259,6 +272,10 @@ impl Codegen {
             generic_args.len() as u32,
             generic_args.as_mut_slice().as_mut_ptr(),
         );
+
+        for cstring in cstrings {
+            libc::free(cstring);
+        }
 
         let llvm_ret_ty = LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(func_info.llvm_val)));
         let newval = self.genericval_to_ast(genericval, llvm_ret_ty);
@@ -279,6 +296,7 @@ impl Codegen {
                     0,
                 )
             }
+            // llvm::LLVMTypeKind::LLVMPointerTypeKind => {}
             llvm::LLVMTypeKind::LLVMDoubleTypeKind |
             llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 llvm::execution_engine::LLVMCreateGenericValueOfFloat(
@@ -287,6 +305,7 @@ impl Codegen {
                 )
             }
             _ => {
+                LLVMDumpValue(val);
                 LLVMDumpType(ty);
                 panic!()
             }

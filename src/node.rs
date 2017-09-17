@@ -174,6 +174,7 @@ impl AST {
         match self.kind {
             ASTKind::Int(_, _) |
             ASTKind::Float(_) |
+            ASTKind::String(_) |
             ASTKind::Char(_) => true,
             // String(String),
             _ => false,
