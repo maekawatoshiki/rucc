@@ -333,7 +333,7 @@ impl Lexer {
         Ok(next_token_is_expect)
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
-        let tok = try!(self.get_token());
+        let tok = try!(self.get());
         if tok.kind == TokenKind::Keyword(keyword) {
             return Ok(true);
         }
@@ -341,7 +341,7 @@ impl Lexer {
         Ok(false)
     }
     pub fn skip_symbol(&mut self, sym: Symbol) -> ParseR<bool> {
-        let tok = try!(self.get_token());
+        let tok = try!(self.get());
         if tok.kind == TokenKind::Symbol(sym) {
             return Ok(true);
         }
@@ -673,60 +673,17 @@ impl Lexer {
         let token = self.do_read_token();
         token.and_then(|tok| match tok.kind {
             TokenKind::Newline => self.read_token(),
-            TokenKind::Identifier(_) => Ok(self.convert_to_keyword_or_symbol(tok)),
+            TokenKind::Identifier(_) => Ok(self.convert_to_symbol(tok)),
             _ => Ok(tok),
         })
     }
-    fn convert_to_keyword_or_symbol(&mut self, token: Token) -> Token {
+    fn convert_to_symbol(&mut self, token: Token) -> Token {
         let pos = token.pos.pos;
         let line = token.pos.line;
         let val = ident_val!(token);
 
         if val == "sizeof" {
             return Token::new(TokenKind::Symbol(Symbol::Sizeof), 0, pos, line);
-        }
-
-        if val.len() > 0 && val.chars().nth(0).unwrap().is_alphanumeric() {
-            let keyw = match val.as_str() {
-                "typedef" => TokenKind::Keyword(Keyword::Typedef),
-                "extern" => TokenKind::Keyword(Keyword::Extern),
-                "auto" => TokenKind::Keyword(Keyword::Auto),
-                "register" => TokenKind::Keyword(Keyword::Register),
-                "static" => TokenKind::Keyword(Keyword::Static),
-                "restrict" => TokenKind::Keyword(Keyword::Restrict),
-                "const" => TokenKind::Keyword(Keyword::Const),
-                "constexpr" => TokenKind::Keyword(Keyword::ConstExpr),
-                "volatile" => TokenKind::Keyword(Keyword::Volatile),
-                "void" => TokenKind::Keyword(Keyword::Void),
-                "signed" => TokenKind::Keyword(Keyword::Signed),
-                "unsigned" => TokenKind::Keyword(Keyword::Unsigned),
-                "char" => TokenKind::Keyword(Keyword::Char),
-                "int" => TokenKind::Keyword(Keyword::Int),
-                "bool" => TokenKind::Keyword(Keyword::Int),
-                "short" => TokenKind::Keyword(Keyword::Short),
-                "long" => TokenKind::Keyword(Keyword::Long),
-                "float" => TokenKind::Keyword(Keyword::Float),
-                "double" => TokenKind::Keyword(Keyword::Double),
-                "struct" => TokenKind::Keyword(Keyword::Struct),
-                "union" => TokenKind::Keyword(Keyword::Union),
-                "enum" => TokenKind::Keyword(Keyword::Enum),
-                "inline" => TokenKind::Keyword(Keyword::Inline),
-                "noreturn" => TokenKind::Keyword(Keyword::Noreturn),
-                "if" => TokenKind::Keyword(Keyword::If),
-                "else" => TokenKind::Keyword(Keyword::Else),
-                "for" => TokenKind::Keyword(Keyword::For),
-                "while" => TokenKind::Keyword(Keyword::While),
-                "do" => TokenKind::Keyword(Keyword::Do),
-                "switch" => TokenKind::Keyword(Keyword::Switch),
-                "case" => TokenKind::Keyword(Keyword::Case),
-                "default" => TokenKind::Keyword(Keyword::Default),
-                "goto" => TokenKind::Keyword(Keyword::Goto),
-                "break" => TokenKind::Keyword(Keyword::Break),
-                "continue" => TokenKind::Keyword(Keyword::Continue),
-                "return" => TokenKind::Keyword(Keyword::Return),
-                _ => return token,
-            };
-            return Token::new(keyw, 0, pos, line);
         }
 
         let symbol = match val.as_str() {
@@ -781,6 +738,55 @@ impl Lexer {
         };
 
         Token::new(symbol, 0, pos, line)
+    }
+    fn maybe_convert_to_keyword(&mut self, token: Token) -> Token {
+        let pos = token.pos.pos;
+        let line = token.pos.line;
+        let val = ident_val!(token);
+
+        if val.len() > 0 && val.chars().nth(0).unwrap().is_alphanumeric() {
+            let keyw = match val.as_str() {
+                "typedef" => TokenKind::Keyword(Keyword::Typedef),
+                "extern" => TokenKind::Keyword(Keyword::Extern),
+                "auto" => TokenKind::Keyword(Keyword::Auto),
+                "register" => TokenKind::Keyword(Keyword::Register),
+                "static" => TokenKind::Keyword(Keyword::Static),
+                "restrict" => TokenKind::Keyword(Keyword::Restrict),
+                "const" => TokenKind::Keyword(Keyword::Const),
+                "constexpr" => TokenKind::Keyword(Keyword::ConstExpr),
+                "volatile" => TokenKind::Keyword(Keyword::Volatile),
+                "void" => TokenKind::Keyword(Keyword::Void),
+                "signed" => TokenKind::Keyword(Keyword::Signed),
+                "unsigned" => TokenKind::Keyword(Keyword::Unsigned),
+                "char" => TokenKind::Keyword(Keyword::Char),
+                "int" => TokenKind::Keyword(Keyword::Int),
+                "bool" => TokenKind::Keyword(Keyword::Int),
+                "short" => TokenKind::Keyword(Keyword::Short),
+                "long" => TokenKind::Keyword(Keyword::Long),
+                "float" => TokenKind::Keyword(Keyword::Float),
+                "double" => TokenKind::Keyword(Keyword::Double),
+                "struct" => TokenKind::Keyword(Keyword::Struct),
+                "union" => TokenKind::Keyword(Keyword::Union),
+                "enum" => TokenKind::Keyword(Keyword::Enum),
+                "inline" => TokenKind::Keyword(Keyword::Inline),
+                "noreturn" => TokenKind::Keyword(Keyword::Noreturn),
+                "if" => TokenKind::Keyword(Keyword::If),
+                "else" => TokenKind::Keyword(Keyword::Else),
+                "for" => TokenKind::Keyword(Keyword::For),
+                "while" => TokenKind::Keyword(Keyword::While),
+                "do" => TokenKind::Keyword(Keyword::Do),
+                "switch" => TokenKind::Keyword(Keyword::Switch),
+                "case" => TokenKind::Keyword(Keyword::Case),
+                "default" => TokenKind::Keyword(Keyword::Default),
+                "goto" => TokenKind::Keyword(Keyword::Goto),
+                "break" => TokenKind::Keyword(Keyword::Break),
+                "continue" => TokenKind::Keyword(Keyword::Continue),
+                "return" => TokenKind::Keyword(Keyword::Return),
+                _ => return token,
+            };
+            return Token::new(keyw, 0, pos, line);
+        }
+        token
     }
 
     fn expand_obj_macro(
@@ -975,6 +981,7 @@ impl Lexer {
         self.expand(tok)
     }
 
+
     pub fn get(&mut self) -> ParseR<Token> {
         self.get_token().and_then(
             |tok| if matches!(tok.kind, TokenKind::String(_)) &&
@@ -988,15 +995,16 @@ impl Lexer {
                 new_tok.kind = TokenKind::String(concat_str);
                 Ok(new_tok)
             } else {
-                Ok(tok)
+                Ok(self.maybe_convert_to_keyword(tok))
             },
         )
     }
 
     pub fn peek(&mut self) -> ParseR<Token> {
         self.get_token().and_then(|tok| {
-            self.unget(tok.clone());
-            Ok(tok)
+            let conv = self.maybe_convert_to_keyword(tok);
+            self.unget(conv.clone());
+            Ok(conv)
         })
     }
 
@@ -1201,7 +1209,7 @@ impl Lexer {
                 break;
             }
 
-            tok = self.convert_to_keyword_or_symbol(tok);
+            tok = self.convert_to_symbol(tok);
             match tok.kind {
                 TokenKind::Identifier(ident) => {
                     if ident == "defined" {
