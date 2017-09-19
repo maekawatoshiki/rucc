@@ -25,6 +25,28 @@ pub enum Error {
     EOF,
 }
 
+pub struct Qualifiers {
+    pub q_restrict: bool,
+    pub q_const: bool,
+    pub q_constexpr: bool,
+    pub q_volatile: bool,
+    pub q_inline: bool,
+    pub q_noreturn: bool,
+}
+
+impl Qualifiers {
+    pub fn new() -> Qualifiers {
+        Qualifiers {
+            q_restrict: false,
+            q_const: false,
+            q_constexpr: false,
+            q_volatile: false,
+            q_inline: false,
+            q_noreturn: false,
+        }
+    }
+}
+
 pub type ParseR<T> = Result<T, Error>;
 
 pub struct Parser<'a> {
@@ -163,10 +185,10 @@ impl<'a> Parser<'a> {
         self.env.push_back(localenv);
         self.tags.push_back(localtags);
 
-        let (ret_ty, _, is_constexpr) = try!(self.read_type_spec());
+        let (ret_ty, _, qualifiers) = try!(self.read_type_spec());
         let (functy, name, param_names) = try!(self.read_declarator(ret_ty));
 
-        if is_constexpr {
+        if qualifiers.q_constexpr {
             self.constexpr_func_map.insert(name.clone());
         }
         // TODO: [0] is global env, [1] is local env. so we have to insert to both.
@@ -648,7 +670,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn read_decl(&mut self, ast: &mut Vec<AST>) -> ParseR<()> {
-        let (basety, sclass, _) = try!(self.read_type_spec());
+        let (basety, sclass, qualifiers) = try!(self.read_type_spec());
         let is_typedef = sclass == StorageClass::Typedef;
 
         if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
@@ -658,31 +680,38 @@ impl<'a> Parser<'a> {
         loop {
             let (mut ty, name, _) = try!(self.read_declarator(basety.clone())); // XXX
 
-            if is_typedef {
-                let typedef = AST::new(
-                    ASTKind::Typedef(ty, name.to_string()),
-                    self.lexer.get_cur_pos(),
-                );
-                self.env.back_mut().unwrap().insert(name, typedef);
-                return Ok(());
-            }
-
-            let init = if try!(self.lexer.skip_symbol(Symbol::Assign)) {
-                Some(Rc::new(try!(self.read_decl_init(&mut ty))))
+            if (qualifiers.q_constexpr || qualifiers.q_const) &&
+                try!(self.lexer.skip_symbol(Symbol::Assign))
+            {
+                let init = try!(self.read_decl_init(&mut ty));
+                self.env.back_mut().unwrap().insert(name.clone(), init);
             } else {
-                None
-            };
-            self.env.back_mut().unwrap().insert(
-                name.clone(),
-                AST::new(
-                    ASTKind::Variable(ty.clone(), name.clone()),
-                    Pos::new(0, 0),
-                ),
-            );
-            ast.push(AST::new(
-                ASTKind::VariableDecl(ty, name, sclass.clone(), init),
-                self.lexer.get_cur_pos(),
-            ));
+                if is_typedef {
+                    let typedef = AST::new(
+                        ASTKind::Typedef(ty, name.to_string()),
+                        self.lexer.get_cur_pos(),
+                    );
+                    self.env.back_mut().unwrap().insert(name, typedef);
+                    return Ok(());
+                }
+
+                let init = if try!(self.lexer.skip_symbol(Symbol::Assign)) {
+                    Some(Rc::new(try!(self.read_decl_init(&mut ty))))
+                } else {
+                    None
+                };
+                self.env.back_mut().unwrap().insert(
+                    name.clone(),
+                    AST::new(
+                        ASTKind::Variable(ty.clone(), name.clone()),
+                        Pos::new(0, 0),
+                    ),
+                );
+                ast.push(AST::new(
+                    ASTKind::VariableDecl(ty, name, sclass.clone(), init),
+                    self.lexer.get_cur_pos(),
+                ));
+            }
 
             if try!(self.lexer.skip_symbol(Symbol::Semicolon)) {
                 return Ok(());
@@ -845,7 +874,7 @@ impl<'a> Parser<'a> {
             _ => Ok((ty, name)),
         }
     }
-    fn read_type_spec(&mut self) -> ParseR<(Type, StorageClass, bool)> {
+    fn read_type_spec(&mut self) -> ParseR<(Type, StorageClass, Qualifiers)> {
         #[derive(PartialEq, Debug, Clone)]
         enum Size {
             Short,
@@ -867,7 +896,7 @@ impl<'a> Parser<'a> {
         let mut size = Size::Normal;
         let mut sclass = StorageClass::Auto;
         let mut userty: Option<Type> = None;
-        let mut constexpr = false;
+        let mut qualifiers = Qualifiers::new();
 
         loop {
             let tok = try!(self.lexer.get());
@@ -876,7 +905,7 @@ impl<'a> Parser<'a> {
                 if let &TokenKind::Identifier(ref maybe_userty_name) = &tok.kind {
                     let maybe_userty = try!(self.get_typedef(maybe_userty_name));
                     if maybe_userty.is_some() {
-                        return Ok((maybe_userty.unwrap(), sclass, constexpr));
+                        return Ok((maybe_userty.unwrap(), sclass, qualifiers));
                     }
                 }
             }
@@ -892,12 +921,12 @@ impl<'a> Parser<'a> {
                     &Keyword::Static => sclass = StorageClass::Static,
                     &Keyword::Auto => sclass = StorageClass::Auto,
                     &Keyword::Register => sclass = StorageClass::Register,
-                    &Keyword::ConstExpr => constexpr = true,
-                    &Keyword::Const |
-                    &Keyword::Volatile |
-                    &Keyword::Inline |
-                    &Keyword::Restrict |
-                    &Keyword::Noreturn => {}
+                    &Keyword::Const => qualifiers.q_const = true,
+                    &Keyword::ConstExpr => qualifiers.q_constexpr = true,
+                    &Keyword::Volatile => qualifiers.q_volatile = true,
+                    &Keyword::Inline => qualifiers.q_inline = true,
+                    &Keyword::Restrict => qualifiers.q_restrict = true,
+                    &Keyword::Noreturn => qualifiers.q_noreturn = true,
                     &Keyword::Void => {
                         if kind.is_some() {
                             let peek = self.lexer.peek();
@@ -976,15 +1005,15 @@ impl<'a> Parser<'a> {
 
         // TODO: add err handler
         if userty.is_some() {
-            return Ok((userty.unwrap(), sclass, constexpr));
+            return Ok((userty.unwrap(), sclass, qualifiers));
         }
 
         if kind.is_some() {
             match kind.unwrap() {
-                PrimitiveType::Void => return Ok((Type::Void, sclass, constexpr)),
-                PrimitiveType::Char => return Ok((Type::Char(sign.unwrap()), sclass, constexpr)),
-                PrimitiveType::Float => return Ok((Type::Float, sclass, constexpr)),
-                PrimitiveType::Double => return Ok((Type::Double, sclass, constexpr)),
+                PrimitiveType::Void => return Ok((Type::Void, sclass, qualifiers)),
+                PrimitiveType::Char => return Ok((Type::Char(sign.unwrap()), sclass, qualifiers)),
+                PrimitiveType::Float => return Ok((Type::Float, sclass, qualifiers)),
+                PrimitiveType::Double => return Ok((Type::Double, sclass, qualifiers)),
                 _ => {}
             }
         }
@@ -996,7 +1025,7 @@ impl<'a> Parser<'a> {
             Size::LLong => Type::LLong(sign.unwrap()),
         };
 
-        Ok((ty, sclass, constexpr))
+        Ok((ty, sclass, qualifiers))
     }
 
     fn read_struct_def(&mut self) -> ParseR<Type> {
