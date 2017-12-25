@@ -19,7 +19,6 @@ fn main() {
     println!("{}", Colour::Green.paint("Compiling exited successfully."));
 }
 
-
 #[test]
 fn compile_examples() {
     use std::fs;

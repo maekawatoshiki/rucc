@@ -8,7 +8,7 @@ use self::rand::Rng;
 use std::ffi::CString;
 use std::ptr;
 use std::rc::Rc;
-use std::collections::{HashMap, hash_map, VecDeque};
+use std::collections::{hash_map, HashMap, VecDeque};
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
@@ -16,7 +16,7 @@ use self::llvm::prelude::*;
 use node;
 use node::Bits;
 use lexer::Pos;
-use types::{Type, StorageClass, Sign};
+use types::{Sign, StorageClass, Type};
 use error;
 
 macro_rules! matches {
@@ -30,8 +30,9 @@ macro_rules! matches {
 
 pub fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
     match ast.kind {
-        node::ASTKind::Load(ref var) |
-        node::ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => var, 
+        node::ASTKind::Load(ref var) | node::ASTKind::UnaryOp(ref var, node::CUnaryOps::Deref) => {
+            var
+        }
         _ => ast,
     }
 }
@@ -121,11 +122,8 @@ impl Codegen {
 
         let mut ee = 0 as llvm::execution_engine::LLVMExecutionEngineRef;
         let mut error = 0 as *mut i8;
-        if llvm::execution_engine::LLVMCreateExecutionEngineForModule(
-            &mut ee,
-            module,
-            &mut error,
-        ) != 0
+        if llvm::execution_engine::LLVMCreateExecutionEngineForModule(&mut ee, module, &mut error)
+            != 0
         {
             println!("err");
         }
@@ -297,8 +295,7 @@ impl Codegen {
                 )
             }
             // llvm::LLVMTypeKind::LLVMPointerTypeKind => {}
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
-            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 llvm::execution_engine::LLVMCreateGenericValueOfFloat(
                     ty,
                     LLVMConstRealGetDouble(val, vec![0].as_mut_slice().as_mut_ptr()),
@@ -325,8 +322,7 @@ impl Codegen {
                     Pos::new(0, 0),
                 )
             }
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
-            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 let f = llvm::execution_engine::LLVMGenericValueToFloat(expect_ty, gv);
                 node::AST::new(node::ASTKind::Float(f), Pos::new(0, 0))
             }
@@ -405,12 +401,10 @@ impl Codegen {
             node::ASTKind::Float(ref f) => self.make_double(*f),
             node::ASTKind::Char(ref c) => self.make_char(*c),
             node::ASTKind::String(ref s) => self.make_const_str(s),
-            _ => {
-                error::error_exit(
-                    0,
-                    format!("codegen: unknown ast (given {:?})", ast).as_str(),
-                )
-            }
+            _ => error::error_exit(
+                0,
+                format!("codegen: unknown ast (given {:?})", ast).as_str(),
+            ),
         };
         result.or_else(|cr: Error| match cr {
             Error::Msg(msg) => Err(Error::MsgWithPos(msg, ast.pos.clone())),
@@ -490,15 +484,10 @@ impl Codegen {
 
         for (i, (arg_ty, arg_name)) in func_args_types.iter().zip(param_names.iter()).enumerate() {
             let arg_val = LLVMGetParam(func, i as u32);
-            let var = try!(self.gen_local_var_decl(
-                arg_ty,
-                arg_name,
-                &StorageClass::Auto,
-                &None,
-            )).0;
+            let var =
+                try!(self.gen_local_var_decl(arg_ty, arg_name, &StorageClass::Auto, &None,)).0;
             LLVMBuildStore(self.builder, arg_val, var);
         }
-
 
         try!(self.gen(&**body));
 
@@ -509,12 +498,10 @@ impl Codegen {
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
                 match **func_retty {
                     Type::Void => LLVMBuildRetVoid(terminator_builder),
-                    _ => {
-                        LLVMBuildRet(
-                            terminator_builder,
-                            LLVMConstNull(self.type_to_llvmty(func_retty)),
-                        )
-                    }
+                    _ => LLVMBuildRet(
+                        terminator_builder,
+                        LLVMConstNull(self.type_to_llvmty(func_retty)),
+                    ),
                 };
             }
             iter_bb = LLVMGetNextBasicBlock(iter_bb);
@@ -595,7 +582,6 @@ impl Codegen {
                 _ => {}
             }
 
-
             LLVMSetLinkage(
                 gvar,
                 match *sclass {
@@ -623,9 +609,7 @@ impl Codegen {
 
         match *ty {
             // TODO: support only if const array size is the same as var's array size
-            Type::Struct(_, _) |
-            Type::Union(_, _, _) |
-            Type::Array(_, _) => {
+            Type::Struct(_, _) | Type::Union(_, _, _) | Type::Array(_, _) => {
                 LLVMSetInitializer(gvar, init_val);
                 Ok((gvar, Some(ty.clone())))
             }
@@ -654,9 +638,7 @@ impl Codegen {
                 elems.as_mut_slice().as_mut_ptr(),
                 elems.len() as u32,
             ),
-            Some(
-                Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32),
-            ),
+            Some(Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32)),
         ))
     }
     unsafe fn gen_const_array_for_global_init(
@@ -680,11 +662,7 @@ impl Codegen {
             elems.push(LLVMConstNull(llvm_elem_ty));
         }
         Ok((
-            LLVMConstArray(
-                llvm_elem_ty,
-                elems.as_mut_slice().as_mut_ptr(),
-                len as u32,
-            ),
+            LLVMConstArray(llvm_elem_ty, elems.as_mut_slice().as_mut_ptr(), len as u32),
             Some(ty.clone()),
         ))
     }
@@ -697,12 +675,10 @@ impl Codegen {
         let rectype = (*self.llvm_struct_map.get(struct_name.as_str()).unwrap()).clone();
 
         let mut elems = Vec::new();
-        for ((elem_ast, field_ty), field_llvm_ty) in
-            elems_ast.iter().zip(rectype.field_types.iter()).zip(
-                rectype
-                    .field_llvm_types
-                    .iter(),
-            )
+        for ((elem_ast, field_ty), field_llvm_ty) in elems_ast
+            .iter()
+            .zip(rectype.field_types.iter())
+            .zip(rectype.field_llvm_types.iter())
         {
             let elem_val = try!(self.gen_init_global(elem_ast, field_ty)).0;
             elems.push(self.typecast(elem_val, *field_llvm_ty));
@@ -848,11 +824,7 @@ impl Codegen {
         );
 
         if init.is_some() {
-            try!(self.set_local_var_initializer(
-                var,
-                ty,
-                &*init.clone().unwrap(),
-            ));
+            try!(self.set_local_var_initializer(var, ty, &*init.clone().unwrap(),));
         }
         Ok((var, Some(ty.clone())))
     }
@@ -889,8 +861,7 @@ impl Codegen {
 
     unsafe fn val_to_bool(&mut self, val: LLVMValueRef) -> LLVMValueRef {
         match LLVMGetTypeKind(LLVMTypeOf(val)) {
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
-            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 LLVMBuildFCmp(
                     self.builder,
                     llvm::LLVMRealPredicate::LLVMRealONE,
@@ -899,21 +870,18 @@ impl Codegen {
                     CString::new("to_bool").unwrap().as_ptr(),
                 )
             }
-            _ => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntNE,
-                    val,
-                    LLVMConstNull(LLVMTypeOf(val)),
-                    CString::new("to_bool").unwrap().as_ptr(),
-                )
-            }
+            _ => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntNE,
+                val,
+                LLVMConstNull(LLVMTypeOf(val)),
+                CString::new("to_bool").unwrap().as_ptr(),
+            ),
         }
     }
     unsafe fn val_to_bool_not(&mut self, val: LLVMValueRef) -> LLVMValueRef {
         match LLVMGetTypeKind(LLVMTypeOf(val)) {
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
-            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 LLVMBuildFCmp(
                     self.builder,
                     llvm::LLVMRealPredicate::LLVMRealOEQ,
@@ -922,15 +890,13 @@ impl Codegen {
                     CString::new("to_bool").unwrap().as_ptr(),
                 )
             }
-            _ => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntEQ,
-                    val,
-                    LLVMConstNull(LLVMTypeOf(val)),
-                    CString::new("to_bool").unwrap().as_ptr(),
-                )
-            }
+            _ => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntEQ,
+                val,
+                LLVMConstNull(LLVMTypeOf(val)),
+                CString::new("to_bool").unwrap().as_ptr(),
+            ),
         }
     }
 
@@ -1054,9 +1020,8 @@ impl Codegen {
         let default = LLVMAppendBasicBlock(func, CString::new("default").unwrap().as_ptr());
         let switch = LLVMBuildSwitch(self.builder, cond_val, default, 10);
         self.break_labels.push_back(bb_after_switch);
-        self.switch_list.push_back(
-            (switch, default, LLVMTypeOf(cond_val)),
-        );
+        self.switch_list
+            .push_back((switch, default, LLVMTypeOf(cond_val)));
 
         try!(self.gen(body));
 
@@ -1101,7 +1066,7 @@ impl Codegen {
         Ok((ptr::null_mut(), None))
     }
     unsafe fn gen_default(&mut self) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let mut default = self.switch_list.back_mut().unwrap();
+        let default = self.switch_list.back_mut().unwrap();
 
         // if the above case doesn't have 'break'
         // switch(X) {
@@ -1242,11 +1207,7 @@ impl Codegen {
             node::CUnaryOps::Minus => {
                 let (val, ty) = try!(self.gen(expr));
                 Ok((
-                    LLVMBuildNeg(
-                        self.builder,
-                        val,
-                        CString::new("minus").unwrap().as_ptr(),
-                    ),
+                    LLVMBuildNeg(self.builder, val, CString::new("minus").unwrap().as_ptr()),
                     ty,
                 ))
             }
@@ -1348,10 +1309,7 @@ impl Codegen {
         if conv_ty.is_int_ty() {
             let castrhs = self.typecast(rhs, conv_llvm_ty);
             let castlhs = self.typecast(lhs, conv_llvm_ty);
-            return Ok((
-                self.gen_int_binary_op(castlhs, castrhs, op),
-                Some(conv_ty),
-            ));
+            return Ok((self.gen_int_binary_op(castlhs, castrhs, op), Some(conv_ty)));
         }
 
         Err(Error::MsgWithPos(
@@ -1376,7 +1334,6 @@ impl Codegen {
                 CString::new("eql").unwrap().as_ptr(),
             )
         };
-
 
         let func = self.cur_func.unwrap();
 
@@ -1441,7 +1398,6 @@ impl Codegen {
             )
         };
 
-
         let func = self.cur_func.unwrap();
 
         let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
@@ -1497,12 +1453,11 @@ impl Codegen {
         let (dst, ptr_dst_ty_w) = try!(self.gen(lhsast));
         let ptr_dst_ty = ptr_dst_ty_w.unwrap();
         // self.gen returns Ptr(real_type)
-        let dst_ty = match ptr_dst_ty.get_elem_ty() { 
+        let dst_ty = match ptr_dst_ty.get_elem_ty() {
             Some(ok) => ok,
             None => {
                 return Err(Error::MsgWithPos(
-                    "gen_assign: ptr_dst_ty must be a pointer to the value's type"
-                        .to_string(),
+                    "gen_assign: ptr_dst_ty must be a pointer to the value's type".to_string(),
                     lhsast.pos.clone(),
                 ))
             }
@@ -1512,11 +1467,7 @@ impl Codegen {
         let casted_src = self.typecast(src, a);
         LLVMBuildStore(self.builder, casted_src, dst);
         Ok((
-            LLVMBuildLoad(
-                self.builder,
-                dst,
-                CString::new("load").unwrap().as_ptr(),
-            ),
+            LLVMBuildLoad(self.builder, dst, CString::new("load").unwrap().as_ptr()),
             Some((dst_ty).clone()),
         ))
     }
@@ -1528,136 +1479,106 @@ impl Codegen {
         op: &node::CBinOps,
     ) -> LLVMValueRef {
         match *op {
-            node::CBinOps::Add => {
-                LLVMBuildAdd(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("add").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Sub => {
-                LLVMBuildSub(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("sub").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Mul => {
-                LLVMBuildMul(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("mul").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Div => {
-                LLVMBuildSDiv(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("div").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Rem => {
-                LLVMBuildSRem(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("rem").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Eq => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntEQ,
-                    lhs,
-                    rhs,
-                    CString::new("eql").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Ne => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntNE,
-                    lhs,
-                    rhs,
-                    CString::new("ne").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Lt => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntSLT,
-                    lhs,
-                    rhs,
-                    CString::new("lt").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Gt => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntSGT,
-                    lhs,
-                    rhs,
-                    CString::new("gt").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Le => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntSLE,
-                    lhs,
-                    rhs,
-                    CString::new("le").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Ge => {
-                LLVMBuildICmp(
-                    self.builder,
-                    llvm::LLVMIntPredicate::LLVMIntSGE,
-                    lhs,
-                    rhs,
-                    CString::new("ge").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Shl => {
-                LLVMBuildShl(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("shl").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Shr => {
-                LLVMBuildAShr(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("shr").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::And => {
-                LLVMBuildAnd(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("and").unwrap().as_ptr(),
-                )
-            }
+            node::CBinOps::Add => LLVMBuildAdd(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("add").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Sub => LLVMBuildSub(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("sub").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Mul => LLVMBuildMul(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("mul").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Div => LLVMBuildSDiv(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("div").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Rem => LLVMBuildSRem(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("rem").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Eq => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntEQ,
+                lhs,
+                rhs,
+                CString::new("eql").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Ne => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntNE,
+                lhs,
+                rhs,
+                CString::new("ne").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Lt => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntSLT,
+                lhs,
+                rhs,
+                CString::new("lt").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Gt => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntSGT,
+                lhs,
+                rhs,
+                CString::new("gt").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Le => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntSLE,
+                lhs,
+                rhs,
+                CString::new("le").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Ge => LLVMBuildICmp(
+                self.builder,
+                llvm::LLVMIntPredicate::LLVMIntSGE,
+                lhs,
+                rhs,
+                CString::new("ge").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Shl => LLVMBuildShl(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("shl").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Shr => LLVMBuildAShr(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("shr").unwrap().as_ptr(),
+            ),
+            node::CBinOps::And => LLVMBuildAnd(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("and").unwrap().as_ptr(),
+            ),
             node::CBinOps::Or => {
                 LLVMBuildOr(self.builder, lhs, rhs, CString::new("or").unwrap().as_ptr())
             }
-            node::CBinOps::Xor => {
-                LLVMBuildXor(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("xor").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Comma => rhs, 
+            node::CBinOps::Xor => LLVMBuildXor(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("xor").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Comma => rhs,
             _ => panic!(),
         }
     }
@@ -1672,14 +1593,12 @@ impl Codegen {
         let mut numidx = vec![
             match *op {
                 node::CBinOps::Add => rhs,
-                node::CBinOps::Sub => {
-                    LLVMBuildSub(
-                        self.builder,
-                        try!(self.make_int(0, &Bits::Bits32, false)).0,
-                        rhs,
-                        CString::new("sub").unwrap().as_ptr()
-                    )
-                }
+                node::CBinOps::Sub => LLVMBuildSub(
+                    self.builder,
+                    try!(self.make_int(0, &Bits::Bits32, false)).0,
+                    rhs,
+                    CString::new("sub").unwrap().as_ptr(),
+                ),
                 _ => rhs,
             },
         ];
@@ -1702,92 +1621,72 @@ impl Codegen {
         op: &node::CBinOps,
     ) -> LLVMValueRef {
         match *op {
-            node::CBinOps::Add => {
-                LLVMBuildFAdd(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("fadd").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Sub => {
-                LLVMBuildFSub(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("fsub").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Mul => {
-                LLVMBuildFMul(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("fmul").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Div => {
-                LLVMBuildFDiv(
-                    self.builder,
-                    lhs,
-                    rhs,
-                    CString::new("fdiv").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Eq => {
-                LLVMBuildFCmp(
-                    self.builder,
-                    llvm::LLVMRealPredicate::LLVMRealOEQ,
-                    lhs,
-                    rhs,
-                    CString::new("feql").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Ne => {
-                LLVMBuildFCmp(
-                    self.builder,
-                    llvm::LLVMRealPredicate::LLVMRealONE,
-                    lhs,
-                    rhs,
-                    CString::new("fne").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Lt => {
-                LLVMBuildFCmp(
-                    self.builder,
-                    llvm::LLVMRealPredicate::LLVMRealOLT,
-                    lhs,
-                    rhs,
-                    CString::new("flt").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Gt => {
-                LLVMBuildFCmp(
-                    self.builder,
-                    llvm::LLVMRealPredicate::LLVMRealOGT,
-                    lhs,
-                    rhs,
-                    CString::new("fgt").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Le => {
-                LLVMBuildFCmp(
-                    self.builder,
-                    llvm::LLVMRealPredicate::LLVMRealOLE,
-                    lhs,
-                    rhs,
-                    CString::new("fle").unwrap().as_ptr(),
-                )
-            }
-            node::CBinOps::Ge => {
-                LLVMBuildFCmp(
-                    self.builder,
-                    llvm::LLVMRealPredicate::LLVMRealOGE,
-                    lhs,
-                    rhs,
-                    CString::new("fge").unwrap().as_ptr(),
-                )
-            }
+            node::CBinOps::Add => LLVMBuildFAdd(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("fadd").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Sub => LLVMBuildFSub(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("fsub").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Mul => LLVMBuildFMul(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("fmul").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Div => LLVMBuildFDiv(
+                self.builder,
+                lhs,
+                rhs,
+                CString::new("fdiv").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Eq => LLVMBuildFCmp(
+                self.builder,
+                llvm::LLVMRealPredicate::LLVMRealOEQ,
+                lhs,
+                rhs,
+                CString::new("feql").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Ne => LLVMBuildFCmp(
+                self.builder,
+                llvm::LLVMRealPredicate::LLVMRealONE,
+                lhs,
+                rhs,
+                CString::new("fne").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Lt => LLVMBuildFCmp(
+                self.builder,
+                llvm::LLVMRealPredicate::LLVMRealOLT,
+                lhs,
+                rhs,
+                CString::new("flt").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Gt => LLVMBuildFCmp(
+                self.builder,
+                llvm::LLVMRealPredicate::LLVMRealOGT,
+                lhs,
+                rhs,
+                CString::new("fgt").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Le => LLVMBuildFCmp(
+                self.builder,
+                llvm::LLVMRealPredicate::LLVMRealOLE,
+                lhs,
+                rhs,
+                CString::new("fle").unwrap().as_ptr(),
+            ),
+            node::CBinOps::Ge => LLVMBuildFCmp(
+                self.builder,
+                llvm::LLVMRealPredicate::LLVMRealOGE,
+                lhs,
+                rhs,
+                CString::new("fge").unwrap().as_ptr(),
+            ),
             _ => ptr::null_mut(),
         }
     }
@@ -1809,7 +1708,6 @@ impl Codegen {
             )
         };
 
-
         let func = self.cur_func.unwrap();
 
         let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
@@ -1830,8 +1728,7 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_merge);
 
-        if matches!(then_ty.clone().unwrap(), Type::Void) ||
-            matches!(else_ty.unwrap(), Type::Void)
+        if matches!(then_ty.clone().unwrap(), Type::Void) || matches!(else_ty.unwrap(), Type::Void)
         {
             return Ok((ptr::null_mut(), None));
         }
@@ -1874,9 +1771,7 @@ impl Codegen {
         let ptr_ty = ptr_ty_w.unwrap();
         let ty = ptr_ty
             .get_elem_ty()
-            .or_else(
-                || panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type"),
-            )
+            .or_else(|| panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type"))
             .unwrap();
         let strct_name = ty.get_name();
         assert!(strct_name.is_some());
@@ -1893,17 +1788,17 @@ impl Codegen {
                     idx,
                     CString::new("structref").unwrap().as_ptr(),
                 ),
-                Some(Type::Ptr(
-                    Rc::new(rectype.field_types[idx as usize].clone()),
-                )),
+                Some(Type::Ptr(Rc::new(
+                    rectype.field_types[idx as usize].clone(),
+                ))),
             ))
         } else {
             let llvm_idx_ty = rectype.field_llvm_types[idx as usize];
             Ok((
                 self.typecast(strct, LLVMPointerType(llvm_idx_ty, 0)),
-                Some(Type::Ptr(
-                    Rc::new(rectype.field_types[idx as usize].clone()),
-                )),
+                Some(Type::Ptr(Rc::new(
+                    rectype.field_types[idx as usize].clone(),
+                ))),
             ))
         }
     }
@@ -1975,11 +1870,7 @@ impl Codegen {
                 }
                 _ => {
                     return Ok((
-                        LLVMBuildLoad(
-                            self.builder,
-                            val,
-                            CString::new("var").unwrap().as_ptr(),
-                        ),
+                        LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
                         Some((**elem_ty).clone()),
                     ));
                 }
@@ -2038,16 +1929,14 @@ impl Codegen {
         };
 
         let (llvm_func, llvm_functy) = match LLVMGetTypeKind(func.llvm_ty) {
-            llvm::LLVMTypeKind::LLVMPointerTypeKind => {
-                (
-                    LLVMBuildLoad(
-                        self.builder,
-                        func.llvm_val,
-                        CString::new("load").unwrap().as_ptr(),
-                    ),
-                    LLVMGetElementType(func.llvm_ty),
-                )
-            }
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => (
+                LLVMBuildLoad(
+                    self.builder,
+                    func.llvm_val,
+                    CString::new("load").unwrap().as_ptr(),
+                ),
+                LLVMGetElementType(func.llvm_ty),
+            ),
             _ => (func.llvm_val, func.llvm_ty),
         };
 
@@ -2100,8 +1989,7 @@ impl Codegen {
             *l
         } else {
             return Err(Error::Msg(
-                "continue error (maybe not in loop or switch stmt)"
-                    .to_string(),
+                "continue error (maybe not in loop or switch stmt)".to_string(),
             ));
         };
         LLVMBuildBr(self.builder, continue_bb);
@@ -2129,9 +2017,7 @@ impl Codegen {
                 self.builder,
                 self.typecast(
                     retval,
-                    LLVMGetReturnType(
-                        LLVMGetElementType(LLVMTypeOf(self.cur_func.unwrap())),
-                    ),
+                    LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(self.cur_func.unwrap()))),
                 ),
             ),
             None,
@@ -2178,7 +2064,6 @@ impl Codegen {
         ))
     }
 
-
     // Functions Related to Types
     pub unsafe fn typecast(&self, val: LLVMValueRef, to: LLVMTypeRef) -> LLVMValueRef {
         let v_ty = LLVMTypeOf(val);
@@ -2189,34 +2074,29 @@ impl Codegen {
         }
 
         match LLVMGetTypeKind(v_ty) {
-            llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                match LLVMGetTypeKind(to) {
-                    llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                        let val_bw = LLVMGetIntTypeWidth(v_ty);
-                        let to_bw = LLVMGetIntTypeWidth(to);
-                        if val_bw < to_bw {
-                            return LLVMBuildZExtOrBitCast(self.builder, val, to, inst_name);
-                        }
+            llvm::LLVMTypeKind::LLVMIntegerTypeKind => match LLVMGetTypeKind(to) {
+                llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                    let val_bw = LLVMGetIntTypeWidth(v_ty);
+                    let to_bw = LLVMGetIntTypeWidth(to);
+                    if val_bw < to_bw {
+                        return LLVMBuildZExtOrBitCast(self.builder, val, to, inst_name);
                     }
-                    llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
-                        return LLVMBuildSIToFP(self.builder, val, to, inst_name);
-                    }
-                    _ => {}
                 }
-            }
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind |
-            llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+                llvm::LLVMTypeKind::LLVMDoubleTypeKind => {
+                    return LLVMBuildSIToFP(self.builder, val, to, inst_name);
+                }
+                _ => {}
+            },
+            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
                 return LLVMBuildFPToSI(self.builder, val, to, inst_name);
             }
             llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
-            llvm::LLVMTypeKind::LLVMPointerTypeKind => {
-                match LLVMGetTypeKind(to) {
-                    llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                        return LLVMBuildPtrToInt(self.builder, val, to, inst_name);
-                    }
-                    _ => {}
+            llvm::LLVMTypeKind::LLVMPointerTypeKind => match LLVMGetTypeKind(to) {
+                llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+                    return LLVMBuildPtrToInt(self.builder, val, to, inst_name);
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
         LLVMBuildTruncOrBitCast(self.builder, val, to, inst_name)
@@ -2232,35 +2112,31 @@ impl Codegen {
             &Type::LLong(_) => LLVMInt64Type(),
             &Type::Float => LLVMFloatType(),
             &Type::Double => LLVMDoubleType(),
-            &Type::Ptr(ref elemty) => {
-                LLVMPointerType(
-                    || -> LLVMTypeRef {
-                        let elemty = self.type_to_llvmty(&**elemty);
-                        match LLVMGetTypeKind(elemty) {
-                            llvm::LLVMTypeKind::LLVMVoidTypeKind => LLVMInt8Type(),
-                            _ => elemty,
-                        }
-                    }(),
-                    0,
-                )
-            }
+            &Type::Ptr(ref elemty) => LLVMPointerType(
+                || -> LLVMTypeRef {
+                    let elemty = self.type_to_llvmty(&**elemty);
+                    match LLVMGetTypeKind(elemty) {
+                        llvm::LLVMTypeKind::LLVMVoidTypeKind => LLVMInt8Type(),
+                        _ => elemty,
+                    }
+                }(),
+                0,
+            ),
             &Type::Array(ref elemty, ref size) => {
                 LLVMArrayType(self.type_to_llvmty(&**elemty), *size as u32)
             }
-            &Type::Func(ref ret_type, ref param_types, ref is_vararg) => {
-                LLVMFunctionType(
-                    self.type_to_llvmty(&**ret_type),
-                    || -> *mut LLVMTypeRef {
-                        let mut param_llvm_types: Vec<LLVMTypeRef> = Vec::new();
-                        for param_type in &*param_types {
-                            param_llvm_types.push(self.type_to_llvmty(&param_type));
-                        }
-                        param_llvm_types.as_mut_slice().as_mut_ptr()
-                    }(),
-                    (*param_types).len() as u32,
-                    if *is_vararg { 1 } else { 0 },
-                )
-            }
+            &Type::Func(ref ret_type, ref param_types, ref is_vararg) => LLVMFunctionType(
+                self.type_to_llvmty(&**ret_type),
+                || -> *mut LLVMTypeRef {
+                    let mut param_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+                    for param_type in &*param_types {
+                        param_llvm_types.push(self.type_to_llvmty(&param_type));
+                    }
+                    param_llvm_types.as_mut_slice().as_mut_ptr()
+                }(),
+                (*param_types).len() as u32,
+                if *is_vararg { 1 } else { 0 },
+            ),
             &Type::Struct(ref name, ref fields) => self.make_struct(name, fields),
             &Type::Union(ref name, ref fields, ref max_size_field_pos) => {
                 self.make_union(name, fields, *max_size_field_pos)

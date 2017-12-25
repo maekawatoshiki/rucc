@@ -1,6 +1,6 @@
 use std::rc::Rc;
-use types::{Type, StorageClass};
-use parser::{ParseR, Error};
+use types::{StorageClass, Type};
+use parser::{Error, ParseR};
 use std::marker::Send;
 use lexer::Pos;
 
@@ -48,12 +48,12 @@ pub enum ASTKind {
     Compound(Vec<AST>),
     If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
     For(Rc<AST>, Rc<AST>, Rc<AST>, Rc<AST>), // init, cond, step, body
-    While(Rc<AST>, Rc<AST>), // cond, body
-    DoWhile(Rc<AST>, Rc<AST>), // cond, body
-    Switch(Rc<AST>, Rc<AST>), // cond, stmt
+    While(Rc<AST>, Rc<AST>),       // cond, body
+    DoWhile(Rc<AST>, Rc<AST>),     // cond, body
+    Switch(Rc<AST>, Rc<AST>),      // cond, stmt
     Case(Rc<AST>),
     DefaultL,
-    Goto(String), // label name // TODO: managing label names with String looks not good
+    Goto(String),  // label name // TODO: managing label names with String looks not good
     Label(String), // label name // TODO: managing label names with String looks not good
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
@@ -172,10 +172,7 @@ impl AST {
 
     pub fn is_const(&self) -> bool {
         match self.kind {
-            ASTKind::Int(_, _) |
-            ASTKind::Float(_) |
-            ASTKind::String(_) |
-            ASTKind::Char(_) => true,
+            ASTKind::Int(_, _) | ASTKind::Float(_) | ASTKind::String(_) | ASTKind::Char(_) => true,
             // String(String),
             _ => false,
         }
@@ -254,16 +251,12 @@ impl AST {
                 body.show();
                 print!(")");
             }
-            ASTKind::Block(ref body) => {
-                for stmt in body {
-                    stmt.show();
-                }
-            }
-            ASTKind::Compound(ref body) => {
-                for stmt in body {
-                    stmt.show();
-                }
-            }
+            ASTKind::Block(ref body) => for stmt in body {
+                stmt.show();
+            },
+            ASTKind::Compound(ref body) => for stmt in body {
+                stmt.show();
+            },
             ASTKind::If(ref cond, ref then_b, ref else_b) => {
                 print!("(if ");
                 cond.show();

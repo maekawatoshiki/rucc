@@ -4,10 +4,10 @@ use std::str;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
-use std::collections::{HashSet, HashMap};
+use std::collections::{HashMap, HashSet};
 use error;
 use parser;
-use parser::{ParseR, Error};
+use parser::{Error, ParseR};
 use node::Bits;
 
 #[derive(Debug, Clone)]
@@ -16,7 +16,6 @@ pub enum Macro {
     Object(Vec<Token>),
     FuncLike(Vec<Token>),
 }
-
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum Keyword {
@@ -215,9 +214,9 @@ impl Lexer {
             .open(filename.to_string())
             .unwrap();
         let mut file_body = String::new();
-        file.read_to_string(&mut file_body).ok().expect(
-            "cannot open file",
-        );
+        file.read_to_string(&mut file_body)
+            .ok()
+            .expect("cannot open file");
 
         let mut rucc_header = OpenOptions::new()
             .read(true)
@@ -357,7 +356,7 @@ impl Lexer {
     pub fn unget(&mut self, t: Token) {
         self.buf.back_mut().unwrap().push_back(t);
     }
-    pub fn unget_all(&mut self, tv: Vec<Token>) {
+    pub fn unget_all(&mut self, tv: &Vec<Token>) {
         let buf = self.buf.back_mut().unwrap();
         buf.extend(tv.iter().rev().map(|tok| tok.clone()));
     }
@@ -443,7 +442,7 @@ impl Lexer {
             _ => {
                 suffix.push(c);
                 n
-            } 
+            }
         });
         (n as i64, suffix)
     }
@@ -454,7 +453,7 @@ impl Lexer {
             _ => {
                 suffix.push(c);
                 n
-            } 
+            }
         });
         (n as i64, suffix)
     }
@@ -465,7 +464,7 @@ impl Lexer {
             _ => {
                 suffix.push(c);
                 n
-            } 
+            }
         });
         (n as i64, suffix)
     }
@@ -481,9 +480,9 @@ impl Lexer {
         sym.push(c);
         match c {
             '+' | '-' => {
-                if try!(self.peek_char_is('=')) || try!(self.peek_char_is('>')) ||
-                    try!(self.peek_char_is('+')) ||
-                    try!(self.peek_char_is('-'))
+                if try!(self.peek_char_is('=')) || try!(self.peek_char_is('>'))
+                    || try!(self.peek_char_is('+'))
+                    || try!(self.peek_char_is('-'))
                 {
                     sym.push(try!(self.peek_next()));
                 }
@@ -606,6 +605,9 @@ impl Lexer {
             Some(tok) => return Ok(tok),
             None => {}
         }
+        if self.buf.len() > 1 {
+            return Err(Error::EOF);
+        }
 
         match self.peek_get() {
             Ok(c) => {
@@ -633,8 +635,8 @@ impl Lexer {
                         if try!(self.peek_next_char_is('*')) {
                             try!(self.peek_next()); // /
                             try!(self.peek_next()); // *
-                            while !(try!(self.peek_char_is('*')) &&
-                                        try!(self.peek_next_char_is('/')))
+                            while !(try!(self.peek_char_is('*'))
+                                && try!(self.peek_next_char_is('/')))
                             {
                                 try!(self.peek_next());
                             }
@@ -687,7 +689,7 @@ impl Lexer {
         }
 
         let symbol = match val.as_str() {
-            "++" => TokenKind::Symbol(Symbol::Inc), 
+            "++" => TokenKind::Symbol(Symbol::Inc),
             "--" => TokenKind::Symbol(Symbol::Dec),
             "(" => TokenKind::Symbol(Symbol::OpeningParen),
             ")" => TokenKind::Symbol(Symbol::ClosingParen),
@@ -804,7 +806,7 @@ impl Lexer {
                 t
             })
             .collect();
-        self.unget_all(body);
+        self.unget_all(&body);
         Ok(())
     }
     fn read_one_arg(&mut self, end: &mut bool) -> ParseR<Vec<Token>> {
@@ -860,7 +862,7 @@ impl Lexer {
         name: String,
         macro_body: &Vec<Token>,
     ) -> ParseR<()> {
-        // expect '(', (self.skip can't be used because skip uses 'self.get' that uses MACRO_MAP using Mutex
+        // expect '(', self.skip can't be used because self.skip uses 'self.get' that uses MACRO_MAP with Mutex
         let expect_bracket = try!(self.read_token());
         if expect_bracket.kind != TokenKind::Symbol(Symbol::OpeningParen) {
             error::error_exit(*self.get_cur_line() as i32, "expected '('");
@@ -903,11 +905,16 @@ impl Lexer {
                     expanded.push(last);
                     is_combine = false;
                 } else {
-                    let cur_len = self.buf.back().unwrap().len();
-                    self.unget_all(args[position].clone());
-                    while self.buf.back().unwrap().len() > cur_len {
-                        expanded.push(try!(self.get_token()));
+                    self.buf.push_back(VecDeque::new());
+                    self.unget_all(&args[position]);
+                    loop {
+                        match self.get_token() {
+                            Ok(ok) => expanded.push(ok),
+                            Err(Error::EOF) => break,
+                            Err(e) => return Err(e),
+                        }
                     }
+                    self.buf.pop_back();
                 }
             } else {
                 if is_combine {
@@ -925,7 +932,7 @@ impl Lexer {
             tok.pos = token.pos.clone();
         }
 
-        self.unget_all(expanded);
+        self.unget_all(&expanded);
         Ok(())
     }
     fn expand(&mut self, token: ParseR<Token>) -> ParseR<Token> {
@@ -934,10 +941,7 @@ impl Lexer {
             match name.as_str() {
                 "__LINE__" => {
                     return Ok(Token::new(
-                        TokenKind::IntNumber(
-                            *self.get_cur_line() as i64,
-                            Bits::Bits32,
-                        ),
+                        TokenKind::IntNumber(*self.get_cur_line() as i64, Bits::Bits32),
                         0,
                         tok.pos.pos,
                         tok.pos.line,
@@ -950,7 +954,7 @@ impl Lexer {
                         tok.pos.pos,
                         tok.pos.line,
                     ))
-                } 
+                }
                 _ => {}
             }
             if tok.hideset.contains(name.as_str()) || !self.macro_map.contains_key(name.as_str()) {
@@ -966,10 +970,6 @@ impl Lexer {
         })
     }
 
-    // TODO: get_token, get, peek ..., must fix their names or implementation
-    //  because they are difficult to understand
-
-    // used in Lexer only
     fn get_token(&mut self) -> ParseR<Token> {
         let tok = self.read_token().and_then(|tok| match &tok.kind {
             &TokenKind::Symbol(Symbol::Hash) => {
@@ -981,11 +981,10 @@ impl Lexer {
         self.expand(tok)
     }
 
-
     pub fn get(&mut self) -> ParseR<Token> {
-        self.get_token().and_then(
-            |tok| if matches!(tok.kind, TokenKind::String(_)) &&
-                matches!(try!(self.peek()).kind, TokenKind::String(_))
+        self.get_token().and_then(|tok| {
+            if matches!(tok.kind, TokenKind::String(_))
+                && matches!(try!(self.peek()).kind, TokenKind::String(_))
             {
                 let s1 = retrieve_str!(tok);
                 let s2 = retrieve_str!(try!(self.get()));
@@ -996,8 +995,8 @@ impl Lexer {
                 Ok(new_tok)
             } else {
                 Ok(self.maybe_convert_to_keyword(tok))
-            },
-        )
+            }
+        })
     }
 
     pub fn peek(&mut self) -> ParseR<Token> {
@@ -1078,9 +1077,10 @@ impl Lexer {
             .open(abs_filename.to_string())
             .unwrap();
         let mut body = String::with_capacity(512);
-        include_file.read_to_string(&mut body).ok().expect(
-            "not found file",
-        );
+        include_file
+            .read_to_string(&mut body)
+            .ok()
+            .expect("not found file");
         self.filename.push_back(abs_filename);
         unsafe {
             self.peek.push_back(body.as_mut_vec().clone());
@@ -1234,9 +1234,9 @@ impl Lexer {
         self.buf.push_back(VecDeque::new());
 
         self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), 0, 0, 0));
-        self.unget_all(expr_line);
+        self.unget_all(&expr_line);
 
-        let node = parser::Parser::new(self).run_as_expr().ok().unwrap();
+        let node = parser::run_as_expr(self).ok().unwrap();
 
         self.buf.pop_back();
 
