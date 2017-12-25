@@ -280,17 +280,15 @@ impl Lexer {
         let peek = self.peek.back_mut().unwrap();
         let peek_pos = self.peek_pos.back_mut().unwrap();
         let line = self.cur_line.back_mut().unwrap();
-
         if *peek_pos >= peek.len() {
             return Err(Error::EOF);
         }
-
-        let ret = peek[*peek_pos] as char;
-        if ret == '\n' {
+        let c = peek[*peek_pos] as char;
+        if c == '\n' {
             *line += 1;
         }
         *peek_pos += 1;
-        Ok(ret)
+        Ok(c)
     }
     fn peek_next_char_is(&mut self, ch: char) -> ParseR<bool> {
         let peek = self.peek.back_mut().unwrap();
@@ -421,7 +419,7 @@ impl Lexer {
                 self.read_dec_num(num.as_str()).0
             };
 
-            let max_32bits = 4294967295;
+            let max_32bits = 0xffffffff;
             let bits = if 0 == (i & !max_32bits) {
                 Bits::Bits32
             } else {
