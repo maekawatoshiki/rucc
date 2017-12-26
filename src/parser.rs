@@ -1,15 +1,15 @@
 use lexer::{Keyword, Lexer, Pos, Symbol, Token, TokenKind};
-use codegen;
 use node::{ASTKind, Bits, AST};
 use node;
 use types::{Sign, StorageClass, Type};
 
-use std::{str, u32};
+use std::str;
 use std::rc::Rc;
 use std::io::{stderr, Write};
 use std::collections::{hash_map, HashMap, HashSet, VecDeque};
 
-use CODEGEN;
+// TODO: do really have to support constexpr?
+// use CODEGEN;
 
 extern crate llvm_sys as llvm;
 
@@ -189,7 +189,7 @@ fn read_func_def(lexer: &mut Lexer) -> ParseR<AST> {
     ENV.lock().unwrap().push_back(localenv);
     TAGS.lock().unwrap().push_back(localtags);
 
-    let (ret_ty, _, qualifiers) = try!(read_type_spec(lexer));
+    let (ret_ty, _, _qualifiers) = try!(read_type_spec(lexer));
     let (functy, name, param_names) = try!(read_declarator(lexer, ret_ty));
 
     // TODO: do really have to support constexpr?
@@ -472,7 +472,7 @@ fn skip_until(lexer: &mut Lexer, sym: Symbol) {
     } {}
 }
 
-fn get_typedef(lexer: &mut Lexer, name: &str) -> ParseR<Option<Type>> {
+fn get_typedef(name: &str) -> ParseR<Option<Type>> {
     match ENV.lock().unwrap().back().unwrap().get(name) {
         Some(ast) => match ast.kind {
             ASTKind::Typedef(ref from, ref _to) => {
@@ -901,7 +901,7 @@ fn read_type_spec(lexer: &mut Lexer) -> ParseR<(Type, StorageClass, Qualifiers)>
 
         if kind.is_none() {
             if let &TokenKind::Identifier(ref maybe_userty_name) = &tok.kind {
-                let maybe_userty = try!(get_typedef(lexer, maybe_userty_name));
+                let maybe_userty = try!(get_typedef(maybe_userty_name));
                 if maybe_userty.is_some() {
                     return Ok((maybe_userty.unwrap(), sclass, qualifiers));
                 }

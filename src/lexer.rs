@@ -255,13 +255,13 @@ impl Lexer {
             cond_stack: Vec::new(),
         }
     }
-    pub fn get_filename(&mut self) -> String {
+    pub fn get_filename(&self) -> String {
         self.filename.back().unwrap().to_owned()
     }
-    pub fn get_cur_pos(&mut self) -> Pos {
+    pub fn get_cur_pos(&self) -> Pos {
         Pos::new(*self.get_cur_line(), *self.peek_pos.back().unwrap())
     }
-    pub fn get_cur_line(&mut self) -> &usize {
+    pub fn get_cur_line(&self) -> &usize {
         self.cur_line.back().unwrap()
     }
     pub fn get_mut_cur_line(&mut self) -> &mut usize {
@@ -279,15 +279,14 @@ impl Lexer {
     fn peek_next(&mut self) -> ParseR<char> {
         let peek = self.peek.back_mut().unwrap();
         let peek_pos = self.peek_pos.back_mut().unwrap();
-        let line = self.cur_line.back_mut().unwrap();
         if *peek_pos >= peek.len() {
             return Err(Error::EOF);
         }
         let c = peek[*peek_pos] as char;
-        if c == '\n' {
-            *line += 1;
-        }
         *peek_pos += 1;
+        if c == '\n' {
+            *self.cur_line.back_mut().unwrap() += 1;
+        }
         Ok(c)
     }
     fn peek_next_char_is(&mut self, ch: char) -> ParseR<bool> {
@@ -316,18 +315,18 @@ impl Lexer {
     pub fn next_keyword_token_is(&mut self, expect: Keyword) -> ParseR<bool> {
         let peek = try!(self.get());
         let next = try!(self.get());
-        let next_token_is_expect = next.kind == TokenKind::Keyword(expect);
+        let next_token_is_expected = next.kind == TokenKind::Keyword(expect);
         self.unget(next);
         self.unget(peek);
-        Ok(next_token_is_expect)
+        Ok(next_token_is_expected)
     }
     pub fn next_symbol_token_is(&mut self, expect: Symbol) -> ParseR<bool> {
         let peek = try!(self.get());
         let next = try!(self.get());
-        let next_token_is_expect = next.kind == TokenKind::Symbol(expect);
+        let next_token_is_expected = next.kind == TokenKind::Symbol(expect);
         self.unget(next);
         self.unget(peek);
-        Ok(next_token_is_expect)
+        Ok(next_token_is_expected)
     }
     pub fn skip_keyword(&mut self, keyword: Keyword) -> ParseR<bool> {
         let tok = try!(self.get());
@@ -359,18 +358,19 @@ impl Lexer {
         buf.extend(tv.iter().rev().map(|tok| tok.clone()));
     }
 
-    pub fn read_identifier(&mut self) -> ParseR<Token> {
-        let mut ident = String::with_capacity(16);
+    pub fn read_identifier(&mut self, c: char) -> ParseR<Token> {
+        let mut ident = "".to_string();
+        ident.push(c);
         let pos = *self.peek_pos.back().unwrap();
         loop {
             let c = try!(self.peek_next());
             if c.is_alphanumeric() || c == '_' {
                 ident.push(c);
             } else {
+                *self.peek_pos.back_mut().unwrap() -= 1;
                 break;
             }
         }
-        *self.peek_pos.back_mut().unwrap() -= 1;
         Ok(Token::new(
             TokenKind::Identifier(ident),
             0,
@@ -378,8 +378,9 @@ impl Lexer {
             *self.get_cur_line(),
         ))
     }
-    fn read_number_literal(&mut self) -> ParseR<Token> {
-        let mut num = String::with_capacity(8);
+    fn read_number_literal(&mut self, c: char) -> ParseR<Token> {
+        let mut num = "".to_string();
+        num.push(c);
         let mut is_float = false;
         let mut last = try!(self.peek_get());
         let pos = *self.peek_pos.back().unwrap();
@@ -391,11 +392,12 @@ impl Lexer {
             if !c.is_alphanumeric() && c != '.' && !is_f {
                 is_float = is_float || is_f;
                 num.pop();
+                *self.peek_pos.back_mut().unwrap() -= 1;
                 break;
             }
             last = c;
         }
-        *self.peek_pos.back_mut().unwrap() -= 1;
+
         if is_float {
             // TODO: now rucc ignores suffix
             num = num.trim_right_matches(|c| match c {
@@ -467,14 +469,16 @@ impl Lexer {
         (n as i64, suffix)
     }
     pub fn read_newline(&mut self) -> ParseR<Token> {
-        let pos = *self.peek_pos.back().unwrap();
-        try!(self.peek_next());
-        Ok(Token::new(TokenKind::Newline, 0, pos, *self.get_cur_line()))
+        Ok(Token::new(
+            TokenKind::Newline,
+            0,
+            *self.peek_pos.back().unwrap(),
+            *self.get_cur_line(),
+        ))
     }
-    pub fn read_symbol(&mut self) -> ParseR<Token> {
+    pub fn read_symbol(&mut self, c: char) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        let c = try!(self.peek_next());
-        let mut sym = String::new();
+        let mut sym = "".to_string();
         sym.push(c);
         match c {
             '+' | '-' => {
@@ -561,14 +565,12 @@ impl Lexer {
     }
     fn read_string_literal(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        try!(self.peek_next()); // '"'
-        let mut s = String::new();
+        let mut s = "".to_string();
         loop {
-            let c = try!(self.peek_next());
-            match c {
+            match try!(self.peek_next()) {
                 '"' => break,
                 '\\' => s.push(try!(self.read_escaped_char())),
-                _ => s.push(c),
+                c => s.push(c),
             }
         }
         Ok(Token::new(
@@ -580,7 +582,6 @@ impl Lexer {
     }
     fn read_char_literal(&mut self) -> ParseR<Token> {
         let pos = *self.peek_pos.back().unwrap();
-        try!(self.peek_next()); // '\''
         let c = {
             let c = try!(self.peek_next());
             if c == '\\' {
@@ -599,20 +600,18 @@ impl Lexer {
     }
 
     pub fn do_read_token(&mut self) -> ParseR<Token> {
-        match self.buf.back_mut().unwrap().pop_back() {
-            Some(tok) => return Ok(tok),
-            None => {}
+        if let Some(tok) = self.buf.back_mut().unwrap().pop_back() {
+            return Ok(tok);
         }
         if self.buf.len() > 1 {
             return Err(Error::EOF);
         }
 
-        match self.peek_get() {
+        match self.peek_next() {
             Ok(c) => {
                 match c {
-                    'a'...'z' | 'A'...'Z' | '_' => self.read_identifier(),
+                    'a'...'z' | 'A'...'Z' | '_' => self.read_identifier(c),
                     ' ' | '\t' => {
-                        try!(self.peek_next());
                         self.do_read_token()
                             // set a leading space
                             .and_then(|tok| {
@@ -621,7 +620,7 @@ impl Lexer {
                                 Ok(t)
                             })
                     }
-                    '0'...'9' => self.read_number_literal(),
+                    '0'...'9' => self.read_number_literal(c),
                     '\"' => self.read_string_literal(),
                     '\'' => self.read_char_literal(),
                     '\n' => self.read_newline(),
@@ -630,8 +629,7 @@ impl Lexer {
                         self.do_read_token()
                     }
                     '/' => {
-                        if try!(self.peek_next_char_is('*')) {
-                            try!(self.peek_next()); // /
+                        if try!(self.peek_char_is('*')) {
                             try!(self.peek_next()); // *
                             while !(try!(self.peek_char_is('*'))
                                 && try!(self.peek_next_char_is('/')))
@@ -641,8 +639,7 @@ impl Lexer {
                             try!(self.peek_next()); // *
                             try!(self.peek_next()); // /
                             self.do_read_token()
-                        } else if try!(self.peek_next_char_is('/')) {
-                            try!(self.peek_next()); // /
+                        } else if try!(self.peek_char_is('/')) {
                             try!(self.peek_next()); // /
                             while !try!(self.peek_char_is('\n')) {
                                 try!(self.peek_next());
@@ -650,10 +647,10 @@ impl Lexer {
                             // try!(self.peek_next()); // \n
                             self.do_read_token()
                         } else {
-                            self.read_symbol()
+                            self.read_symbol(c)
                         }
                     }
-                    _ => self.read_symbol(),
+                    _ => self.read_symbol(c),
                 }
             }
             _ => {
@@ -808,12 +805,12 @@ impl Lexer {
         Ok(())
     }
     fn read_one_arg(&mut self, end: &mut bool) -> ParseR<Vec<Token>> {
-        let mut n = 0;
+        let mut nest = 0;
         let mut arg = Vec::new();
         loop {
             let tok = try!(self.do_read_token());
             let val = ident_val!(tok);
-            if n == 0 {
+            if nest == 0 {
                 match val.as_str() {
                     ")" => {
                         *end = true;
@@ -824,8 +821,8 @@ impl Lexer {
                 }
             }
             match val.as_str() {
-                "(" => n += 1,
-                ")" => n -= 1,
+                "(" => nest += 1,
+                ")" => nest -= 1,
                 _ => {}
             }
             arg.push(tok);
@@ -1042,7 +1039,7 @@ impl Lexer {
     }
     fn read_headerfile_name(&mut self) -> ParseR<String> {
         let mut name = "".to_string();
-        // Lt -> '<'
+        // Lt = '<'
         if try!(self.skip_symbol(Symbol::Lt)) {
             while !try!(self.peek_char_is('>')) {
                 name.push(try!(self.peek_next()));
