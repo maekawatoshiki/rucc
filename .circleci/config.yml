@@ -8,5 +8,6 @@ jobs:
       - image: uint256/rucc:latest
 
     steps:
+      - checkout
       - run:
           command: RUSTFLAGS="-C link-args=-lffi" cargo test
