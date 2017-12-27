@@ -7,9 +7,6 @@ jobs:
 
     working_directory: /opt/rucc
 
-    environment:
-      PATH: ~/.cargo/bin:$PATH
-
     steps:
       - checkout
       - run:
@@ -36,4 +33,6 @@ jobs:
             ln -s /usr/bin/clang++-4.0 /usr/bin/clang++; 
             ln -s /usr/bin/llvm-config-4.0 /usr/bin/llvm-config;
       - run:
-          command: cargo test
+          command: |
+            export PATH=~/.cargo/bin:$PATH
+            cargo test
