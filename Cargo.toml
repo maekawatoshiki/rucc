@@ -4,7 +4,7 @@ version = "0.2.0"
 authors = ["uint256_t"]
 
 [dependencies]
-llvm-sys = "39.0.0"
+llvm-sys = "40.0.0"
 
 lazy_static = "0.2.6"
 

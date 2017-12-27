@@ -9,10 +9,10 @@
 # REQUIREMENTS
 
 - latest Rust(recommend [rustup](https://www.rustup.rs/))
-- LLVM 3.9
+- LLVM 4.0
 ```sh
 # ubuntu, or debian...
-$ apt-get install llvm-3.9
+$ apt-get install llvm-4.0 llvm-4.0-dev
 ```
 
 # RUN
