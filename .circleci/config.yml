@@ -2,10 +2,10 @@ version: 2
 
 jobs:
   build:
-    working_directory: /opt/rucc
-
     docker:
       - image: uint256/rucc:latest
+
+    working_directory: /opt/rucc
 
     steps:
       - checkout
