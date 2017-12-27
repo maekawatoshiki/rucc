@@ -10,4 +10,4 @@ jobs:
     steps:
       - checkout
       - run:
-          command: RUSTFLAGS="-C link-args=-lffi" cargo test
+          command: cargo test
