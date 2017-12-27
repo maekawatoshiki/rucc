@@ -7,6 +7,9 @@ jobs:
 
     working_directory: /opt/rucc
 
+    environment:
+      PATH: ~/.cargo/bin:$PATH
+
     steps:
       - checkout
       - run:
@@ -22,7 +25,6 @@ jobs:
             ./rustup-init -y --no-modify-path --default-toolchain nightly
             RUSTUP_HOME=~/.cargo/bin/rustup
             CARGO_HOME=~/.cargo/bin/cargo
-            export PATH=~/.cargo/bin:$PATH
             chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
             rm rustup-init
             source ~/.cargo/env
