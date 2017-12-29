@@ -1,22 +1,40 @@
 extern crate rucc;
-use rucc::version_info;
 use rucc::common;
 
 extern crate ansi_term;
 use self::ansi_term::Colour;
 
+extern crate clap;
+use clap::{App, Arg};
+
+const VERSION_STR: &'static str = env!("CARGO_PKG_VERSION");
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let mut app = App::new("rucc")
+        .version(VERSION_STR)
+        .author("uint256_t")
+        .about("rucc is a small toy C compiler in Rust")
+        .arg(
+            Arg::with_name("version")
+                .short("v")
+                .long("version")
+                .help("Show version info"),
+        )
+        .arg(Arg::with_name("FILE")
+                .help("Input file")
+                .index(1));
+    let app_matches = app.clone().get_matches();
 
-    if args.len() < 2 {
-        version_info::show_version();
-        version_info::show_usage();
-        return;
+    if app_matches.is_present("version") {
+        app.write_version(&mut ::std::io::stdout());
+        println!();
+    } else if let Some(filename) = app_matches.value_of("FILE") {
+        common::run_file(filename);
+        println!("{}", Colour::Green.paint("Compiling exited successfully."));
+    } else {
+        app.print_help();
+        println!();
     }
-
-    let ref input_file_name = args[1];
-    common::run_file(input_file_name);
-    println!("{}", Colour::Green.paint("Compiling exited successfully."));
 }
 
 #[test]
