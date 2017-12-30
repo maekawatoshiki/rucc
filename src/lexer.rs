@@ -10,6 +10,9 @@ use parser;
 use parser::{Error, ParseR};
 use node::Bits;
 
+extern crate ansi_term;
+use self::ansi_term::{Colour, Style};
+
 #[derive(Debug, Clone)]
 pub enum Macro {
     // Vec<Token> -> macro body
@@ -209,14 +212,24 @@ impl Lexer {
         let mut buf = VecDeque::new();
         buf.push_back(VecDeque::new());
 
-        let mut file = OpenOptions::new()
+        let mut file = match OpenOptions::new()
             .read(true)
             .open(filename.to_string())
-            .unwrap();
+        {
+            Ok(ok) => ok,
+            Err(_) => {
+                println!(
+                    "{} not found such file '{}'",
+                    Colour::Red.bold().paint("error:"),
+                    Style::new().underline().paint(filename)
+                );
+                ::std::process::exit(0)
+            }
+        };
         let mut file_body = String::new();
         file.read_to_string(&mut file_body)
             .ok()
-            .expect("cannot open file");
+            .expect("cannot read file");
 
         let mut rucc_header = OpenOptions::new()
             .read(true)
@@ -226,7 +239,7 @@ impl Lexer {
         rucc_header
             .read_to_string(&mut rucc_header_body)
             .ok()
-            .expect("cannot open file");
+            .expect("cannot read file");
         let mut peek = VecDeque::new();
         unsafe {
             peek.push_back(file_body.as_mut_vec().clone());
