@@ -212,24 +212,30 @@ impl Lexer {
         let mut buf = VecDeque::new();
         buf.push_back(VecDeque::new());
 
-        let mut file = match OpenOptions::new()
-            .read(true)
-            .open(filename.to_string())
-        {
-            Ok(ok) => ok,
-            Err(_) => {
+        let mut file = if let Ok(ok) = OpenOptions::new().read(true).open(filename.to_string()) {
+            ok
+        } else {
+            println!(
+                "{} not found such file '{}'",
+                Colour::Red.bold().paint("error:"),
+                Style::new().underline().paint(filename)
+            );
+            ::std::process::exit(0)
+        };
+
+        let mut file_body = String::new();
+        match file.read_to_string(&mut file_body) {
+            Ok(_) => (),
+            Err(e) => {
                 println!(
-                    "{} not found such file '{}'",
+                    "an error occurred while reading file '{}'\n{} {}",
+                    Style::new().underline().paint(filename),
                     Colour::Red.bold().paint("error:"),
-                    Style::new().underline().paint(filename)
+                    e
                 );
                 ::std::process::exit(0)
             }
         };
-        let mut file_body = String::new();
-        file.read_to_string(&mut file_body)
-            .ok()
-            .expect("cannot read file");
 
         let mut rucc_header = OpenOptions::new()
             .read(true)
