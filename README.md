@@ -17,18 +17,19 @@ $ apt-get install llvm-4.0 llvm-4.0-dev
 
 # RUN
 
-- First, do test
+First, do test
 
 ```sh
 $ cargo test
 ```
 
-- After test exited successfully, you can try rucc easily with ``./rucc.sh``!
+After the test exited successfully, you can try rucc easily with ``./rucc.sh``.
 
 ```sh
-$ # slow( use binary created with `cargo build` )
+$ # slow (use binary created by `cargo build`)
 $ ./rucc.sh [filename (*.c)]
-$ # fast( use binary created with `cargo build --release` )
+
+$ # fast (use binary created by `cargo build --release`)
 $ ./rucc.sh [filename (*.c)] --release
 ```
 
@@ -66,4 +67,4 @@ $ ./rucc.sh [filename (*.c)] --release
 
 # REFERENCES
 
-- I'm using [8cc](https://github.com/rui314/8cc) as reference.
+I'm using [8cc](https://github.com/rui314/8cc) as reference.
