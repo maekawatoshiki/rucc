@@ -64,7 +64,7 @@ $ ./rucc.sh [filename (*.c)] --release
     $ git merge upstream/master
     ```
 
-5. pullrequest on github
+5. pullrequest on GitHub
 
 # REFERENCES
 
