@@ -14,7 +14,7 @@ jobs:
       - run:
           command: apt-get update
       - run:
-          command: apt-get install -y zlib1g-dev wget libssl-dev pkg-config cmake zlib1g-dev
+          command: apt-get install -y zlib1g-dev wget libssl-dev pkg-config cmake zlib1g-dev curl
       - run:
           command: |
             wget "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
@@ -37,5 +37,6 @@ jobs:
           command: |
             export PATH=~/.cargo/bin:$PATH
             cargo test
-            cargo tarpaulin --out Xml
+            export CODECOV_TOKEN="c7808b19-496d-4f37-b8d6-db9181a8d948"
+            RUSTFLAGS='-C link-args=-lffi' cargo tarpaulin --verbose --out Xml
             bash <(curl -s https://codecov.io/bash)
