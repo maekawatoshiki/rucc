@@ -80,6 +80,7 @@ impl RectypeInfo {
     }
 }
 
+#[derive(Debug)]
 pub enum Error {
     MsgWithPos(String, Pos),
     Msg(String),
@@ -224,123 +225,123 @@ impl Codegen {
         Ok(())
     }
 
-    pub unsafe fn call_constexpr_func<'a>(
-        &mut self,
-        name: &'a str,
-        ast_args: &Vec<node::AST>,
-    ) -> CodegenR<node::AST> {
-        let func_info = if let Some(varinfo) = self.lookup_var(name) {
-            varinfo
-        } else {
-            return Err(Error::Msg(format!(
-                "constexpr error: not found such function '{}'",
-                name
-            )));
-        };
+    // pub unsafe fn call_constexpr_func<'a>(
+    //     &mut self,
+    //     name: &'a str,
+    //     ast_args: &Vec<node::AST>,
+    // ) -> CodegenR<node::AST> {
+    //     let func_info = if let Some(varinfo) = self.lookup_var(name) {
+    //         varinfo
+    //     } else {
+    //         return Err(Error::Msg(format!(
+    //             "constexpr error: not found such function '{}'",
+    //             name
+    //         )));
+    //     };
+    //
+    //     let mut generic_args = Vec::new();
+    //
+    //     let params_count = func_info.ty.get_params_count().unwrap();
+    //     let ptr_params_types = (&mut Vec::with_capacity(params_count)).as_mut_ptr();
+    //     LLVMGetParamTypes(func_info.llvm_ty, ptr_params_types);
+    //     let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
+    //
+    //     let mut cstrings = VecDeque::new();
+    //
+    //     for (ast_arg, llvm_param_ty) in ast_args.iter().zip(llvm_params_types.iter()) {
+    //         if let node::ASTKind::String(ref s) = ast_arg.kind {
+    //             let alloc_ptr = libc::malloc(s.len() + 2);
+    //             cstrings.push_back(alloc_ptr);
+    //             // bug?
+    //             libc::memset(alloc_ptr, 0, s.len() + 2);
+    //             libc::memcpy(alloc_ptr, s.as_ptr() as *mut _, s.len());
+    //             generic_args.push(llvm::execution_engine::LLVMCreateGenericValueOfPointer(
+    //                 alloc_ptr,
+    //             ));
+    //         } else {
+    //             let llvm_arg = try!(self.gen(ast_arg)).0;
+    //             let casted = self.typecast(llvm_arg, *llvm_param_ty);
+    //             generic_args.push(self.val_to_genericval(casted));
+    //         };
+    //     }
+    //
+    //     let genericval = llvm::execution_engine::LLVMRunFunction(
+    //         self.exec_engine,
+    //         func_info.llvm_val,
+    //         generic_args.len() as u32,
+    //         generic_args.as_mut_slice().as_mut_ptr(),
+    //     );
+    //
+    //     for cstring in cstrings {
+    //         libc::free(cstring);
+    //     }
+    //
+    //     let llvm_ret_ty = LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(func_info.llvm_val)));
+    //     let newval = self.genericval_to_ast(genericval, llvm_ret_ty);
+    //
+    //     Ok(newval)
+    // }
 
-        let mut generic_args = Vec::new();
-
-        let params_count = func_info.ty.get_params_count().unwrap();
-        let ptr_params_types = (&mut Vec::with_capacity(params_count)).as_mut_ptr();
-        LLVMGetParamTypes(func_info.llvm_ty, ptr_params_types);
-        let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
-
-        let mut cstrings = VecDeque::new();
-
-        for (ast_arg, llvm_param_ty) in ast_args.iter().zip(llvm_params_types.iter()) {
-            if let node::ASTKind::String(ref s) = ast_arg.kind {
-                let alloc_ptr = libc::malloc(s.len() + 2);
-                cstrings.push_back(alloc_ptr);
-                // bug?
-                libc::memset(alloc_ptr, 0, s.len() + 2);
-                libc::memcpy(alloc_ptr, s.as_ptr() as *mut _, s.len());
-                generic_args.push(llvm::execution_engine::LLVMCreateGenericValueOfPointer(
-                    alloc_ptr,
-                ));
-            } else {
-                let llvm_arg = try!(self.gen(ast_arg)).0;
-                let casted = self.typecast(llvm_arg, *llvm_param_ty);
-                generic_args.push(self.val_to_genericval(casted));
-            };
-        }
-
-        let genericval = llvm::execution_engine::LLVMRunFunction(
-            self.exec_engine,
-            func_info.llvm_val,
-            generic_args.len() as u32,
-            generic_args.as_mut_slice().as_mut_ptr(),
-        );
-
-        for cstring in cstrings {
-            libc::free(cstring);
-        }
-
-        let llvm_ret_ty = LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(func_info.llvm_val)));
-        let newval = self.genericval_to_ast(genericval, llvm_ret_ty);
-
-        Ok(newval)
-    }
-
-    unsafe fn val_to_genericval(
-        &mut self,
-        val: LLVMValueRef,
-    ) -> llvm::execution_engine::LLVMGenericValueRef {
-        let ty = LLVMTypeOf(val);
-        match LLVMGetTypeKind(ty) {
-            llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                llvm::execution_engine::LLVMCreateGenericValueOfInt(
-                    ty,
-                    LLVMConstIntGetZExtValue(val),
-                    0,
-                )
-            }
-            // llvm::LLVMTypeKind::LLVMPointerTypeKind => {}
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
-                llvm::execution_engine::LLVMCreateGenericValueOfFloat(
-                    ty,
-                    LLVMConstRealGetDouble(val, vec![0].as_mut_slice().as_mut_ptr()),
-                )
-            }
-            _ => {
-                LLVMDumpValue(val);
-                LLVMDumpType(ty);
-                panic!()
-            }
-        }
-    }
-
-    unsafe fn genericval_to_ast(
-        &mut self,
-        gv: llvm::execution_engine::LLVMGenericValueRef,
-        expect_ty: LLVMTypeRef,
-    ) -> node::AST {
-        match LLVMGetTypeKind(expect_ty) {
-            llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-                let i = llvm::execution_engine::LLVMGenericValueToInt(gv, 0);
-                node::AST::new(
-                    node::ASTKind::Int(i as i64, node::Bits::Bits32),
-                    Pos::new(0, 0),
-                )
-            }
-            llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
-                let f = llvm::execution_engine::LLVMGenericValueToFloat(expect_ty, gv);
-                node::AST::new(node::ASTKind::Float(f), Pos::new(0, 0))
-            }
-            // llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
-            // llvm::LLVMTypeKind::LLVMPointerTypeKind => {
-            //     let ptrval = LLVMConstInt(
-            //         LLVMInt64Type(),
-            //         llvm::execution_engine::LLVMGenericValueToPointer(gv) as u64,
-            //         0,
-            //     );
-            //     LLVMConstIntToPtr(ptrval, expect_ty)
-            // }
-            _ => {
-                LLVMDumpType(expect_ty);
-                panic!()
-            }
-        }
-    }
+    // unsafe fn val_to_genericval(
+    //     &mut self,
+    //     val: LLVMValueRef,
+    // ) -> llvm::execution_engine::LLVMGenericValueRef {
+    //     let ty = LLVMTypeOf(val);
+    //     match LLVMGetTypeKind(ty) {
+    //         llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+    //             llvm::execution_engine::LLVMCreateGenericValueOfInt(
+    //                 ty,
+    //                 LLVMConstIntGetZExtValue(val),
+    //                 0,
+    //             )
+    //         }
+    //         // llvm::LLVMTypeKind::LLVMPointerTypeKind => {}
+    //         llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+    //             llvm::execution_engine::LLVMCreateGenericValueOfFloat(
+    //                 ty,
+    //                 LLVMConstRealGetDouble(val, vec![0].as_mut_slice().as_mut_ptr()),
+    //             )
+    //         }
+    //         _ => {
+    //             LLVMDumpValue(val);
+    //             LLVMDumpType(ty);
+    //             panic!()
+    //         }
+    //     }
+    // }
+    //
+    // unsafe fn genericval_to_ast(
+    //     &mut self,
+    //     gv: llvm::execution_engine::LLVMGenericValueRef,
+    //     expect_ty: LLVMTypeRef,
+    // ) -> node::AST {
+    //     match LLVMGetTypeKind(expect_ty) {
+    //         llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
+    //             let i = llvm::execution_engine::LLVMGenericValueToInt(gv, 0);
+    //             node::AST::new(
+    //                 node::ASTKind::Int(i as i64, node::Bits::Bits32),
+    //                 Pos::new(0, 0),
+    //             )
+    //         }
+    //         llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
+    //             let f = llvm::execution_engine::LLVMGenericValueToFloat(expect_ty, gv);
+    //             node::AST::new(node::ASTKind::Float(f), Pos::new(0, 0))
+    //         }
+    //         // llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
+    //         // llvm::LLVMTypeKind::LLVMPointerTypeKind => {
+    //         //     let ptrval = LLVMConstInt(
+    //         //         LLVMInt64Type(),
+    //         //         llvm::execution_engine::LLVMGenericValueToPointer(gv) as u64,
+    //         //         0,
+    //         //     );
+    //         //     LLVMConstIntToPtr(ptrval, expect_ty)
+    //         // }
+    //         _ => {
+    //             LLVMDumpType(expect_ty);
+    //             panic!()
+    //         }
+    //     }
+    // }
 
     pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
         llvm::bit_writer::LLVMWriteBitcodeToFile(

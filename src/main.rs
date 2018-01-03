@@ -38,7 +38,7 @@ fn main() {
 #[test]
 fn compile_examples() {
     use std::fs;
-    use rucc::{codegen, parser};
+    use rucc::{codegen, lexer, parser};
     use std::process::Command;
 
     let examples_paths = match fs::read_dir("example") {
@@ -50,9 +50,25 @@ fn compile_examples() {
         println!("testing {}...", name);
 
         // for coverage...
-        let ast = parser::run_file(name.to_string());
         unsafe {
-            codegen::Codegen::new("test").run(&ast);
+            let mut nodes = Vec::new();
+            let mut lexer = lexer::Lexer::new(name.to_string());
+            let mut codegen = codegen::Codegen::new("test");
+            loop {
+                match parser::read_toplevel(&mut lexer, &mut nodes) {
+                    Err(parser::Error::EOF) => break,
+                    Err(_) => continue,
+                    _ => {}
+                }
+                for node in &nodes {
+                    node.show();
+                }
+                match codegen.run(&nodes) {
+                    Ok(_) => {}
+                    Err(e) => panic!(format!("err in codegen: {:?}", e)),
+                }
+                nodes.clear();
+            }
         }
 
         Command::new("./rucc.sh")

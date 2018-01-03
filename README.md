@@ -2,6 +2,7 @@
 
 
 [![](https://circleci.com/gh/maekawatoshiki/rucc/tree/master.svg?style=shield&circle-token=12276a02aa21f18324f9be74cbb922227b7c8551)](https://circleci.com/gh/maekawatoshiki/rucc)
+[![codecov](https://codecov.io/gh/maekawatoshiki/rucc/branch/master/graph/badge.svg)](https://codecov.io/gh/maekawatoshiki/rucc)
 [![](http://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
 rucc is a small toy C compiler implemented in Rust while I'm learning Rust.

@@ -26,17 +26,18 @@ jobs:
             rm rustup-init
             source ~/.cargo/env
             cargo install cargo-tarpaulin
-      - run:
-          command: apt-get install clang-4.0 llvm-4.0 llvm-4.0-dev opt libedit-dev build-essential make -y; 
       - run: 
+          name: Install llvm-4.0 and so on
           command: |
+            apt-get install clang-4.0 llvm-4.0 llvm-4.0-dev opt libedit-dev build-essential make -y
             ln -s /usr/bin/clang-4.0 /usr/bin/clang; 
             ln -s /usr/bin/clang++-4.0 /usr/bin/clang++; 
             ln -s /usr/bin/llvm-config-4.0 /usr/bin/llvm-config;
       - run:
+          name: Test and Coverage
           command: |
             export PATH=~/.cargo/bin:$PATH
-            cargo test
+            # cargo test
             export CODECOV_TOKEN="c7808b19-496d-4f37-b8d6-db9181a8d948"
             RUSTFLAGS='-C link-args=-lffi' cargo tarpaulin --verbose --out Xml
             bash <(curl -s https://codecov.io/bash)
