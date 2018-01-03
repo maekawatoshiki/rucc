@@ -5,7 +5,7 @@
 [![codecov](https://codecov.io/gh/maekawatoshiki/rucc/branch/master/graph/badge.svg)](https://codecov.io/gh/maekawatoshiki/rucc)
 [![](http://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-rucc is a small toy C compiler implemented in Rust while I'm learning Rust.
+rucc is a small toy C compiler implemented in Rust. 
 
 # REQUIREMENTS
 
