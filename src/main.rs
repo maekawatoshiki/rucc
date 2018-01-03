@@ -20,9 +20,7 @@ fn main() {
                 .long("version")
                 .help("Show version info"),
         )
-        .arg(Arg::with_name("FILE")
-                .help("Input file")
-                .index(1));
+        .arg(Arg::with_name("FILE").help("Input file").index(1));
     let app_matches = app.clone().get_matches();
 
     if app_matches.is_present("version") {
@@ -40,6 +38,7 @@ fn main() {
 #[test]
 fn compile_examples() {
     use std::fs;
+    use rucc::{codegen, parser};
     use std::process::Command;
 
     let examples_paths = match fs::read_dir("example") {
@@ -51,13 +50,10 @@ fn compile_examples() {
         println!("testing {}...", name);
 
         // for coverage...
-        // let ast = parser::Parser::run_file(name.to_string());
-        // for node in &ast {
-        //     node.show();
-        // }
-        // unsafe {
-        //     codegen::Codegen::new("test").run(ast);
-        // }
+        let ast = parser::run_file(name.to_string());
+        unsafe {
+            codegen::Codegen::new("test").run(&ast);
+        }
 
         Command::new("./rucc.sh")
             .arg(name.to_string())

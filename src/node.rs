@@ -53,8 +53,8 @@ pub enum ASTKind {
     Switch(Rc<AST>, Rc<AST>),      // cond, stmt
     Case(Rc<AST>),
     DefaultL,
-    Goto(String),  // label name // TODO: managing label names with String looks not good
-    Label(String), // label name // TODO: managing label names with String looks not good
+    Goto(String),  // label name
+    Label(String), // label name
     FuncCall(Rc<AST>, Vec<AST>),
     StructRef(Rc<AST>, String), // String is name of struct field
     Break,

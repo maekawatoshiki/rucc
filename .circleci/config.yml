@@ -25,6 +25,7 @@ jobs:
             chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
             rm rustup-init
             source ~/.cargo/env
+            cargo install cargo-tarpaulin
       - run:
           command: apt-get install clang-4.0 llvm-4.0 llvm-4.0-dev opt libedit-dev build-essential make -y; 
       - run: 
@@ -36,3 +37,5 @@ jobs:
           command: |
             export PATH=~/.cargo/bin:$PATH
             cargo test
+            cargo tarpaulin --out Xml
+            bash <(curl -s https://codecov.io/bash)

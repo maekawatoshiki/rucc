@@ -349,6 +349,10 @@ impl Codegen {
         );
     }
 
+    unsafe fn cur_is_funcbody(&self) -> bool {
+        !self.cur_func.is_none()
+    }
+
     pub unsafe fn gen(&mut self, ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let result = match ast.kind {
             node::ASTKind::FuncDef(ref functy, ref param_names, ref name, ref body) => {
@@ -521,11 +525,10 @@ impl Codegen {
         sclass: &StorageClass,
         init: &Option<Rc<node::AST>>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        // is global
-        if self.cur_func.is_none() {
-            try!(self.gen_global_var_decl(ty, name, sclass, init));
-        } else {
+        if self.cur_is_funcbody() {
             try!(self.gen_local_var_decl(ty, name, sclass, init));
+        } else {
+            try!(self.gen_global_var_decl(ty, name, sclass, init));
         }
         Ok((ptr::null_mut(), None))
     }
@@ -1832,7 +1835,7 @@ impl Codegen {
         let varinfo_w = self.lookup_var(name.as_str());
         match varinfo_w {
             Some(varinfo) => Ok((varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty))))),
-            None => panic!("not found variable"),
+            None => panic!("undeclared variable"),
         }
     }
 
@@ -2152,11 +2155,11 @@ impl Codegen {
         fields_llvm_types: &mut Vec<LLVMTypeRef>,
         fields_types: &mut Vec<Type>,
         is_struct: bool,
+        // returns (the rectype already declared, LLVMStructType)
     ) -> (bool, LLVMTypeRef) {
-        // returns (does_the_rectype_already_exists?, LLVMStructType)
         let new_struct: LLVMTypeRef = {
-            let strct = self.llvm_struct_map.get(name);
-            if let Some(ref rectype) = strct {
+            let struct_ = self.llvm_struct_map.get(name);
+            if let Some(ref rectype) = struct_ {
                 if !rectype.field_types.is_empty() {
                     // declared struct
                     return (true, rectype.llvm_rectype);
@@ -2179,7 +2182,6 @@ impl Codegen {
             ),
         );
 
-        // 'fields' is Vec<AST>, field is AST
         for (i, field) in fields.iter().enumerate() {
             if let node::ASTKind::VariableDecl(ref ty, ref name, ref _sclass, ref _init) =
                 field.kind
@@ -2188,7 +2190,7 @@ impl Codegen {
                 fields_types.push(ty.clone());
                 fields_names_map.insert(name.to_string(), i as u32);
             } else {
-                panic!("if reach here, this is a bug");
+                panic!("never reach here");
             }
         }
         (false, new_struct)
@@ -2208,7 +2210,6 @@ impl Codegen {
         if exist {
             return new_struct;
         }
-
         LLVMStructSetBody(
             new_struct,
             fields_llvm_types.as_mut_slice().as_mut_ptr(),
