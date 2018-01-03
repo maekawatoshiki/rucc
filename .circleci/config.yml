@@ -39,5 +39,6 @@ jobs:
             export PATH=~/.cargo/bin:$PATH
             # cargo test
             export CODECOV_TOKEN="c7808b19-496d-4f37-b8d6-db9181a8d948"
+            RUST_TEST_THREADS=1
             RUSTFLAGS='-C link-args=-lffi' cargo tarpaulin --verbose --out Xml
             bash <(curl -s https://codecov.io/bash)
