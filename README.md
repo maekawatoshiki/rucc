@@ -24,7 +24,7 @@ First, do test
 $ cargo test
 ```
 
-After the test exited successfully, you can try rucc easily with ``./rucc.sh``!
+After the test exits successfully, you can try rucc easily with ``./rucc.sh``!
 
 ```sh
 $ # slow (use binary created by `cargo build`)
