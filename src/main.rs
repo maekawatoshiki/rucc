@@ -73,6 +73,7 @@ fn compile_all_examples() {
     use std::fs;
     use rucc::{codegen, lexer, parser};
     use std::process::Command;
+    use std::io::{stderr, Write};
 
     let examples_paths = match fs::read_dir("example") {
         Ok(paths) => paths,
@@ -80,7 +81,7 @@ fn compile_all_examples() {
     };
     for path in examples_paths {
         let name = path.unwrap().path().to_str().unwrap().to_string();
-        println!("testing {}...", name);
+        writeln!(&mut stderr(), "testing {}...", name).unwrap();
 
         // for coverage...
         unsafe {
