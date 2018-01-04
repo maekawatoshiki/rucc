@@ -10,36 +10,10 @@ jobs:
 
     steps:
       - checkout
-      # - run:
-      #     command: set -eux
-      # - run:
-      #     command: apt-get update
-      # - run:
-      #     command: apt-get install -y zlib1g-dev wget libssl-dev pkg-config cmake zlib1g-dev curl
-      # - run:
-      #     command: |
-      #       wget "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
-      #       chmod +x rustup-init
-      #       ./rustup-init -y --no-modify-path --default-toolchain nightly
-      #       RUSTUP_HOME=~/.cargo/bin/rustup
-      #       CARGO_HOME=~/.cargo/bin/cargo
-      #       chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
-      #       rm rustup-init
-      #       source ~/.cargo/env
-      #       cargo install cargo-tarpaulin
-      # - run: 
-      #     name: Install llvm-4.0 and so on
-      #     command: |
-      #       apt-get install clang-4.0 llvm-4.0 llvm-4.0-dev opt libedit-dev build-essential make -y
-      #       ln -s /usr/bin/clang-4.0 /usr/bin/clang; 
-      #       ln -s /usr/bin/clang++-4.0 /usr/bin/clang++; 
-      #       ln -s /usr/bin/llvm-config-4.0 /usr/bin/llvm-config;
       - run:
           name: Test and Coverage
           command: |
             export PATH=~/.cargo/bin:$PATH
-            # cargo test
-            # export CODECOV_TOKEN="c7808b19-496d-4f37-b8d6-db9181a8d948"
-            # RUST_TEST_THREADS=1
+            RUST_TEST_THREADS=1
             RUSTFLAGS='-C link-args=-lffi' cargo tarpaulin --verbose --out Xml
             bash <(curl -s https://codecov.io/bash)
