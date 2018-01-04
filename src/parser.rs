@@ -6,7 +6,7 @@ use types::{Sign, StorageClass, Type};
 use std::str;
 use std::rc::Rc;
 use std::io::{stderr, Write};
-use std::collections::{hash_map, HashMap, HashSet, VecDeque};
+use std::collections::{hash_map, HashMap, VecDeque};
 
 // use CODEGEN;
 
@@ -54,7 +54,7 @@ pub struct Parser<'a> {
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
     // TODO: better implementation needed
-    constexpr_func_map: HashSet<String>,
+    // constexpr_func_map: HashSet<String>,
 }
 
 macro_rules! matches {
@@ -94,7 +94,7 @@ impl<'a> Parser<'a> {
             err_counts: 0,
             env: env,
             tags: tags,
-            constexpr_func_map: HashSet::new(),
+            // constexpr_func_map: HashSet::new(),
         }
     }
     fn show_error(&mut self, msg: &str) {
@@ -1353,6 +1353,20 @@ impl<'a> Parser<'a> {
                         self.lexer.get_cur_pos(),
                     );
                 }
+                TokenKind::Symbol(Symbol::AssignXor) => {
+                    lhs = assign(
+                        lhs.clone(),
+                        AST::new(
+                            ASTKind::BinaryOp(
+                                Rc::new(lhs),
+                                Rc::new(try!(self.read_assign())),
+                                node::CBinOps::Xor,
+                            ),
+                            self.lexer.get_cur_pos(),
+                        ),
+                        self.lexer.get_cur_pos(),
+                    );
+                }
                 // TODO: implement more op
                 _ => {
                     self.lexer.unget(tok);
@@ -1587,12 +1601,7 @@ impl<'a> Parser<'a> {
                     self.lexer.get_cur_pos(),
                 ))
             }
-            TokenKind::Symbol(Symbol::Add) => {
-                return Ok(AST::new(
-                    ASTKind::UnaryOp(Rc::new(try!(self.read_cast())), node::CUnaryOps::Plus),
-                    self.lexer.get_cur_pos(),
-                ))
-            }
+            TokenKind::Symbol(Symbol::Add) => return self.read_cast(),
             TokenKind::Symbol(Symbol::Sub) => {
                 return Ok(AST::new(
                     ASTKind::UnaryOp(Rc::new(try!(self.read_cast())), node::CUnaryOps::Minus),
@@ -1790,25 +1799,6 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn read_const_array(&mut self) -> ParseR<AST> {
-        let mut elems = Vec::new();
-        loop {
-            elems.push(try!(self.read_assign()));
-            if try!(self.lexer.skip_symbol(Symbol::ClosingBrace)) {
-                break;
-            }
-            if !try!(self.lexer.skip_symbol(Symbol::Comma)) {
-                let peek = self.lexer.peek();
-                self.show_error_token(&try!(peek), "expected ','");
-                self.skip_until(Symbol::ClosingBrace);
-                return Err(Error::Something);
-            }
-        }
-        Ok(AST::new(
-            ASTKind::ConstArray(elems),
-            self.lexer.get_cur_pos(),
-        ))
-    }
     fn read_primary(&mut self) -> ParseR<AST> {
         let tok = match self.lexer.get() {
             Ok(tok) => tok,
@@ -1853,7 +1843,6 @@ impl<'a> Parser<'a> {
                     }
                     expr
                 }
-                Symbol::OpeningBrace => self.read_const_array(),
                 _ => {
                     self.show_error_token(
                         &tok,

@@ -283,9 +283,6 @@ impl Lexer {
     pub fn get_cur_line(&self) -> &usize {
         self.cur_line.back().unwrap()
     }
-    pub fn get_mut_cur_line(&mut self) -> &mut usize {
-        self.cur_line.back_mut().unwrap()
-    }
     fn peek_get(&mut self) -> ParseR<char> {
         let peek = self.peek.back_mut().unwrap();
         let peek_pos = *self.peek_pos.back_mut().unwrap();
@@ -296,7 +293,7 @@ impl Lexer {
         }
     }
     fn peek_next(&mut self) -> ParseR<char> {
-        let peek = self.peek.back_mut().unwrap();
+        let peek = self.peek.back().unwrap();
         let peek_pos = self.peek_pos.back_mut().unwrap();
         if *peek_pos >= peek.len() {
             return Err(Error::EOF);
@@ -330,14 +327,6 @@ impl Lexer {
     pub fn peek_symbol_token_is(&mut self, expect: Symbol) -> ParseR<bool> {
         let peek = try!(self.peek());
         Ok(peek.kind == TokenKind::Symbol(expect))
-    }
-    pub fn next_keyword_token_is(&mut self, expect: Keyword) -> ParseR<bool> {
-        let peek = try!(self.get());
-        let next = try!(self.get());
-        let next_token_is_expected = next.kind == TokenKind::Keyword(expect);
-        self.unget(next);
-        self.unget(peek);
-        Ok(next_token_is_expected)
     }
     pub fn next_symbol_token_is(&mut self, expect: Symbol) -> ParseR<bool> {
         let peek = try!(self.get());
@@ -563,7 +552,8 @@ impl Lexer {
             '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' => {
                 // if '0', check whether octal number \nnn or null \0
                 if try!(self.peek_get()).is_numeric() {
-                    let mut oct = "0".to_string();
+                    let mut oct = "".to_string();
+                    oct.push(c);
                     loop {
                         let c = try!(self.peek_next());
                         oct.push(c);

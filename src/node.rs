@@ -92,7 +92,6 @@ pub enum CBinOps {
 pub enum CUnaryOps {
     LNot,
     BNot,
-    Plus,
     Minus,
     // TODO: Inc and Dec is actually POSTFIX.
     Inc,
@@ -114,7 +113,6 @@ impl AST {
             ASTKind::TypeCast(ref e, _) => try!(e.eval()),
             ASTKind::UnaryOp(ref e, CUnaryOps::LNot) => (try!(e.eval()) == 0) as i64,
             ASTKind::UnaryOp(ref e, CUnaryOps::BNot) => !try!(e.eval()),
-            ASTKind::UnaryOp(ref e, CUnaryOps::Plus) => try!(e.eval()),
             ASTKind::UnaryOp(ref e, CUnaryOps::Minus) => -try!(e.eval()),
             ASTKind::UnaryOp(ref e, CUnaryOps::Inc) => try!(e.eval()) + 1,
             ASTKind::UnaryOp(ref e, CUnaryOps::Dec) => try!(e.eval()) - 1,
