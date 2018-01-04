@@ -1250,7 +1250,7 @@ impl Lexer {
         self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), 0, 0, 0));
         self.unget_all(&expr_line);
 
-        let node = parser::run_as_expr(self).ok().unwrap();
+        let node = parser::Parser::new(self).run_as_expr().ok().unwrap();
 
         self.buf.pop_back();
 

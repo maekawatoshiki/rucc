@@ -53,9 +53,10 @@ fn compile_examples() {
         unsafe {
             let mut nodes = Vec::new();
             let mut lexer = lexer::Lexer::new(name.to_string());
+            let mut parser = parser::Parser::new(&mut lexer);
             let mut codegen = codegen::Codegen::new("test");
             loop {
-                match parser::read_toplevel(&mut lexer, &mut nodes) {
+                match parser.read_toplevel(&mut nodes) {
                     Err(parser::Error::EOF) => break,
                     Err(_) => continue,
                     _ => {}

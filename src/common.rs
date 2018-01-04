@@ -23,9 +23,10 @@ pub fn run_file<'a>(filename: &'a str) {
     unsafe {
         let mut nodes = Vec::new();
         let mut lexer = lexer::Lexer::new(filename.to_string());
+        let mut parser = parser::Parser::new(&mut lexer);
 
         loop {
-            match parser::read_toplevel(&mut lexer, &mut nodes) {
+            match parser.read_toplevel(&mut nodes) {
                 Err(parser::Error::EOF) => break,
                 Err(_) => continue,
                 _ => {}
@@ -37,7 +38,7 @@ pub fn run_file<'a>(filename: &'a str) {
                     writeln!(
                         &mut stderr(),
                         "{}: {} {}: {}",
-                        lexer.get_filename(),
+                        parser.lexer.get_filename(),
                         Colour::Red.bold().paint("error:"),
                         pos.line,
                         msg
@@ -45,16 +46,12 @@ pub fn run_file<'a>(filename: &'a str) {
                     writeln!(
                         &mut stderr(),
                         "{}",
-                        lexer.get_surrounding_code_with_err_point(pos.pos)
+                        parser.lexer.get_surrounding_code_with_err_point(pos.pos)
                     ).unwrap();
                     println!(
                         "{} error{} generated.",
-                        parser::ERROR_COUNTS + 1,
-                        if parser::ERROR_COUNTS + 1 > 1 {
-                            "s"
-                        } else {
-                            ""
-                        }
+                        parser.err_counts + 1,
+                        if parser.err_counts + 1 > 1 { "s" } else { "" }
                     );
                     ::std::process::exit(-1);
                 }
@@ -62,7 +59,7 @@ pub fn run_file<'a>(filename: &'a str) {
             }
             nodes.clear();
         }
-        parser::show_total_errors();
+        parser.show_total_errors();
 
         let output_file_name = Regex::new(r"\..*$").unwrap().replace_all(filename, ".bc");
         CODEGEN
