@@ -38,6 +38,7 @@ fn main() {
 #[test]
 fn compare_with_clang_output() {
     use std::fs;
+    use std::process::Command;
 
     let examples_paths = match fs::read_dir("example") {
         Ok(paths) => paths,
