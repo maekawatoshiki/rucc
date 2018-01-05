@@ -82,7 +82,6 @@ fn compare_with_clang_output() {
         Command::new("clang")
             .arg(name)
             .arg("-lm")
-            .arg("-w")
             .spawn()
             .expect("failed to run")
             .wait()
