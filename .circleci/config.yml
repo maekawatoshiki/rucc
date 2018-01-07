@@ -47,7 +47,7 @@ jobs:
             RUSTFLAGS='-C link-dead-code -C link-args=-lffi' cargo test --no-run
 
             REPORT=echo $(find target/debug -maxdepth 1 -name 'rucc-*' -a ! -name '*.d')
-            for file in $REPORT; do  
+            echo $REPORT | while read file; do  
               kcov --include-pattern=rucc/src --exclude-pattern=/.cargo ./target/cov "$file"
             done
             bash <(curl -s https://codecov.io/bash) -s ./target/cov
