@@ -50,7 +50,7 @@ jobs:
 
             REPORT=$(find ./target/debug -maxdepth 1 -name 'rucc-*' -a ! -name '*.d')
             echo $REPORT
-            echo $REPORT | while read file; do  
+            for file in $REPORT; do  
               echo $file
               /usr/local/bin/kcov --include-pattern=rucc/src --exclude-pattern=/.cargo ./target/cov "$file"
             done
