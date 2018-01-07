@@ -46,9 +46,9 @@ jobs:
             export PATH=~/.cargo/bin:$PATH
             RUSTFLAGS='-C link-dead-code -C link-args=-lffi' cargo test --no-run
 
-            ls target
-            ls target/debug
-            REPORT=echo $(find ./target/debug -maxdepth 1 -name 'rucc-*' -a ! -name '*.d')
+
+
+            REPORT=$(find ./target/debug -maxdepth 1 -name 'rucc-*' -a ! -name '*.d')
             echo $REPORT
             echo $REPORT | while read file; do  
               echo $file
