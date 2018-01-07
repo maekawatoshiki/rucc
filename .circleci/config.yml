@@ -3,18 +3,50 @@ version: 2
 jobs:
   build:
     docker:
-      # - image: ubuntu:16.04
-      - image: uint256/rucc:latest
+      - image: ubuntu:16.04
 
     working_directory: /opt/rucc
 
     steps:
       - checkout
       - run:
+          command: set -eux
+      - run:
+          command: apt-get update
+      - run:
+          command: apt-get install -y zlib1g-dev wget libssl-dev pkg-config cmake zlib1g-dev curl binutils-dev libcurl4-openssl-dev libdw-dev libiberty-dev
+      - run:
+          command: |
+            wget "https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init"
+            chmod +x rustup-init
+            ./rustup-init -y --no-modify-path --default-toolchain nightly
+            RUSTUP_HOME=~/.cargo/bin/rustup
+            CARGO_HOME=~/.cargo/bin/cargo
+            chmod -R a+w $RUSTUP_HOME $CARGO_HOME;
+            rm rustup-init
+            source ~/.cargo/env
+      - run: 
+          name: Install llvm-4.0 and so on
+          command: |
+            apt-get install clang-4.0 llvm-4.0 llvm-4.0-dev opt libedit-dev build-essential make -y
+            ln -s /usr/bin/clang-4.0 /usr/bin/clang; 
+            ln -s /usr/bin/clang++-4.0 /usr/bin/clang++; 
+            ln -s /usr/bin/llvm-config-4.0 /usr/bin/llvm-config;
+      - run:
+          name: Setting up kcov
+          command: |
+            git clone https://github.com/SimonKagstrom/kcov
+            cmake .
+            make
+            make install
+      - run:
           name: Test and Coverage
           command: |
             export PATH=~/.cargo/bin:$PATH
-            # RUST_TEST_THREADS=1
-            export CODECOV_TOKEN="c7808b19-496d-4f37-b8d6-db9181a8d948"
-            RUSTFLAGS='-C link-args=-lffi' cargo tarpaulin --verbose --out Xml
-            bash <(curl -s https://codecov.io/bash)
+            RUSTFLAGS='-C link-dead-code -C link-args=-lffi' cargo test --no-run
+
+            REPORT=echo $(find target/debug -maxdepth 1 -name 'rucc-*' -a ! -name '*.d')
+            for file in $REPORT; do  
+              kcov --include-pattern=rucc/src --exclude-pattern=/.cargo ./target/cov "$file"
+            done
+            bash <(curl -s https://codecov.io/bash) -s ./target/cov

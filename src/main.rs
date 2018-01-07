@@ -39,7 +39,7 @@ fn main() {
 fn compare_with_clang_output() {
     use std::fs;
     use std::process::Command;
-    use rucc::{codegen, lexer, parser};
+    use std::io::{stderr, Write};
 
     let examples_paths = match fs::read_dir("example") {
         Ok(paths) => paths,
@@ -47,7 +47,41 @@ fn compare_with_clang_output() {
     };
     for path in examples_paths {
         let name = path.unwrap().path().to_str().unwrap().to_string();
-        println!("testing {}...", name);
+        writeln!(&mut stderr(), "comparing {}...", name).unwrap();
+
+        Command::new("./rucc.sh")
+            .arg(name.to_string())
+            .spawn()
+            .expect("failed to run")
+            .wait()
+            .expect("failed to run");
+        let output1 = Command::new("./a.out").output().expect("failed to run");
+        Command::new("clang")
+            .arg(name)
+            .arg("-lm")
+            .arg("-w")
+            .spawn()
+            .expect("failed to run")
+            .wait()
+            .expect("failed to run");
+        let output2 = Command::new("./a.out").output().expect("failed to run");
+        assert!(output1 == output2);
+    }
+}
+
+#[test]
+fn compile_all_examples() {
+    use std::fs;
+    use rucc::{codegen, lexer, parser};
+    use std::io::{stderr, Write};
+
+    let examples_paths = match fs::read_dir("example") {
+        Ok(paths) => paths,
+        Err(e) => panic!(format!("error: {:?}", e.kind())),
+    };
+    for path in examples_paths {
+        let name = path.unwrap().path().to_str().unwrap().to_string();
+        writeln!(&mut stderr(), "compiling {}...", name).unwrap();
 
         // for coverage...
         unsafe {
@@ -71,22 +105,5 @@ fn compare_with_clang_output() {
                 nodes.clear();
             }
         }
-
-        Command::new("./rucc.sh")
-            .arg(name.to_string())
-            .spawn()
-            .expect("failed to run")
-            .wait()
-            .expect("failed to run");
-        let output1 = Command::new("./a.out").output().expect("failed to run");
-        Command::new("clang")
-            .arg(name)
-            .arg("-lm")
-            .spawn()
-            .expect("failed to run")
-            .wait()
-            .expect("failed to run");
-        let output2 = Command::new("./a.out").output().expect("failed to run");
-        assert!(output1 == output2);
     }
 }

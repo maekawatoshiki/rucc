@@ -53,7 +53,6 @@ pub struct Parser<'a> {
     pub err_counts: usize,
     env: VecDeque<HashMap<String, AST>>,
     tags: VecDeque<HashMap<String, Type>>,
-    // TODO: better implementation needed
     // constexpr_func_map: HashSet<String>,
 }
 
