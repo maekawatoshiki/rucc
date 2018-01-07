@@ -36,6 +36,7 @@ jobs:
           name: Setting up kcov
           command: |
             git clone https://github.com/SimonKagstrom/kcov
+            cd kcov
             cmake .
             make
             make install
