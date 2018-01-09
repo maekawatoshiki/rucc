@@ -76,7 +76,7 @@ impl<T: Clone> Env<T> {
     }
     fn add_globally(&mut self, name: String, val: T) {
         self.0[0].insert(name.clone(), val.clone());
-        self.0[1].insert(name, val);
+        self.0.back_mut().unwrap().insert(name, val);
     }
     fn is_local(&self) -> bool {
         self.0.len() > 1
@@ -94,8 +94,8 @@ impl<T: Clone> Env<T> {
 
 macro_rules! matches {
     ($e:expr, $p:pat) => {
-        match $e {
-            $p => true,
+        match $e {            $p => true,
+
             _ => false
         }
     }
