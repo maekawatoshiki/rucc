@@ -94,8 +94,8 @@ impl<T: Clone> Env<T> {
 
 macro_rules! matches {
     ($e:expr, $p:pat) => {
-        match $e {            $p => true,
-
+        match $e {
+            $p => true,
             _ => false
         }
     }
