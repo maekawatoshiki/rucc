@@ -51,9 +51,45 @@ pub type ParseR<T> = Result<T, Error>;
 pub struct Parser<'a> {
     pub lexer: &'a mut Lexer,
     pub err_counts: usize,
-    env: VecDeque<HashMap<String, AST>>,
-    tags: VecDeque<HashMap<String, Type>>,
+    env: Env<AST>,
+    tags: Env<Type>,
     // constexpr_func_map: HashSet<String>,
+}
+
+pub struct Env<T: Clone>(pub VecDeque<HashMap<String, T>>);
+
+impl<T: Clone> Env<T> {
+    fn new() -> Env<T> {
+        let mut env = VecDeque::new();
+        env.push_back(HashMap::new());
+        Env(env)
+    }
+    fn push(&mut self) {
+        let localenv = (*self.0.back().unwrap()).clone();
+        self.0.push_back(localenv);
+    }
+    fn pop(&mut self) {
+        self.0.pop_back();
+    }
+    fn add(&mut self, name: String, val: T) {
+        self.0.back_mut().unwrap().insert(name, val);
+    }
+    fn add_globally(&mut self, name: String, val: T) {
+        self.0[0].insert(name.clone(), val.clone());
+        self.0[1].insert(name, val);
+    }
+    fn is_local(&self) -> bool {
+        self.0.len() > 1
+    }
+    fn back_mut(&mut self) -> Option<&mut HashMap<String, T>> {
+        self.0.back_mut()
+    }
+    fn get(&mut self, name: &str) -> Option<&T> {
+        self.0.back_mut().unwrap().get(name)
+    }
+    fn contains(&mut self, name: &str) -> bool {
+        self.0.back_mut().unwrap().contains_key(name)
+    }
 }
 
 macro_rules! matches {
@@ -83,16 +119,11 @@ macro_rules! expect_symbol_error {
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: &'a mut Lexer) -> Parser<'a> {
-        let mut env = VecDeque::new();
-        let mut tags = VecDeque::new();
-        env.push_back(HashMap::new());
-        tags.push_back(HashMap::new());
-
         Parser {
             lexer: lexer,
             err_counts: 0,
-            env: env,
-            tags: tags,
+            env: Env::new(),
+            tags: Env::new(),
             // constexpr_func_map: HashSet::new(),
         }
     }
@@ -178,10 +209,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn read_func_def(&mut self) -> ParseR<AST> {
-        let localenv = (*self.env.back().unwrap()).clone();
-        let localtags = (*self.tags.back().unwrap()).clone();
-        self.env.push_back(localenv);
-        self.tags.push_back(localtags);
+        self.env.push();
+        self.tags.push();
 
         let (ret_ty, _, _qualifiers) = try!(self.read_type_spec());
         let (functy, name, param_names) = try!(self.read_declarator(ret_ty));
@@ -190,22 +219,14 @@ impl<'a> Parser<'a> {
         //     self.constexpr_func_map.insert(name.clone());
         // }
 
-        // TODO: [0] is global env, [1] is local env. so we have to insert to both.
-        self.env[0].insert(
+        self.env.add_globally(
             name.clone(),
             AST::new(
                 ASTKind::Variable(functy.clone(), name.clone()),
                 Pos::new(0, 0),
             ),
         );
-        self.env[1].insert(
-            name.clone(),
-            AST::new(
-                ASTKind::Variable(functy.clone(), name.clone()),
-                Pos::new(0, 0),
-            ),
-        );
-        self.env[1].insert(
+        self.env.add(
             "__func__".to_string(),
             AST::new(ASTKind::String(name.clone()), Pos::new(0, 0)),
         );
@@ -213,8 +234,8 @@ impl<'a> Parser<'a> {
         expect_symbol_error!(self, Symbol::OpeningBrace, "expected '('");
         let body = try!(self.read_func_body(&functy));
 
-        self.env.pop_back();
-        self.tags.pop_back();
+        self.env.pop();
+        self.tags.pop();
 
         Ok(AST::new(
             ASTKind::FuncDef(
@@ -464,19 +485,14 @@ impl<'a> Parser<'a> {
     }
 
     fn get_typedef(&mut self, name: &str) -> ParseR<Option<Type>> {
-        match self.env.back().unwrap().get(name) {
+        match self.env.get(name) {
             Some(ast) => match ast.kind {
                 ASTKind::Typedef(ref from, ref _to) => {
                     let ty = match from {
                         &Type::Struct(ref name, ref fields)
                         | &Type::Union(ref name, ref fields, _) => {
                             if fields.is_empty() {
-                                self.tags
-                                    .back()
-                                    .unwrap()
-                                    .get(name.as_str())
-                                    .unwrap()
-                                    .clone()
+                                self.tags.get(name.as_str()).unwrap().clone()
                             } else {
                                 from.clone()
                             }
@@ -519,7 +535,7 @@ impl<'a> Parser<'a> {
                 _ => false,
             }
         } else if let TokenKind::Identifier(ref ident) = token.kind {
-            match self.env.back().unwrap().get(ident.as_str()) {
+            match self.env.get(ident.as_str()) {
                 Some(ast) => match ast.kind {
                     ASTKind::Typedef(_, _) => true,
                     _ => false,
@@ -680,14 +696,14 @@ impl<'a> Parser<'a> {
                 && try!(self.lexer.skip_symbol(Symbol::Assign))
             {
                 let init = try!(self.read_decl_init(&mut ty));
-                self.env.back_mut().unwrap().insert(name.clone(), init);
+                self.env.add(name.clone(), init);
             } else {
                 if is_typedef {
                     let typedef = AST::new(
                         ASTKind::Typedef(ty, name.to_string()),
                         self.lexer.get_cur_pos(),
                     );
-                    self.env.back_mut().unwrap().insert(name, typedef);
+                    self.env.add(name, typedef);
                     return Ok(());
                 }
 
@@ -696,7 +712,7 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
-                self.env.back_mut().unwrap().insert(
+                self.env.add(
                     name.clone(),
                     AST::new(ASTKind::Variable(ty.clone(), name.clone()), Pos::new(0, 0)),
                 );
@@ -835,9 +851,9 @@ impl<'a> Parser<'a> {
 
             let (ty, name) = try!(self.read_func_param());
 
-            // meaning that reading parameter of defining function
-            if self.env.len() > 1 {
-                self.env.back_mut().unwrap().insert(
+            // if reading a parameter of a function to define
+            if self.env.is_local() {
+                self.env.add(
                     name.clone(),
                     AST::new(ASTKind::Variable(ty.clone(), name.clone()), Pos::new(0, 0)),
                 );
@@ -1130,7 +1146,7 @@ impl<'a> Parser<'a> {
             }
         };
         if exist_tag {
-            match self.tags.back_mut().unwrap().get(tag.as_str()) {
+            match self.tags.get(tag.as_str()) {
                 Some(&Type::Enum) => {}
                 None => {}
                 _ => {
@@ -1142,7 +1158,7 @@ impl<'a> Parser<'a> {
         }
 
         if !try!(self.lexer.skip_symbol(Symbol::OpeningBrace)) {
-            if !exist_tag || !self.tags.back_mut().unwrap().contains_key(tag.as_str()) {
+            if !exist_tag || !self.tags.contains(tag.as_str()) {
                 let peek = self.lexer.peek();
                 self.show_error_token(&try!(peek), "do not redefine enum");
                 return Err(Error::Something);
@@ -1151,7 +1167,7 @@ impl<'a> Parser<'a> {
         }
 
         if exist_tag {
-            self.tags.back_mut().unwrap().insert(tag, Type::Enum);
+            self.tags.add(tag, Type::Enum);
         }
 
         let mut val = 0;
@@ -1173,7 +1189,7 @@ impl<'a> Parser<'a> {
             }
             let constval = AST::new(ASTKind::Int(val, Bits::Bits32), self.lexer.get_cur_pos());
             val += 1;
-            self.env.back_mut().unwrap().insert(name, constval);
+            self.env.add(name, constval);
             if try!(self.lexer.skip_symbol(Symbol::Comma)) {
                 continue;
             }
@@ -1817,7 +1833,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::FloatNumber(f) => Ok(AST::new(ASTKind::Float(f), self.lexer.get_cur_pos())),
             TokenKind::Identifier(ident) => {
-                if let Some(ast) = self.env.back().unwrap().get(ident.as_str()) {
+                if let Some(ast) = self.env.get(ident.as_str()) {
                     return match ast.kind {
                         ASTKind::Variable(_, _) => Ok(AST::new(
                             ASTKind::Load(Rc::new((*ast).clone())),
