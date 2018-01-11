@@ -23,10 +23,7 @@ fn main() {
         .arg(Arg::with_name("FILE").help("Input file").index(1));
     let app_matches = app.clone().get_matches();
 
-    if app_matches.is_present("version") {
-        app.write_version(&mut ::std::io::stdout());
-        println!();
-    } else if let Some(filename) = app_matches.value_of("FILE") {
+    if let Some(filename) = app_matches.value_of("FILE") {
         common::run_file(filename);
         println!("{}", Colour::Green.paint("Compiling exited successfully."));
     } else {
