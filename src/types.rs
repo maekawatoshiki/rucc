@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::boxed::Box;
 use node::{ASTKind, AST};
 
 #[derive(PartialEq, Debug, Clone, Hash)]
@@ -26,12 +26,12 @@ pub enum Type {
     LLong(Sign),
     Float,
     Double,
-    Ptr(Rc<Type>),
-    Array(Rc<Type>, i32),            // ary elem type, size
-    Func(Rc<Type>, Vec<Type>, bool), // return type, param types, vararg
-    Struct(String, Vec<AST>),        // name, fields
-    Union(String, Vec<AST>, usize),  // name, fields, means size of nth field is size of the union
-    Enum,                            // as same as Int
+    Ptr(Box<Type>),
+    Array(Box<Type>, i32),            // ary elem type, size
+    Func(Box<Type>, Vec<Type>, bool), // return type, param types, vararg
+    Struct(String, Vec<AST>),         // name, fields
+    Union(String, Vec<AST>, usize),   // name, fields, means size of nth field is size of the union
+    Enum,                             // as same as Int
 }
 
 impl Type {
@@ -96,7 +96,7 @@ impl Type {
     pub fn conversion(self) -> Type {
         match self {
             Type::Array(elem_ty, _) => Type::Ptr(elem_ty),
-            Type::Func(_, _, _) => Type::Ptr(Rc::new(self)),
+            Type::Func(_, _, _) => Type::Ptr(Box::new(self)),
             _ => self,
         }
     }

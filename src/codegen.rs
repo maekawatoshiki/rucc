@@ -7,7 +7,7 @@ use self::rand::Rng;
 
 use std::ffi::CString;
 use std::ptr;
-use std::rc::Rc;
+use std::boxed::Box;
 use std::collections::{hash_map, HashMap, VecDeque};
 
 use self::llvm::core::*;
@@ -17,7 +17,6 @@ use node;
 use node::Bits;
 use lexer::Pos;
 use types::{Sign, StorageClass, Type};
-use error;
 
 macro_rules! matches {
     ($e:expr, $p:pat) => {
@@ -37,7 +36,7 @@ pub fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
     }
 }
 
-// used by global_varmap and local_varmap(not to use tuples)
+// used by global_varmap and local_varmap
 #[derive(Clone, Debug)]
 struct VarInfo {
     ty: Type,
@@ -96,7 +95,6 @@ pub struct Codegen {
     context: LLVMContextRef,
     module: LLVMModuleRef,
     builder: LLVMBuilderRef,
-    // exec_engine: llvm::execution_engine::LLVMExecutionEngineRef,
     global_varmap: HashMap<String, VarInfo>,
     local_varmap: Vec<HashMap<String, VarInfo>>,
     label_map: HashMap<String, LLVMBasicBlockRef>,
@@ -130,10 +128,10 @@ impl Codegen {
         }
 
         let llvm_memcpy_ty = Type::Func(
-            Rc::new(Type::Void),
+            Box::new(Type::Void),
             vec![
-                Type::Ptr(Rc::new(Type::Char(Sign::Signed))),
-                Type::Ptr(Rc::new(Type::Char(Sign::Signed))),
+                Type::Ptr(Box::new(Type::Char(Sign::Signed))),
+                Type::Ptr(Box::new(Type::Char(Sign::Signed))),
                 Type::Int(Sign::Signed),
                 Type::Int(Sign::Signed),
                 Type::Int(Sign::Signed),
@@ -164,9 +162,9 @@ impl Codegen {
         );
 
         let llvm_memset_ty = Type::Func(
-            Rc::new(Type::Void),
+            Box::new(Type::Void),
             vec![
-                Type::Ptr(Rc::new(Type::Char(Sign::Signed))),
+                Type::Ptr(Box::new(Type::Char(Sign::Signed))),
                 Type::Int(Sign::Signed),
                 Type::Int(Sign::Signed),
                 Type::Int(Sign::Signed),
@@ -201,7 +199,6 @@ impl Codegen {
             context: context,
             module: module,
             builder: LLVMCreateBuilderInContext(context),
-            // exec_engine: ee,
             global_varmap: global_varmap,
             local_varmap: Vec::new(),
             label_map: HashMap::new(),
@@ -215,7 +212,7 @@ impl Codegen {
 
     pub unsafe fn run(&mut self, node: &Vec<node::AST>) -> Result<(), Error> {
         for ast in node {
-            match self.gen(&ast) {
+            match self.gen_toplevel(&ast) {
                 Ok(_) => {}
                 Err(err) => return Err(err),
             }
@@ -225,124 +222,6 @@ impl Codegen {
         Ok(())
     }
 
-    // pub unsafe fn call_constexpr_func<'a>(
-    //     &mut self,
-    //     name: &'a str,
-    //     ast_args: &Vec<node::AST>,
-    // ) -> CodegenR<node::AST> {
-    //     let func_info = if let Some(varinfo) = self.lookup_var(name) {
-    //         varinfo
-    //     } else {
-    //         return Err(Error::Msg(format!(
-    //             "constexpr error: not found such function '{}'",
-    //             name
-    //         )));
-    //     };
-    //
-    //     let mut generic_args = Vec::new();
-    //
-    //     let params_count = func_info.ty.get_params_count().unwrap();
-    //     let ptr_params_types = (&mut Vec::with_capacity(params_count)).as_mut_ptr();
-    //     LLVMGetParamTypes(func_info.llvm_ty, ptr_params_types);
-    //     let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
-    //
-    //     let mut cstrings = VecDeque::new();
-    //
-    //     for (ast_arg, llvm_param_ty) in ast_args.iter().zip(llvm_params_types.iter()) {
-    //         if let node::ASTKind::String(ref s) = ast_arg.kind {
-    //             let alloc_ptr = libc::malloc(s.len() + 2);
-    //             cstrings.push_back(alloc_ptr);
-    //             // bug?
-    //             libc::memset(alloc_ptr, 0, s.len() + 2);
-    //             libc::memcpy(alloc_ptr, s.as_ptr() as *mut _, s.len());
-    //             generic_args.push(llvm::execution_engine::LLVMCreateGenericValueOfPointer(
-    //                 alloc_ptr,
-    //             ));
-    //         } else {
-    //             let llvm_arg = try!(self.gen(ast_arg)).0;
-    //             let casted = self.typecast(llvm_arg, *llvm_param_ty);
-    //             generic_args.push(self.val_to_genericval(casted));
-    //         };
-    //     }
-    //
-    //     let genericval = llvm::execution_engine::LLVMRunFunction(
-    //         self.exec_engine,
-    //         func_info.llvm_val,
-    //         generic_args.len() as u32,
-    //         generic_args.as_mut_slice().as_mut_ptr(),
-    //     );
-    //
-    //     for cstring in cstrings {
-    //         libc::free(cstring);
-    //     }
-    //
-    //     let llvm_ret_ty = LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(func_info.llvm_val)));
-    //     let newval = self.genericval_to_ast(genericval, llvm_ret_ty);
-    //
-    //     Ok(newval)
-    // }
-
-    // unsafe fn val_to_genericval(
-    //     &mut self,
-    //     val: LLVMValueRef,
-    // ) -> llvm::execution_engine::LLVMGenericValueRef {
-    //     let ty = LLVMTypeOf(val);
-    //     match LLVMGetTypeKind(ty) {
-    //         llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-    //             llvm::execution_engine::LLVMCreateGenericValueOfInt(
-    //                 ty,
-    //                 LLVMConstIntGetZExtValue(val),
-    //                 0,
-    //             )
-    //         }
-    //         // llvm::LLVMTypeKind::LLVMPointerTypeKind => {}
-    //         llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
-    //             llvm::execution_engine::LLVMCreateGenericValueOfFloat(
-    //                 ty,
-    //                 LLVMConstRealGetDouble(val, vec![0].as_mut_slice().as_mut_ptr()),
-    //             )
-    //         }
-    //         _ => {
-    //             LLVMDumpValue(val);
-    //             LLVMDumpType(ty);
-    //             panic!()
-    //         }
-    //     }
-    // }
-    //
-    // unsafe fn genericval_to_ast(
-    //     &mut self,
-    //     gv: llvm::execution_engine::LLVMGenericValueRef,
-    //     expect_ty: LLVMTypeRef,
-    // ) -> node::AST {
-    //     match LLVMGetTypeKind(expect_ty) {
-    //         llvm::LLVMTypeKind::LLVMIntegerTypeKind => {
-    //             let i = llvm::execution_engine::LLVMGenericValueToInt(gv, 0);
-    //             node::AST::new(
-    //                 node::ASTKind::Int(i as i64, node::Bits::Bits32),
-    //                 Pos::new(0, 0),
-    //             )
-    //         }
-    //         llvm::LLVMTypeKind::LLVMDoubleTypeKind | llvm::LLVMTypeKind::LLVMFloatTypeKind => {
-    //             let f = llvm::execution_engine::LLVMGenericValueToFloat(expect_ty, gv);
-    //             node::AST::new(node::ASTKind::Float(f), Pos::new(0, 0))
-    //         }
-    //         // llvm::LLVMTypeKind::LLVMVoidTypeKind => return val,
-    //         // llvm::LLVMTypeKind::LLVMPointerTypeKind => {
-    //         //     let ptrval = LLVMConstInt(
-    //         //         LLVMInt64Type(),
-    //         //         llvm::execution_engine::LLVMGenericValueToPointer(gv) as u64,
-    //         //         0,
-    //         //     );
-    //         //     LLVMConstIntToPtr(ptrval, expect_ty)
-    //         // }
-    //         _ => {
-    //             LLVMDumpType(expect_ty);
-    //             panic!()
-    //         }
-    //     }
-    // }
-
     pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
         llvm::bit_writer::LLVMWriteBitcodeToFile(
             self.module,
@@ -350,17 +229,27 @@ impl Codegen {
         );
     }
 
-    unsafe fn cur_is_funcbody(&self) -> bool {
-        !self.cur_func.is_none()
-    }
-
-    pub unsafe fn gen(&mut self, ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
+    unsafe fn gen_toplevel(&mut self, ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let result = match ast.kind {
             node::ASTKind::FuncDef(ref functy, ref param_names, ref name, ref body) => {
                 self.gen_func_def(functy, param_names, name, body)
             }
             node::ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
-                self.gen_var_decl(ty, name, sclass, init)
+                self.gen_global_var_decl(ty, name, sclass, init)
+            }
+            _ => panic!(format!("codegen: unknown ast (given {:?})", ast)),
+        };
+
+        result.or_else(|cr: Error| match cr {
+            Error::Msg(msg) => Err(Error::MsgWithPos(msg, ast.pos.clone())),
+            Error::MsgWithPos(msg, pos) => Err(Error::MsgWithPos(msg, pos)),
+        })
+    }
+
+    unsafe fn gen(&mut self, ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
+        let result = match ast.kind {
+            node::ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
+                self.gen_local_var_decl(ty, name, sclass, init)
             }
             node::ASTKind::Block(ref block) => self.gen_block(block),
             node::ASTKind::Compound(ref block) => self.gen_compound(block),
@@ -394,22 +283,13 @@ impl Codegen {
             node::ASTKind::FuncCall(ref f, ref args) => self.gen_func_call(&*f, args),
             node::ASTKind::Continue => self.gen_continue(),
             node::ASTKind::Break => self.gen_break(),
-            node::ASTKind::Return(ref ret) => {
-                if ret.is_none() {
-                    Ok((LLVMBuildRetVoid(self.builder), None))
-                } else {
-                    let (retval, _) = try!(self.gen(&*ret.clone().unwrap()));
-                    self.gen_return(retval)
-                }
-            }
+            node::ASTKind::Return(Some(ref val)) => self.gen_return(val),
+            node::ASTKind::Return(None) => Ok((LLVMBuildRetVoid(self.builder), None)),
             node::ASTKind::Int(ref n, ref bits) => self.make_int(*n as u64, &*bits, false),
             node::ASTKind::Float(ref f) => self.make_double(*f),
             node::ASTKind::Char(ref c) => self.make_char(*c),
             node::ASTKind::String(ref s) => self.make_const_str(s),
-            _ => error::error_exit(
-                0,
-                format!("codegen: unknown ast (given {:?})", ast).as_str(),
-            ),
+            _ => panic!(format!("codegen: unknown ast (given {:?})", ast)),
         };
         result.or_else(|cr: Error| match cr {
             Error::Msg(msg) => Err(Error::MsgWithPos(msg, ast.pos.clone())),
@@ -461,11 +341,13 @@ impl Codegen {
         functy: &Type,
         param_names: &Vec<String>,
         name: &String,
-        body: &Rc<node::AST>,
+        body: &Box<node::AST>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func_ty = self.type_to_llvmty(functy);
-        let (func_retty, func_args_types, _func_is_vararg) = match functy {
-            &Type::Func(ref retty, ref args_types, ref is_vararg) => (retty, args_types, is_vararg),
+        let (func_ret_ty, func_args_types, _func_is_vararg) = match functy {
+            &Type::Func(ref ret_ty, ref args_types, ref is_vararg) => {
+                (ret_ty, args_types, is_vararg)
+            }
             _ => panic!("never reach"),
         };
         let func = match self.global_varmap.entry(name.to_string()) {
@@ -501,11 +383,11 @@ impl Codegen {
             if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
-                match **func_retty {
+                match **func_ret_ty {
                     Type::Void => LLVMBuildRetVoid(terminator_builder),
                     _ => LLVMBuildRet(
                         terminator_builder,
-                        LLVMConstNull(self.type_to_llvmty(func_retty)),
+                        LLVMConstNull(self.type_to_llvmty(func_ret_ty)),
                     ),
                 };
             }
@@ -519,27 +401,12 @@ impl Codegen {
         Ok((func, None))
     }
 
-    unsafe fn gen_var_decl(
-        &mut self,
-        ty: &Type,
-        name: &String,
-        sclass: &StorageClass,
-        init: &Option<Rc<node::AST>>,
-    ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        if self.cur_is_funcbody() {
-            try!(self.gen_local_var_decl(ty, name, sclass, init));
-        } else {
-            try!(self.gen_global_var_decl(ty, name, sclass, init));
-        }
-        Ok((ptr::null_mut(), None))
-    }
-
     unsafe fn gen_global_var_decl(
         &mut self,
         ty: &Type,
         name: &String,
         sclass: &StorageClass,
-        init: &Option<Rc<node::AST>>,
+        init: &Option<Box<node::AST>>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let (gvar, llvm_gvar_ty) = if self.global_varmap.contains_key(name) {
             let ref v = self.global_varmap.get(name).unwrap();
@@ -642,7 +509,7 @@ impl Codegen {
                 elems.as_mut_slice().as_mut_ptr(),
                 elems.len() as u32,
             ),
-            Some(Type::Array(Rc::new(elem_ty.unwrap()), elems.len() as i32)),
+            Some(Type::Array(Box::new(elem_ty.unwrap()), elems.len() as i32)),
         ))
     }
     unsafe fn gen_const_array_for_global_init(
@@ -786,7 +653,7 @@ impl Codegen {
         ty: &Type,
         name: &String,
         sclass: &StorageClass,
-        init: &Option<Rc<node::AST>>,
+        init: &Option<Box<node::AST>>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let llvm_var_ty = self.type_to_llvmty(ty);
 
@@ -1221,8 +1088,8 @@ impl Codegen {
                     retrieve_from_load(expr),
                     &node::AST::new(
                         node::ASTKind::BinaryOp(
-                            Rc::new(expr.clone()),
-                            Rc::new(node::AST::new(
+                            Box::new(expr.clone()),
+                            Box::new(node::AST::new(
                                 node::ASTKind::Int(1, Bits::Bits32),
                                 Pos::new(0, 0),
                             )),
@@ -1239,8 +1106,8 @@ impl Codegen {
                     retrieve_from_load(expr),
                     &node::AST::new(
                         node::ASTKind::BinaryOp(
-                            Rc::new(expr.clone()),
-                            Rc::new(node::AST::new(
+                            Box::new(expr.clone()),
+                            Box::new(node::AST::new(
                                 node::ASTKind::Int(1, Bits::Bits32),
                                 Pos::new(0, 0),
                             )),
@@ -1792,7 +1659,7 @@ impl Codegen {
                     idx,
                     CString::new("structref").unwrap().as_ptr(),
                 ),
-                Some(Type::Ptr(Rc::new(
+                Some(Type::Ptr(Box::new(
                     rectype.field_types[idx as usize].clone(),
                 ))),
             ))
@@ -1800,7 +1667,7 @@ impl Codegen {
             let llvm_idx_ty = rectype.field_llvm_types[idx as usize];
             Ok((
                 self.typecast(strct, LLVMPointerType(llvm_idx_ty, 0)),
-                Some(Type::Ptr(Rc::new(
+                Some(Type::Ptr(Box::new(
                     rectype.field_types[idx as usize].clone(),
                 ))),
             ))
@@ -1835,7 +1702,7 @@ impl Codegen {
     unsafe fn gen_var(&mut self, name: &String) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let varinfo_w = self.lookup_var(name.as_str());
         match varinfo_w {
-            Some(varinfo) => Ok((varinfo.llvm_val, Some(Type::Ptr(Rc::new(varinfo.ty))))),
+            Some(varinfo) => Ok((varinfo.llvm_val, Some(Type::Ptr(Box::new(varinfo.ty))))),
             None => panic!("undeclared variable"),
         }
     }
@@ -1869,7 +1736,7 @@ impl Codegen {
                             2,
                             CString::new("gep").unwrap().as_ptr(),
                         ),
-                        Some(Type::Ptr(Rc::new((**ary_elemty).clone()))),
+                        Some(Type::Ptr(Box::new((**ary_elemty).clone()))),
                     ));
                 }
                 _ => {
@@ -1890,15 +1757,18 @@ impl Codegen {
         args: &Vec<node::AST>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         // there's a possibility that the types of args are not the same as the types of params.
-        // so we call args before implicit type casting 'maybe incorrect args'.
-        let mut maybe_incorrect_args_val = Vec::new();
+        // so the args before implicit type casting are called 'maybe correct args'.
+        let mut maybe_correct_args_val = vec![];
         for arg in &*args {
-            maybe_incorrect_args_val.push(try!(self.gen(arg)).0);
+            maybe_correct_args_val.push(try!(self.gen(arg)).0);
         }
         let args_len = args.len();
 
-        let func = match retrieve_from_load(ast).kind {
-            node::ASTKind::Variable(_, ref name) => {
+        let func = match retrieve_from_load(ast) {
+            &node::AST {
+                kind: node::ASTKind::Variable(_, ref name),
+                pos: _,
+            } => {
                 if let Some(varinfo) = self.lookup_var(name) {
                     varinfo
                 } else {
@@ -1908,23 +1778,28 @@ impl Codegen {
                     ));
                 }
             }
-            _ => {
-                let (val, ty) = try!(self.gen(retrieve_from_load(ast)));
+            x => {
+                let (val, ty) = try!(self.gen(&x));
                 VarInfo::new(ty.unwrap(), LLVMTypeOf(val), val)
             }
         };
 
-        let (func_retty, func_params_types, func_is_vararg) = match func.ty {
-            Type::Func(retty, params_types, is_vararg) => (retty, params_types, is_vararg),
-            Type::Ptr(elemty) => {
-                // func ptr
-                if let Type::Func(retty, params_types, is_vararg) = (*elemty).clone() {
-                    (retty, params_types, is_vararg)
-                } else {
-                    panic!();
+        fn decompose(ty: Type) -> Option<(Box<Type>, Vec<Type>, bool)> {
+            match ty {
+                Type::Func(ret_ty, params_types, is_vararg) => {
+                    Some((ret_ty, params_types, is_vararg))
                 }
+                // call function pointer
+                Type::Ptr(elemty) => decompose((*elemty).clone()),
+                _ => None,
             }
-            _ => {
+        }
+
+        let (func_ret_ty, func_params_types, func_is_vararg) = match decompose(func.ty) {
+            Some((func_ret_ty, func_params_types, func_is_vararg)) => {
+                (func_ret_ty, func_params_types, func_is_vararg)
+            }
+            None => {
                 return Err(Error::MsgWithPos(
                     format!("gen_func_call: function type doesn't match"),
                     ast.pos.clone(),
@@ -1950,7 +1825,6 @@ impl Codegen {
         LLVMGetParamTypes(llvm_functy, ptr_params_types);
         let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
 
-        // do implicit type casting
         if !func_is_vararg && params_count < args_len {
             return Err(Error::MsgWithPos(
                 "too many arguments".to_string(),
@@ -1963,29 +1837,24 @@ impl Codegen {
                 ast.pos.clone(),
             ));
         }
-        let mut is_args_const = true;
+        // do implicit type casting
         for i in 0..args_len {
-            if is_args_const == true && LLVMIsConstant(maybe_incorrect_args_val[i]) == 0 {
-                is_args_const = false;
-            }
             args_val.push(if params_count <= i {
-                maybe_incorrect_args_val[i]
+                maybe_correct_args_val[i]
             } else {
-                self.typecast(maybe_incorrect_args_val[i], llvm_params_types[i])
+                self.typecast(maybe_correct_args_val[i], llvm_params_types[i])
             })
         }
-
-        let args_val_ptr = args_val.as_mut_slice().as_mut_ptr();
 
         Ok((
             LLVMBuildCall(
                 self.builder,
                 llvm_func,
-                args_val_ptr,
+                args_val.as_mut_slice().as_mut_ptr(),
                 args_len as u32,
                 CString::new("").unwrap().as_ptr(),
             ),
-            Some((*func_retty).clone()),
+            Some((*func_ret_ty).clone()),
         ))
     }
     unsafe fn gen_continue(&mut self) -> CodegenR<(LLVMValueRef, Option<Type>)> {
@@ -2012,15 +1881,13 @@ impl Codegen {
         Ok((ptr::null_mut(), None))
     }
 
-    unsafe fn gen_return(
-        &mut self,
-        retval: LLVMValueRef,
-    ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
+    unsafe fn gen_return(&mut self, ret_ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
+        let (ret_val, _) = try!(self.gen(ret_ast));
         Ok((
             LLVMBuildRet(
                 self.builder,
                 self.typecast(
-                    retval,
+                    ret_val,
                     LLVMGetReturnType(LLVMGetElementType(LLVMTypeOf(self.cur_func.unwrap()))),
                 ),
             ),
@@ -2064,7 +1931,7 @@ impl Codegen {
                 CString::new(s.as_str()).unwrap().as_ptr(),
                 CString::new("str").unwrap().as_ptr(),
             ),
-            Some(Type::Ptr(Rc::new(Type::Char(Sign::Signed)))),
+            Some(Type::Ptr(Box::new(Type::Char(Sign::Signed)))),
         ))
     }
 

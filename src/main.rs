@@ -27,7 +27,7 @@ fn main() {
         common::run_file(filename);
         println!("{}", Colour::Green.paint("Compiling exited successfully."));
     } else {
-        app.print_help();
+        app.print_help().unwrap();
         println!();
     }
 }

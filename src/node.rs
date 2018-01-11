@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::boxed::Box;
 use types::{StorageClass, Type};
 use parser::{Error, ParseR};
 use std::marker::Send;
@@ -34,32 +34,32 @@ pub enum ASTKind {
     Char(i32),
     String(String),
     Typedef(Type, String), // from, to ( typedef from to; )
-    TypeCast(Rc<AST>, Type),
-    Load(Rc<AST>),
+    TypeCast(Box<AST>, Type),
+    Load(Box<AST>),
     Variable(Type, String),
-    VariableDecl(Type, String, StorageClass, Option<Rc<AST>>), // type, name, init val
+    VariableDecl(Type, String, StorageClass, Option<Box<AST>>), // type, name, init val
     ConstArray(Vec<AST>),
     ConstStruct(Vec<AST>),
-    UnaryOp(Rc<AST>, CUnaryOps),
-    BinaryOp(Rc<AST>, Rc<AST>, CBinOps),
-    TernaryOp(Rc<AST>, Rc<AST>, Rc<AST>), // cond then else
-    FuncDef(Type, Vec<String>, String, Rc<AST>), // functype, param names, func name, body
+    UnaryOp(Box<AST>, CUnaryOps),
+    BinaryOp(Box<AST>, Box<AST>, CBinOps),
+    TernaryOp(Box<AST>, Box<AST>, Box<AST>), // cond then else
+    FuncDef(Type, Vec<String>, String, Box<AST>), // functype, param names, func name, body
     Block(Vec<AST>),
     Compound(Vec<AST>),
-    If(Rc<AST>, Rc<AST>, Rc<AST>), // cond, then stmt, else stmt
-    For(Rc<AST>, Rc<AST>, Rc<AST>, Rc<AST>), // init, cond, step, body
-    While(Rc<AST>, Rc<AST>),       // cond, body
-    DoWhile(Rc<AST>, Rc<AST>),     // cond, body
-    Switch(Rc<AST>, Rc<AST>),      // cond, stmt
-    Case(Rc<AST>),
+    If(Box<AST>, Box<AST>, Box<AST>), // cond, then stmt, else stmt
+    For(Box<AST>, Box<AST>, Box<AST>, Box<AST>), // init, cond, step, body
+    While(Box<AST>, Box<AST>),        // cond, body
+    DoWhile(Box<AST>, Box<AST>),      // cond, body
+    Switch(Box<AST>, Box<AST>),       // cond, stmt
+    Case(Box<AST>),
     DefaultL,
     Goto(String),  // label name
     Label(String), // label name
-    FuncCall(Rc<AST>, Vec<AST>),
-    StructRef(Rc<AST>, String), // String is name of struct field
+    FuncCall(Box<AST>, Vec<AST>),
+    StructRef(Box<AST>, String), // String is name of struct field
     Break,
     Continue,
-    Return(Option<Rc<AST>>),
+    Return(Option<Box<AST>>),
 }
 
 unsafe impl Send for AST {}
