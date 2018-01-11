@@ -1235,158 +1235,41 @@ impl<'a> Parser<'a> {
         if try!(self.lexer.skip_symbol(Symbol::Question)) {
             return self.read_ternary(lhs);
         }
-        let assign = |lhs, rhs, pos| -> AST {
+        macro_rules! assign { ($lhs:expr, $rhs:expr, $pos:expr) => (
             AST::new(
-                ASTKind::BinaryOp(Box::new(lhs), Box::new(rhs), node::CBinOps::Assign),
-                pos,
-            )
-        };
+                ASTKind::BinaryOp(Box::new($lhs), Box::new($rhs), node::CBinOps::Assign), $pos
+            ) )
+        }
+        macro_rules! f { ($op:ident) => (
+            lhs = assign!(
+                lhs.clone(),
+                AST::new(
+                    ASTKind::BinaryOp(
+                        Box::new(lhs),
+                        Box::new(try!(self.read_assign())),
+                        node::CBinOps::$op,
+                    ),
+                    self.lexer.get_cur_pos(),
+                ),
+                self.lexer.get_cur_pos()
+            ); )
+        }
         loop {
             let tok = try!(self.lexer.get());
             match tok.kind {
                 TokenKind::Symbol(Symbol::Assign) => {
-                    lhs = assign(lhs, try!(self.read_assign()), self.lexer.get_cur_pos());
+                    lhs = assign!(lhs, try!(self.read_assign()), self.lexer.get_cur_pos());
                 }
-                TokenKind::Symbol(Symbol::AssignAdd) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Add,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignSub) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Sub,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignMul) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Mul,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignDiv) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Div,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignMod) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Rem,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignShl) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Shl,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignShr) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Shr,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignAnd) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::And,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignOr) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Or,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
-                TokenKind::Symbol(Symbol::AssignXor) => {
-                    lhs = assign(
-                        lhs.clone(),
-                        AST::new(
-                            ASTKind::BinaryOp(
-                                Box::new(lhs),
-                                Box::new(try!(self.read_assign())),
-                                node::CBinOps::Xor,
-                            ),
-                            self.lexer.get_cur_pos(),
-                        ),
-                        self.lexer.get_cur_pos(),
-                    );
-                }
+                TokenKind::Symbol(Symbol::AssignAdd) => f!(Add),
+                TokenKind::Symbol(Symbol::AssignSub) => f!(Sub),
+                TokenKind::Symbol(Symbol::AssignMul) => f!(Mul),
+                TokenKind::Symbol(Symbol::AssignDiv) => f!(Div),
+                TokenKind::Symbol(Symbol::AssignMod) => f!(Rem),
+                TokenKind::Symbol(Symbol::AssignShl) => f!(Shl),
+                TokenKind::Symbol(Symbol::AssignShr) => f!(Shr),
+                TokenKind::Symbol(Symbol::AssignAnd) => f!(And),
+                TokenKind::Symbol(Symbol::AssignOr) => f!(Or),
+                TokenKind::Symbol(Symbol::AssignXor) => f!(Xor),
                 // TODO: implement more op
                 _ => {
                     self.lexer.unget(tok);
@@ -1773,25 +1656,6 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-
-        // if let Some(name) = codegen::retrieve_from_load(&f).get_variable_name() {
-        //     if self.constexpr_func_map.contains(name) {
-        //         let mut are_args_const = true;
-        //         for arg in &args {
-        //             if are_args_const && !arg.is_const() {
-        //                 are_args_const = false;
-        //                 break;
-        //             }
-        //         }
-        //         if are_args_const {
-        //             unsafe {
-        //                 if let Ok(ret) = CODEGEN.lock().unwrap().call_constexpr_func(name, &args) {
-        //                     return Ok(ret);
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
 
         Ok(AST::new(ASTKind::FuncCall(Box::new(f), args), pos))
     }
