@@ -1,10 +1,13 @@
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::str;
+use itertools::Itertools;
+use std::vec::IntoIter;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
 use std::collections::{HashMap, HashSet};
+use std::iter::Peekable;
 use error;
 use parser;
 use parser::{Error, ParseR};
@@ -201,7 +204,7 @@ pub struct Lexer {
     pub cur_line: VecDeque<usize>,
     filename: VecDeque<String>,
     macro_map: HashMap<String, Macro>,
-    pub peek: VecDeque<Vec<u8>>,
+    pub peek: VecDeque<Peekable<IntoIter<u8>>>,
     pub peek_pos: VecDeque<usize>,
     buf: VecDeque<VecDeque<Token>>,
     cond_stack: Vec<bool>,
@@ -248,8 +251,8 @@ impl Lexer {
             .expect("cannot read file");
         let mut peek = VecDeque::new();
         unsafe {
-            peek.push_back(file_body.as_mut_vec().clone());
-            peek.push_back(rucc_header_body.as_mut_vec().clone());
+            peek.push_back(file_body.into_bytes().into_iter().peekable());
+            peek.push_back(rucc_header_body.into_bytes().into_iter().peekable());
         }
 
         let mut peek_pos = VecDeque::new();
@@ -285,35 +288,30 @@ impl Lexer {
     }
     fn peek_get(&mut self) -> ParseR<char> {
         let peek = self.peek.back_mut().unwrap();
-        let peek_pos = *self.peek_pos.back_mut().unwrap();
-        if peek_pos >= peek.len() {
-            Err(Error::EOF)
-        } else {
-            Ok(peek[peek_pos] as char)
+        match peek.peek() {
+            Some(c) => Ok(*c as char),
+            None => Err(Error::EOF),
         }
     }
     fn peek_next(&mut self) -> ParseR<char> {
-        let peek = self.peek.back().unwrap();
-        let peek_pos = self.peek_pos.back_mut().unwrap();
-        if *peek_pos >= peek.len() {
-            return Err(Error::EOF);
-        }
-        let c = peek[*peek_pos] as char;
-        *peek_pos += 1;
+        let c = match self.peek.back_mut().unwrap().next() {
+            Some(c) => c as char,
+            None => return Err(Error::EOF),
+        };
         if c == '\n' {
             *self.cur_line.back_mut().unwrap() += 1;
         }
         Ok(c)
     }
-    fn peek_next_char_is(&mut self, ch: char) -> ParseR<bool> {
-        let peek = self.peek.back_mut().unwrap();
-        let peek_pos = self.peek_pos.back_mut().unwrap();
-        if *peek_pos >= peek.len() {
-            Err(Error::EOF)
-        } else {
-            let nextc = peek[*peek_pos + 1] as char;
-            Ok(nextc == ch)
-        }
+    fn eq_forward(&mut self, s: &str) -> bool {
+        let s2 = self.peek
+            .back_mut()
+            .unwrap()
+            .by_ref()
+            .take(s.len())
+            .map(|u| u as char)
+            .collect::<String>();
+        s == s2
     }
     fn peek_char_is(&mut self, ch: char) -> ParseR<bool> {
         let peekc = try!(self.peek_get());
@@ -370,15 +368,13 @@ impl Lexer {
         let mut ident = "".to_string();
         ident.push(c);
         let pos = *self.peek_pos.back().unwrap();
-        loop {
-            let c = try!(self.peek_next());
-            if c.is_alphanumeric() || c == '_' {
-                ident.push(c);
-            } else {
-                *self.peek_pos.back_mut().unwrap() -= 1;
-                break;
-            }
-        }
+        ident.extend(
+            self.peek
+                .back_mut()
+                .unwrap()
+                .take_while_ref(|c| (*c as char).is_alphanumeric() || (*c as char) == '_')
+                .map(|x| x as char),
+        );
         Ok(Token::new(
             TokenKind::Identifier(ident),
             0,
@@ -392,19 +388,23 @@ impl Lexer {
         let mut is_float = false;
         let mut last = try!(self.peek_get());
         let pos = *self.peek_pos.back().unwrap();
-        loop {
-            let c = try!(self.peek_next());
-            num.push(c);
-            is_float = is_float || c == '.';
-            let is_f = "eEpP".contains(last) && "+-".contains(c);
-            if !c.is_alphanumeric() && c != '.' && !is_f {
-                is_float = is_float || is_f;
-                num.pop();
-                *self.peek_pos.back_mut().unwrap() -= 1;
-                break;
-            }
-            last = c;
-        }
+        num.extend(
+            self.peek
+                .back_mut()
+                .unwrap()
+                .take_while_ref(|c| {
+                    is_float = is_float || (*c as char) == '.';
+                    let is_f = "eEpP".contains(last) && "+-".contains(*c as char);
+                    if !(*c as char).is_alphanumeric() && (*c as char) != '.' && !is_f {
+                        is_float = is_float || is_f;
+                        false
+                    } else {
+                        last = *c as char;
+                        true
+                    }
+                })
+                .map(|x| x as char),
+        );
 
         if is_float {
             // TODO: now rucc ignores suffix
@@ -511,9 +511,11 @@ impl Lexer {
                 }
             }
             '.' => {
-                if try!(self.peek_char_is('.')) && try!(self.peek_next_char_is('.')) {
-                    sym.push(try!(self.peek_next()));
-                    sym.push(try!(self.peek_next()));
+                // TODO: fix bug
+                if try!(self.peek_char_is('.')) {
+                    try!(self.peek_next());
+                    try!(self.peek_next());
+                    sym += "..";
                 }
             }
             _ => {}
@@ -640,13 +642,15 @@ impl Lexer {
                     '/' => {
                         if try!(self.peek_char_is('*')) {
                             try!(self.peek_next()); // *
-                            while !(try!(self.peek_char_is('*'))
-                                && try!(self.peek_next_char_is('/')))
-                            {
-                                try!(self.peek_next());
+                            let mut last = ' ';
+                            loop {
+                                let c = try!(self.peek_next());
+                                if last == '*' && c == '/' {
+                                    break;
+                                } else {
+                                    last = c;
+                                }
                             }
-                            try!(self.peek_next()); // *
-                            try!(self.peek_next()); // /
                             self.do_read_token()
                         } else if try!(self.peek_char_is('/')) {
                             try!(self.peek_next()); // /
@@ -1087,7 +1091,8 @@ impl Lexer {
             .expect("not found file");
         self.filename.push_back(abs_filename);
         unsafe {
-            self.peek.push_back(body.as_mut_vec().clone());
+            self.peek
+                .push_back(body.into_bytes().into_iter().peekable());
         }
         self.peek_pos.push_back(0);
         self.cur_line.push_back(1);
@@ -1240,11 +1245,14 @@ impl Lexer {
         self.unget(Token::new(TokenKind::Symbol(Symbol::Semicolon), 0, 0, 0));
         self.unget_all(&expr_line);
 
-        let node = parser::Parser::new(self).run_as_expr().ok().unwrap();
+        let exp = {
+            let node = parser::Parser::new(self).run_as_expr().ok().unwrap();
+            node.eval_constexpr()
+        };
 
         self.buf.pop_back();
 
-        if let Ok(e) = node.eval_constexpr() {
+        if let Ok(e) = exp {
             Ok(e != 0)
         } else {
             println!("error: lexer constexpr");
@@ -1324,31 +1332,32 @@ impl Lexer {
     }
 
     pub fn get_surrounding_code_with_err_point(&mut self, pos: usize) -> String {
-        let code = self.peek.back().unwrap();
-        let peek_pos = pos;
-        let start_pos = {
-            let mut p = peek_pos as i32;
-            while p >= 0 && code[p as usize] as char != '\n' {
-                p -= 1;
-            }
-            p += 1; // '\n'
-            p as usize
-        };
-        let end_pos = {
-            let mut p = peek_pos as i32;
-            while p < code.len() as i32 && code[p as usize] as char != '\n' {
-                p += 1;
-            }
-            p as usize
-        };
-        let surrounding_code = String::from_utf8(code[start_pos..end_pos].to_vec())
-            .unwrap()
-            .to_string();
-        let mut err_point = String::new();
-        for _ in 0..(peek_pos - start_pos) {
-            err_point.push(' ');
-        }
-        err_point.push('^');
-        surrounding_code + "\n" + err_point.as_str()
+        "".to_string()
+        // let code = self.peek.back().unwrap();
+        // let peek_pos = pos;
+        // let start_pos = {
+        //     let mut p = peek_pos as i32;
+        //     while p >= 0 && code[p as usize] as char != '\n' {
+        //         p -= 1;
+        //     }
+        //     p += 1; // '\n'
+        //     p as usize
+        // };
+        // let end_pos = {
+        //     let mut p = peek_pos as i32;
+        //     while p < code.len() as i32 && code[p as usize] as char != '\n' {
+        //         p += 1;
+        //     }
+        //     p as usize
+        // };
+        // let surrounding_code = String::from_utf8(code[start_pos..end_pos].to_vec())
+        //     .unwrap()
+        //     .to_string();
+        // let mut err_point = String::new();
+        // for _ in 0..(peek_pos - start_pos) {
+        //     err_point.push(' ');
+        // }
+        // err_point.push('^');
+        // surrounding_code + "\n" + err_point.as_str()
     }
 }

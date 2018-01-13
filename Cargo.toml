@@ -18,3 +18,4 @@ ansi_term = "0.9.0"
 
 libc = "*"
 
+itertools = "0.7.6"

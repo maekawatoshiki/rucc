@@ -13,6 +13,8 @@ extern "C" {}
 #[macro_use]
 extern crate lazy_static;
 
+extern crate itertools;
+
 use std::sync::Mutex;
 use std::marker::Send;
 

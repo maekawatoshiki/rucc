@@ -10,26 +10,28 @@ use clap::{App, Arg};
 const VERSION_STR: &'static str = env!("CARGO_PKG_VERSION");
 
 fn main() {
-    let mut app = App::new("rucc")
-        .version(VERSION_STR)
-        .author("uint256_t")
-        .about("rucc is a small toy C compiler in Rust")
-        .arg(
-            Arg::with_name("version")
-                .short("v")
-                .long("version")
-                .help("Show version info"),
-        )
-        .arg(Arg::with_name("FILE").help("Input file").index(1));
-    let app_matches = app.clone().get_matches();
-
-    if let Some(filename) = app_matches.value_of("FILE") {
-        common::run_file(filename);
-        println!("{}", Colour::Green.paint("Compiling exited successfully."));
-    } else {
-        app.print_help().unwrap();
-        println!();
-    }
+    common::run_file("example/mandelbrot.c");
+    println!("{}", Colour::Green.paint("Compiling exited successfully."));
+    // let mut app = App::new("rucc")
+    //     .version(VERSION_STR)
+    //     .author("uint256_t")
+    //     .about("rucc is a small toy C compiler in Rust")
+    //     .arg(
+    //         Arg::with_name("version")
+    //             .short("v")
+    //             .long("version")
+    //             .help("Show version info"),
+    //     )
+    //     .arg(Arg::with_name("FILE").help("Input file").index(1));
+    // let app_matches = app.clone().get_matches();
+    //
+    // if let Some(filename) = app_matches.value_of("FILE") {
+    //     common::run_file(filename);
+    //     println!("{}", Colour::Green.paint("Compiling exited successfully."));
+    // } else {
+    //     app.print_help().unwrap();
+    //     println!();
+    // }
 }
 
 #[test]
