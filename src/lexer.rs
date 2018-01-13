@@ -640,12 +640,10 @@ impl Lexer {
                     '/' => {
                         if try!(self.peek_char_is('*')) {
                             try!(self.peek_next()); // *
-                            while !(try!(self.peek_char_is('*'))
-                                && try!(self.peek_next_char_is('/')))
-                            {
-                                try!(self.peek_next());
+                            let mut last = ' ';
+                            while !(last == '*' && try!(self.peek_char_is('/'))) {
+                                last = try!(self.peek_next());
                             }
-                            try!(self.peek_next()); // *
                             try!(self.peek_next()); // /
                             self.do_read_token()
                         } else if try!(self.peek_char_is('/')) {
