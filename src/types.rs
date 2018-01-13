@@ -27,12 +27,14 @@ pub enum Type {
     Float,
     Double,
     Ptr(Box<Type>),
-    Array(Box<Type>, i32),            // ary elem type, size
-    Func(Box<Type>, Vec<Type>, bool), // return type, param types, vararg
-    Struct(String, Vec<AST>),         // name, fields
-    Union(String, Vec<AST>, usize),   // name, fields, means size of nth field is size of the union
-    Enum,                             // as same as Int
+    Array(Box<Type>, i32),               // ary elem type, size
+    Func(Box<Type>, Vec<Type>, bool),    // return type, param types, vararg
+    Struct(RectypeName, Vec<AST>),       // name, fields
+    Union(RectypeName, Vec<AST>, usize), // name, fields, means size of nth field is size of the union
+    Enum,                                // as same as Int
 }
+
+pub type RectypeName = String;
 
 impl Type {
     pub fn get_elem_ty<'a>(&'a self) -> Option<&'a Type> {
@@ -92,7 +94,7 @@ impl Type {
             _ => None,
         }
     }
-    // TODO: I can't come up with a good name...
+    // TODO: any good name?
     pub fn conversion(self) -> Type {
         match self {
             Type::Array(elem_ty, _) => Type::Ptr(elem_ty),

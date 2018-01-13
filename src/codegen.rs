@@ -16,7 +16,7 @@ use self::llvm::prelude::*;
 use node;
 use node::Bits;
 use lexer::Pos;
-use types::{Sign, StorageClass, Type};
+use types::{RectypeName, Sign, StorageClass, Type};
 
 macro_rules! matches {
     ($e:expr, $p:pat) => {
@@ -99,7 +99,7 @@ pub struct Codegen {
     local_varmap: Vec<HashMap<String, VarInfo>>,
     label_map: HashMap<String, LLVMBasicBlockRef>,
     switch_list: VecDeque<(LLVMValueRef, LLVMBasicBlockRef, LLVMTypeRef)>,
-    llvm_struct_map: HashMap<String, RectypeInfo>,
+    llvm_struct_map: HashMap<RectypeName, RectypeInfo>,
     break_labels: VecDeque<LLVMBasicBlockRef>,
     continue_labels: VecDeque<LLVMBasicBlockRef>,
     cur_func: Option<LLVMValueRef>,
@@ -237,7 +237,10 @@ impl Codegen {
             node::ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
                 self.gen_global_var_decl(ty, name, sclass, init)
             }
-            _ => panic!(format!("codegen: unknown ast (given {:?})", ast)),
+            _ => panic!(format!(
+                "given ast which shouldn't be contained in toplevels: {:?}",
+                ast
+            )),
         };
 
         result.or_else(|cr: Error| match cr {
@@ -447,10 +450,9 @@ impl Codegen {
         } else {
             // default initialization
 
-            match *ty {
-                // function is not initialized
-                Type::Func(_, _, _) => return Ok((gvar, Some(ty.clone()))),
-                _ => {}
+            if let Type::Func(_, _, _) = *ty {
+                // function must not be initialized
+                return Ok((gvar, Some(ty.clone())));
             }
 
             LLVMSetLinkage(
@@ -503,13 +505,14 @@ impl Codegen {
             let elem = try!(self.gen(e)).0;
             elems.push(self.typecast(elem, llvm_elem_ty));
         }
+        let elems_len = elems.len();
         Ok((
             LLVMConstArray(
                 llvm_elem_ty,
                 elems.as_mut_slice().as_mut_ptr(),
-                elems.len() as u32,
+                elems_len as u32,
             ),
-            Some(Type::Array(Box::new(elem_ty.unwrap()), elems.len() as i32)),
+            Some(Type::Array(Box::new(elem_ty.unwrap()), elems_len as i32)),
         ))
     }
     unsafe fn gen_const_array_for_global_init(
@@ -599,7 +602,7 @@ impl Codegen {
         try!(self.fill_with_0(var, ty));
 
         for (i, e) in elems_ast.iter().enumerate() {
-            // TODO: makes very very no sense...
+            // TODO: makes no sense...
             let load = LLVMBuildGEP(
                 self.builder,
                 var,
@@ -1638,11 +1641,11 @@ impl Codegen {
         expr: &node::AST,
         field_name: String,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (strct, ptr_ty_w) = try!(self.gen(expr));
-        let ptr_ty = ptr_ty_w.unwrap();
+        let (strct, ptr_ty) = try!(self.gen(expr));
+        let ptr_ty = ptr_ty.unwrap();
         let ty = ptr_ty
             .get_elem_ty()
-            .or_else(|| panic!("gen_assign: ptr_dst_ty must be a pointer to the value's type"))
+            .or_else(|| panic!("gen_assign: must be a pointer to the value's type"))
             .unwrap();
         let strct_name = ty.get_name();
         assert!(strct_name.is_some());
@@ -1762,7 +1765,6 @@ impl Codegen {
         for arg in &*args {
             maybe_correct_args_val.push(try!(self.gen(arg)).0);
         }
-        let args_len = args.len();
 
         let func = match retrieve_from_load(ast) {
             &node::AST {
@@ -1825,6 +1827,7 @@ impl Codegen {
         LLVMGetParamTypes(llvm_functy, ptr_params_types);
         let llvm_params_types = Vec::from_raw_parts(ptr_params_types, params_count, 0);
 
+        let args_len = args.len();
         if !func_is_vararg && params_count < args_len {
             return Err(Error::MsgWithPos(
                 "too many arguments".to_string(),

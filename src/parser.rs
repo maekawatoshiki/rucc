@@ -601,10 +601,10 @@ impl<'a> Parser<'a> {
         }
     }
     fn read_string_initializer(&mut self, ty: &mut Type, string: String) -> ParseR<AST> {
-        let mut char_ary = Vec::new();
-        for c in string.chars() {
-            char_ary.push(AST::new(ASTKind::Char(c as i32), Pos::new(0, 0)));
-        }
+        let char_ary = string
+            .chars()
+            .map(|c| AST::new(ASTKind::Char(c as i32), Pos::new(0, 0)))
+            .collect::<Vec<AST>>();
         if let &mut Type::Array(_, ref mut len) = ty {
             *len = char_ary.len() as i32 + 1;
         } else {
@@ -643,9 +643,7 @@ impl<'a> Parser<'a> {
                 self.lexer.get_cur_pos(),
             ))
         } else {
-            // maybe, this block never reach though.
-            self.show_error("initializer of array must be array");
-            Err(Error::Something)
+            panic!()
         }
     }
     fn read_struct_initializer(&mut self, ty: &mut Type) -> ParseR<AST> {
