@@ -556,15 +556,13 @@ impl Lexer {
                 if try!(self.peek_get()).is_numeric() {
                     let mut oct = "".to_string();
                     oct.push(c);
-                    loop {
-                        let c = try!(self.peek_next());
-                        oct.push(c);
-                        if !c.is_numeric() {
-                            oct.pop();
-                            break;
-                        }
-                    }
-                    *self.peek_pos.back_mut().unwrap() -= 1;
+                    oct.extend(
+                        self.peek
+                            .back_mut()
+                            .unwrap()
+                            .take_while_ref(|c| (*c as char).is_numeric())
+                            .map(|x| x as char),
+                    );
                     Ok(self.read_oct_num(oct.as_str()).0 as i32 as u8 as char)
                 } else {
                     assert!(c == '0');

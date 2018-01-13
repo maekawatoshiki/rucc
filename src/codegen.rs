@@ -237,7 +237,10 @@ impl Codegen {
             node::ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
                 self.gen_global_var_decl(ty, name, sclass, init)
             }
-            _ => panic!(format!("codegen: unknown ast (given {:?})", ast)),
+            _ => panic!(format!(
+                "given AST which should not be contained in toplevel: {:?}",
+                ast
+            )),
         };
 
         result.or_else(|cr: Error| match cr {
@@ -296,6 +299,7 @@ impl Codegen {
             Error::MsgWithPos(msg, pos) => Err(Error::MsgWithPos(msg, pos)),
         })
     }
+
     unsafe fn gen_init_global(
         &mut self,
         ast: &node::AST,
@@ -309,6 +313,7 @@ impl Codegen {
             _ => self.gen(ast),
         }
     }
+
     unsafe fn gen_init_local(
         &mut self,
         var: LLVMValueRef,
