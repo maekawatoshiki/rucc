@@ -14,7 +14,7 @@ fi
 
 if [[ $? == 0 ]]; then
   # opt-4.0 -std-link-opts $bc -o $bc 
-  llc-4.0 $bc
+  llc-10 $bc
   clang $s -lm
   rm -f $bc $s
 fi

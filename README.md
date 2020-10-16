@@ -10,10 +10,10 @@ rucc is a small toy C compiler implemented in Rust.
 # REQUIREMENTS
 
 - latest Rust (recommend [rustup](https://www.rustup.rs/))
-- LLVM 4.0
+- LLVM 10.0
 ```sh
 # ubuntu, or debian...
-$ apt-get install llvm-4.0 llvm-4.0-dev
+$ apt-get install llvm-10 llvm-10-dev
 ```
 
 # RUN
