@@ -5,26 +5,26 @@ extern crate libc;
 extern crate rand;
 use self::rand::Rng;
 
-use std::ffi::CString;
-use std::ptr;
 use std::boxed::Box;
 use std::collections::{hash_map, HashMap, VecDeque};
+use std::ffi::CString;
+use std::ptr;
 
 use self::llvm::core::*;
 use self::llvm::prelude::*;
 
+use lexer::Pos;
 use node;
 use node::Bits;
-use lexer::Pos;
 use types::{RectypeName, Sign, StorageClass, Type};
 
 macro_rules! matches {
     ($e:expr, $p:pat) => {
         match $e {
             $p => true,
-            _ => false
+            _ => false,
         }
-    }
+    };
 }
 
 pub fn retrieve_from_load<'a>(ast: &'a node::AST) -> &'a node::AST {
@@ -146,8 +146,9 @@ impl Codegen {
                 LLVMInt32Type(),
                 LLVMInt32Type(),
                 LLVMInt1Type(),
-            ].as_mut_slice()
-                .as_mut_ptr(),
+            ]
+            .as_mut_slice()
+            .as_mut_ptr(),
             5,
             0,
         );
@@ -180,8 +181,9 @@ impl Codegen {
                 LLVMInt32Type(),
                 LLVMInt32Type(),
                 LLVMInt1Type(),
-            ].as_mut_slice()
-                .as_mut_ptr(),
+            ]
+            .as_mut_slice()
+            .as_mut_ptr(),
             5,
             0,
         );
@@ -326,11 +328,11 @@ impl Codegen {
                 self.gen_const_struct_for_local_init(var, elems, ty)
             }
             _ => {
-                let val = try!(self.gen(ast)).0;
+                let val = self.gen(ast)?.0;
                 Ok((
                     LLVMBuildStore(
                         self.builder,
-                        self.typecast(val, (LLVMGetElementType(LLVMTypeOf(var)))),
+                        self.typecast(val, LLVMGetElementType(LLVMTypeOf(var))),
                         var,
                     ),
                     None,
@@ -374,12 +376,13 @@ impl Codegen {
 
         for (i, (arg_ty, arg_name)) in func_args_types.iter().zip(param_names.iter()).enumerate() {
             let arg_val = LLVMGetParam(func, i as u32);
-            let var =
-                try!(self.gen_local_var_decl(arg_ty, arg_name, &StorageClass::Auto, &None,)).0;
+            let var = self
+                .gen_local_var_decl(arg_ty, arg_name, &StorageClass::Auto, &None)?
+                .0;
             LLVMBuildStore(self.builder, arg_val, var);
         }
 
-        try!(self.gen(&**body));
+        self.gen(&**body)?;
 
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
         while iter_bb != ptr::null_mut() {
@@ -478,7 +481,7 @@ impl Codegen {
         gvar: LLVMValueRef,
         init_ast: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let init_val = try!(self.gen_init_global(init_ast, ty)).0;
+        let init_val = self.gen_init_global(init_ast, ty)?.0;
 
         match *ty {
             // TODO: support only if const array size is the same as var's array size
@@ -498,11 +501,11 @@ impl Codegen {
         elems_ast: &Vec<node::AST>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let mut elems = Vec::new();
-        let (elem_val, elem_ty) = try!(self.gen(&elems_ast[0]));
+        let (elem_val, elem_ty) = self.gen(&elems_ast[0])?;
         elems.push(elem_val);
         let llvm_elem_ty = LLVMTypeOf(elems[0]);
         for e in elems_ast[1..].iter() {
-            let elem = try!(self.gen(e)).0;
+            let elem = self.gen(e)?.0;
             elems.push(self.typecast(elem, llvm_elem_ty));
         }
         let elems_len = elems.len();
@@ -529,7 +532,7 @@ impl Codegen {
         let llvm_elem_ty = self.type_to_llvmty(elem_ty);
         let mut elems = Vec::new();
         for e in elems_ast {
-            let elem = try!(self.gen_init_global(e, elem_ty)).0;
+            let elem = self.gen_init_global(e, elem_ty)?.0;
             elems.push(self.typecast(elem, llvm_elem_ty));
         }
         for _ in 0..(len - elems_ast.len() as i32) {
@@ -554,7 +557,7 @@ impl Codegen {
             .zip(rectype.field_types.iter())
             .zip(rectype.field_llvm_types.iter())
         {
-            let elem_val = try!(self.gen_init_global(elem_ast, field_ty)).0;
+            let elem_val = self.gen_init_global(elem_ast, field_ty)?.0;
             elems.push(self.typecast(elem_val, *field_llvm_ty));
         }
         Ok((
@@ -571,7 +574,8 @@ impl Codegen {
         var: LLVMValueRef,
         ty: &Type,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let llvm_memset = self.global_varmap
+        let llvm_memset = self
+            .global_varmap
             .get("llvm.memset.p0i8.i32")
             .unwrap()
             .clone();
@@ -580,12 +584,13 @@ impl Codegen {
             llvm_memset.llvm_val,
             vec![
                 self.typecast(var, LLVMPointerType(LLVMInt8Type(), 0)),
-                try!(self.make_int(0, &Bits::Bits8, false)).0,
+                self.make_int(0, &Bits::Bits8, false)?.0,
                 LLVMConstInt(LLVMInt32Type(), ty.calc_size() as u64, 0),
                 LLVMConstInt(LLVMInt32Type(), 4, 0),
                 LLVMConstInt(LLVMInt1Type(), 0, 0),
-            ].as_mut_slice()
-                .as_mut_ptr(),
+            ]
+            .as_mut_slice()
+            .as_mut_ptr(),
             5,
             CString::new("").unwrap().as_ptr(),
         );
@@ -599,7 +604,7 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let elem_ty = ty.get_elem_ty().unwrap();
 
-        try!(self.fill_with_0(var, ty));
+        self.fill_with_0(var, ty)?;
 
         for (i, e) in elems_ast.iter().enumerate() {
             // TODO: makes no sense...
@@ -607,23 +612,24 @@ impl Codegen {
                 self.builder,
                 var,
                 vec![
-                    try!(self.make_int(0, &Bits::Bits32, false)).0,
-                    try!(self.make_int(0, &Bits::Bits32, false)).0,
-                ].as_mut_slice()
-                    .as_mut_ptr(),
+                    self.make_int(0, &Bits::Bits32, false)?.0,
+                    self.make_int(0, &Bits::Bits32, false)?.0,
+                ]
+                .as_mut_slice()
+                .as_mut_ptr(),
                 2,
                 CString::new("gep").unwrap().as_ptr(),
             );
             let idx = LLVMBuildGEP(
                 self.builder,
                 load,
-                vec![try!(self.make_int(i as u64, &Bits::Bits32, false)).0]
+                vec![self.make_int(i as u64, &Bits::Bits32, false)?.0]
                     .as_mut_slice()
                     .as_mut_ptr(),
                 1,
                 CString::new("gep").unwrap().as_ptr(),
             );
-            try!(self.gen_init_local(idx, e, elem_ty));
+            self.gen_init_local(idx, e, elem_ty)?;
         }
         Ok((ptr::null_mut(), None))
     }
@@ -636,7 +642,7 @@ impl Codegen {
         let struct_name = ty.get_name().unwrap();
         let rectype = (*self.llvm_struct_map.get(struct_name.as_str()).unwrap()).clone();
 
-        try!(self.fill_with_0(var, ty));
+        self.fill_with_0(var, ty)?;
 
         for (i, (elem_ast, field_ty)) in
             elems_ast.iter().zip(rectype.field_types.iter()).enumerate()
@@ -647,7 +653,7 @@ impl Codegen {
                 i as u32,
                 CString::new("structref").unwrap().as_ptr(),
             );
-            try!(self.gen_init_local(idx, elem_ast, field_ty));
+            self.gen_init_local(idx, elem_ast, field_ty)?;
         }
         Ok((ptr::null_mut(), None))
     }
@@ -663,12 +669,12 @@ impl Codegen {
         // TODO: refine code
         if *sclass == StorageClass::Static {
             let randid: String = rand::thread_rng().gen_ascii_chars().take(8).collect();
-            let (static_var, static_var_ty) = try!(self.gen_global_var_decl(
+            let (static_var, static_var_ty) = self.gen_global_var_decl(
                 ty,
                 &format!("x{}.{}", randid, name),
                 &StorageClass::Auto,
                 init,
-            ));
+            )?;
             self.local_varmap.last_mut().unwrap().insert(
                 name.as_str().to_string(),
                 VarInfo::new(ty.clone(), llvm_var_ty, static_var),
@@ -698,7 +704,7 @@ impl Codegen {
         );
 
         if init.is_some() {
-            try!(self.set_local_var_initializer(var, ty, &*init.clone().unwrap(),));
+            self.set_local_var_initializer(var, ty, &*init.clone().unwrap())?;
         }
         Ok((var, Some(ty.clone())))
     }
@@ -717,7 +723,7 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         self.local_varmap.push(HashMap::new());
         for stmt in block {
-            try!(self.gen(stmt));
+            self.gen(stmt)?;
         }
         self.local_varmap.pop();
         Ok((ptr::null_mut(), None))
@@ -728,7 +734,7 @@ impl Codegen {
         block: &Vec<node::AST>,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         for stmt in block {
-            try!(self.gen(stmt));
+            self.gen(stmt)?;
         }
         Ok((ptr::null_mut(), None))
     }
@@ -780,7 +786,7 @@ impl Codegen {
         then_stmt: &node::AST,
         else_stmt: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val_tmp = self.gen(cond)?.0;
         let cond_val = self.val_to_bool(cond_val_tmp);
 
         let func = self.cur_func.unwrap();
@@ -793,14 +799,14 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
-        try!(self.gen(then_stmt));
+        self.gen(then_stmt)?;
         if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_merge);
         }
 
         LLVMPositionBuilderAtEnd(self.builder, bb_else);
         // else block
-        try!(self.gen(else_stmt));
+        self.gen(else_stmt)?;
         if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_merge);
         }
@@ -829,12 +835,12 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_before_loop);
         // before_loop block
-        let cond_val_tmp = try!(self.gen(cond)).0;
+        let cond_val_tmp = self.gen(cond)?.0;
         let cond_val = self.val_to_bool(cond_val_tmp);
         LLVMBuildCondBr(self.builder, cond_val, bb_loop, bb_after_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
-        try!(self.gen(body));
+        self.gen(body)?;
 
         if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_before_loop);
@@ -867,10 +873,10 @@ impl Codegen {
         LLVMBuildBr(self.builder, bb_loop);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
-        try!(self.gen(body));
+        self.gen(body)?;
 
         if cur_bb_has_no_terminator(self.builder) {
-            let cond_val_tmp = try!(self.gen(cond)).0;
+            let cond_val_tmp = self.gen(cond)?.0;
             let cond_val = self.val_to_bool(cond_val_tmp);
             LLVMBuildCondBr(self.builder, cond_val, bb_before_loop, bb_after_loop);
         }
@@ -888,7 +894,7 @@ impl Codegen {
         body: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func = self.cur_func.unwrap();
-        let cond_val = try!(self.gen(cond)).0;
+        let cond_val = self.gen(cond)?.0;
         let bb_after_switch =
             LLVMAppendBasicBlock(func, CString::new("after_switch").unwrap().as_ptr());
         let default = LLVMAppendBasicBlock(func, CString::new("default").unwrap().as_ptr());
@@ -897,7 +903,7 @@ impl Codegen {
         self.switch_list
             .push_back((switch, default, LLVMTypeOf(cond_val)));
 
-        try!(self.gen(body));
+        self.gen(body)?;
 
         // if the last (case|default) doesn't have 'break'
         // switch(X) {
@@ -923,7 +929,7 @@ impl Codegen {
     }
     unsafe fn gen_case(&mut self, expr: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func = self.cur_func.unwrap();
-        let expr_val = try!(self.gen(expr)).0;
+        let expr_val = self.gen(expr)?.0;
         let (switch, _, ty) = *self.switch_list.back().unwrap();
         let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
 
@@ -974,7 +980,7 @@ impl Codegen {
             LLVMAppendBasicBlock(func, CString::new("after_loop").unwrap().as_ptr());
         self.continue_labels.push_back(bb_step);
         self.break_labels.push_back(bb_after_loop);
-        try!(self.gen(init));
+        self.gen(init)?;
 
         LLVMBuildBr(self.builder, bb_before_loop);
 
@@ -982,9 +988,9 @@ impl Codegen {
         // before_loop block
         let cond_val = {
             let val = {
-                let v = try!(self.gen(cond)).0;
+                let v = self.gen(cond)?.0;
                 if v == ptr::null_mut() {
-                    try!(self.make_int(1, &Bits::Bits32, false)).0
+                    self.make_int(1, &Bits::Bits32, false)?.0
                 } else {
                     v
                 }
@@ -995,11 +1001,11 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_loop);
 
-        try!(self.gen(body));
+        self.gen(body)?;
         LLVMBuildBr(self.builder, bb_step);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_step);
-        try!(self.gen(step));
+        self.gen(step)?;
         if cur_bb_has_no_terminator(self.builder) {
             LLVMBuildBr(self.builder, bb_before_loop);
         }
@@ -1054,16 +1060,16 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         match *op {
             node::CUnaryOps::LNot => {
-                let (val, ty) = try!(self.gen(expr));
+                let (val, ty) = self.gen(expr)?;
                 Ok((self.val_to_bool_not(val), ty))
             }
             node::CUnaryOps::BNot => {
-                let (val, ty) = try!(self.gen(expr));
+                let (val, ty) = self.gen(expr)?;
                 // bitwise-not learned from clang'
                 let minus_one = LLVMBuildSub(
                     self.builder,
-                    try!(self.make_int(0, &Bits::Bits32, false)).0,
-                    try!(self.make_int(1, &Bits::Bits32, false)).0,
+                    self.make_int(0, &Bits::Bits32, false)?.0,
+                    self.make_int(1, &Bits::Bits32, false)?.0,
                     CString::new("sub").unwrap().as_ptr(),
                 );
                 Ok((
@@ -1079,15 +1085,15 @@ impl Codegen {
             node::CUnaryOps::Deref => self.gen_load(expr),
             node::CUnaryOps::Addr => self.gen(retrieve_from_load(expr)),
             node::CUnaryOps::Minus => {
-                let (val, ty) = try!(self.gen(expr));
+                let (val, ty) = self.gen(expr)?;
                 Ok((
                     LLVMBuildNeg(self.builder, val, CString::new("minus").unwrap().as_ptr()),
                     ty,
                 ))
             }
             node::CUnaryOps::Inc => {
-                let before_inc = try!(self.gen(expr));
-                try!(self.gen_assign(
+                let before_inc = self.gen(expr)?;
+                self.gen_assign(
                     retrieve_from_load(expr),
                     &node::AST::new(
                         node::ASTKind::BinaryOp(
@@ -1100,12 +1106,12 @@ impl Codegen {
                         ),
                         Pos::new(0, 0),
                     ),
-                ));
+                )?;
                 Ok(before_inc)
             }
             node::CUnaryOps::Dec => {
-                let before_dec = try!(self.gen(expr));
-                try!(self.gen_assign(
+                let before_dec = self.gen(expr)?;
+                self.gen_assign(
                     retrieve_from_load(expr),
                     &node::AST::new(
                         node::ASTKind::BinaryOp(
@@ -1118,7 +1124,7 @@ impl Codegen {
                         ),
                         Pos::new(0, 0),
                     ),
-                ));
+                )?;
                 Ok(before_dec)
             }
             _ => Ok((ptr::null_mut(), None)),
@@ -1143,8 +1149,8 @@ impl Codegen {
         }
 
         // normal binary operators
-        let (lhs, lhsty_w) = try!(self.gen(lhsast));
-        let (rhs, rhsty_w) = try!(self.gen(rhsast));
+        let (lhs, lhsty_w) = self.gen(lhsast)?;
+        let (rhs, rhsty_w) = self.gen(rhsast)?;
 
         let lhsty = lhsty_w.unwrap().conversion();
         let rhsty = rhsty_w.unwrap().conversion();
@@ -1199,7 +1205,7 @@ impl Codegen {
         rhsast: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let lhs_val = {
-            let val = try!(self.gen(lhsast)).0;
+            let val = self.gen(lhsast)?.0;
             LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntNE,
@@ -1220,7 +1226,7 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
         let rhs_val = {
-            let val = try!(self.gen(rhsast)).0;
+            let val = self.gen(rhsast)?.0;
             LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntNE,
@@ -1262,7 +1268,7 @@ impl Codegen {
         rhsast: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let lhs_val = {
-            let val = try!(self.gen(lhsast)).0;
+            let val = self.gen(lhsast)?.0;
             LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntNE,
@@ -1283,7 +1289,7 @@ impl Codegen {
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
         let rhs_val = {
-            let val = try!(self.gen(rhsast)).0;
+            let val = self.gen(rhsast)?.0;
             LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntNE,
@@ -1324,7 +1330,7 @@ impl Codegen {
         lhsast: &node::AST,
         rhsast: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (dst, ptr_dst_ty_w) = try!(self.gen(lhsast));
+        let (dst, ptr_dst_ty_w) = self.gen(lhsast)?;
         let ptr_dst_ty = ptr_dst_ty_w.unwrap();
         // self.gen returns Ptr(real_type)
         let dst_ty = match ptr_dst_ty.get_elem_ty() {
@@ -1336,7 +1342,7 @@ impl Codegen {
                 ))
             }
         };
-        let (src, _src_ty) = try!(self.gen(rhsast));
+        let (src, _src_ty) = self.gen(rhsast)?;
         let a = LLVMGetElementType(LLVMTypeOf(dst));
         let casted_src = self.typecast(src, a);
         LLVMBuildStore(self.builder, casted_src, dst);
@@ -1464,18 +1470,16 @@ impl Codegen {
         ty: Type,
         op: &node::CBinOps,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let mut numidx = vec![
-            match *op {
-                node::CBinOps::Add => rhs,
-                node::CBinOps::Sub => LLVMBuildSub(
-                    self.builder,
-                    try!(self.make_int(0, &Bits::Bits32, false)).0,
-                    rhs,
-                    CString::new("sub").unwrap().as_ptr(),
-                ),
-                _ => rhs,
-            },
-        ];
+        let mut numidx = vec![match *op {
+            node::CBinOps::Add => rhs,
+            node::CBinOps::Sub => LLVMBuildSub(
+                self.builder,
+                self.make_int(0, &Bits::Bits32, false)?.0,
+                rhs,
+                CString::new("sub").unwrap().as_ptr(),
+            ),
+            _ => rhs,
+        }];
         Ok((
             LLVMBuildGEP(
                 self.builder,
@@ -1572,7 +1576,7 @@ impl Codegen {
         else_expr: &node::AST,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let cond_val = {
-            let val = try!(self.gen(cond)).0;
+            let val = self.gen(cond)?.0;
             LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntNE,
@@ -1592,12 +1596,12 @@ impl Codegen {
 
         LLVMPositionBuilderAtEnd(self.builder, bb_then);
         // then block
-        let (then_val, then_ty) = try!(self.gen(then_expr));
+        let (then_val, then_ty) = self.gen(then_expr)?;
         LLVMBuildBr(self.builder, bb_merge);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_else);
         // else block
-        let (else_val, else_ty) = try!(self.gen(else_expr));
+        let (else_val, else_ty) = self.gen(else_expr)?;
         LLVMBuildBr(self.builder, bb_merge);
 
         LLVMPositionBuilderAtEnd(self.builder, bb_merge);
@@ -1633,7 +1637,7 @@ impl Codegen {
         expr: &node::AST,
         field_name: String,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (val, ptr_ty) = try!(self.get_struct_field_val(retrieve_from_load(expr), field_name));
+        let (val, ptr_ty) = self.get_struct_field_val(retrieve_from_load(expr), field_name)?;
         Ok((val, ptr_ty))
     }
     unsafe fn get_struct_field_val(
@@ -1641,7 +1645,7 @@ impl Codegen {
         expr: &node::AST,
         field_name: String,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (strct, ptr_ty) = try!(self.gen(expr));
+        let (strct, ptr_ty) = self.gen(expr)?;
         let ptr_ty = ptr_ty.unwrap();
         let ty = ptr_ty
             .get_elem_ty()
@@ -1650,7 +1654,8 @@ impl Codegen {
         let strct_name = ty.get_name();
         assert!(strct_name.is_some());
 
-        let ref rectype = self.llvm_struct_map
+        let ref rectype = self
+            .llvm_struct_map
             .get(strct_name.unwrap().as_str())
             .unwrap();
         let idx = *rectype.field_pos.get(field_name.as_str()).unwrap();
@@ -1682,7 +1687,7 @@ impl Codegen {
         expr: &node::AST,
         ty: &Type,
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (val, _exprty) = try!(self.gen(expr));
+        let (val, _exprty) = self.gen(expr)?;
         let llvm_ty = self.type_to_llvmty(ty);
         Ok((self.typecast(val, llvm_ty), Some(ty.clone())))
     }
@@ -1721,7 +1726,7 @@ impl Codegen {
     }
 
     unsafe fn gen_load(&mut self, var: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (val, ty) = try!(self.gen(var));
+        let (val, ty) = self.gen(var)?;
 
         if let Some(Type::Ptr(ref elem_ty)) = ty {
             match **elem_ty {
@@ -1732,10 +1737,11 @@ impl Codegen {
                             self.builder,
                             val,
                             vec![
-                                try!(self.make_int(0, &Bits::Bits32, false)).0,
-                                try!(self.make_int(0, &Bits::Bits32, false)).0,
-                            ].as_mut_slice()
-                                .as_mut_ptr(),
+                                self.make_int(0, &Bits::Bits32, false)?.0,
+                                self.make_int(0, &Bits::Bits32, false)?.0,
+                            ]
+                            .as_mut_slice()
+                            .as_mut_ptr(),
                             2,
                             CString::new("gep").unwrap().as_ptr(),
                         ),
@@ -1763,7 +1769,7 @@ impl Codegen {
         // so the args before implicit type casting are called 'maybe correct args'.
         let mut maybe_correct_args_val = vec![];
         for arg in &*args {
-            maybe_correct_args_val.push(try!(self.gen(arg)).0);
+            maybe_correct_args_val.push(self.gen(arg)?.0);
         }
 
         let func = match retrieve_from_load(ast) {
@@ -1781,7 +1787,7 @@ impl Codegen {
                 }
             }
             x => {
-                let (val, ty) = try!(self.gen(&x));
+                let (val, ty) = self.gen(&x)?;
                 VarInfo::new(ty.unwrap(), LLVMTypeOf(val), val)
             }
         };
@@ -1885,7 +1891,7 @@ impl Codegen {
     }
 
     unsafe fn gen_return(&mut self, ret_ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
-        let (ret_val, _) = try!(self.gen(ret_ast));
+        let (ret_val, _) = self.gen(ret_ast)?;
         Ok((
             LLVMBuildRet(
                 self.builder,
