@@ -1,10 +1,10 @@
+use codegen;
 use lexer;
 use parser;
-use codegen;
 use std::io::{stderr, Write};
+use std::path::Path;
 
 extern crate regex;
-use self::regex::Regex;
 
 extern crate ansi_term;
 use self::ansi_term::Colour;
@@ -42,12 +42,14 @@ pub fn run_file<'a>(filename: &'a str) {
                         Colour::Red.bold().paint("error:"),
                         pos.line,
                         msg
-                    ).unwrap();
+                    )
+                    .unwrap();
                     writeln!(
                         &mut stderr(),
                         "{}",
                         parser.lexer.get_surrounding_code_with_err_point(pos.pos)
-                    ).unwrap();
+                    )
+                    .unwrap();
                     println!(
                         "{} error{} generated.",
                         parser.err_counts + 1,
@@ -61,10 +63,14 @@ pub fn run_file<'a>(filename: &'a str) {
         }
         parser.show_total_errors();
 
-        let output_file_name = Regex::new(r"\..*$").unwrap().replace_all(filename, ".bc");
+        let output_file_name = Path::new(filename)
+            .with_extension("bc")
+            .into_os_string()
+            .into_string()
+            .unwrap();
         CODEGEN
             .lock()
             .unwrap()
-            .write_llvm_bitcode_to_file(output_file_name.to_string().as_str());
+            .write_llvm_bitcode_to_file(output_file_name.as_str());
     }
 }
