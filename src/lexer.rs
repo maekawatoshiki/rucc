@@ -409,7 +409,7 @@ impl Lexer {
         if is_float {
             // TODO: now rucc ignores suffix
             num = num
-                .trim_right_matches(|c| match c {
+                .trim_end_matches(|c| match c {
                     'a'..='z' | 'A'..='Z' | '+' | '-' => true,
                     _ => false,
                 })
@@ -857,7 +857,7 @@ impl Lexer {
                 )
             })
             .fold("".to_string(), |a, s| a + s.as_str())
-            .trim_left() // remove leading spaces
+            .trim_start() // remove leading spaces
             .to_string();
         Token::new(TokenKind::String(string), 0, pos.pos, pos.line)
     }
