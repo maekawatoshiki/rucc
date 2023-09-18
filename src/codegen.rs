@@ -154,7 +154,7 @@ impl Codegen {
         );
         let llvm_memcpy = LLVMAddFunction(
             module,
-            CString::new("llvm.memcpy.p0i8.p0i8.i32").unwrap().as_ptr(),
+            "llvm.memcpy.p0i8.p0i8.i32\0".as_ptr() as *const i8,
             llvm_memcpy_llvm_ty,
         );
         global_varmap.insert(
@@ -189,7 +189,7 @@ impl Codegen {
         );
         let llvm_memset = LLVMAddFunction(
             module,
-            CString::new("llvm.memset.p0i8.i32").unwrap().as_ptr(),
+            "llvm.memset.p0i8.i32\0".as_ptr() as *const i8,
             llvm_memset_llvm_ty,
         );
         global_varmap.insert(
@@ -225,10 +225,8 @@ impl Codegen {
     }
 
     pub unsafe fn write_llvm_bitcode_to_file(&mut self, filename: &str) {
-        llvm::bit_writer::LLVMWriteBitcodeToFile(
-            self.module,
-            CString::new(filename).unwrap().as_ptr(),
-        );
+        let filename = CString::new(filename).unwrap();
+        llvm::bit_writer::LLVMWriteBitcodeToFile(self.module, filename.as_ptr());
     }
 
     unsafe fn gen_toplevel(&mut self, ast: &node::AST) -> CodegenR<(LLVMValueRef, Option<Type>)> {
@@ -239,10 +237,10 @@ impl Codegen {
             node::ASTKind::VariableDecl(ref ty, ref name, ref sclass, ref init) => {
                 self.gen_global_var_decl(ty, name, sclass, init)
             }
-            _ => panic!(format!(
+            _ => panic!(
                 "given ast which shouldn't be contained in toplevels: {:?}",
                 ast
-            )),
+            ),
         };
 
         result.or_else(|cr: Error| match cr {
@@ -294,7 +292,7 @@ impl Codegen {
             node::ASTKind::Float(ref f) => self.make_double(*f),
             node::ASTKind::Char(ref c) => self.make_char(*c),
             node::ASTKind::String(ref s) => self.make_const_str(s),
-            _ => panic!(format!("codegen: unknown ast (given {:?})", ast)),
+            _ => panic!("codegen: unknown ast (given {:?})", ast),
         };
         result.or_else(|cr: Error| match cr {
             Error::Msg(msg) => Err(Error::MsgWithPos(msg, ast.pos.clone())),
@@ -358,11 +356,8 @@ impl Codegen {
         let func = match self.global_varmap.entry(name.to_string()) {
             hash_map::Entry::Occupied(o) => o.into_mut().llvm_val,
             hash_map::Entry::Vacant(v) => {
-                let func = LLVMAddFunction(
-                    self.module,
-                    CString::new(name.as_str()).unwrap().as_ptr(),
-                    func_ty,
-                );
+                let name = CString::new(name.as_str()).unwrap();
+                let func = LLVMAddFunction(self.module, name.as_ptr(), func_ty);
                 v.insert(VarInfo::new(functy.clone(), func_ty, func));
                 func
             }
@@ -371,7 +366,7 @@ impl Codegen {
         self.cur_func = Some(func);
         self.local_varmap.push(HashMap::new());
 
-        let bb_entry = LLVMAppendBasicBlock(func, CString::new("entry").unwrap().as_ptr());
+        let bb_entry = LLVMAppendBasicBlock(func, "entry\0".as_ptr() as *const i8);
         LLVMPositionBuilderAtEnd(self.builder, bb_entry);
 
         for (i, (arg_ty, arg_name)) in func_args_types.iter().zip(param_names.iter()).enumerate() {
@@ -386,7 +381,8 @@ impl Codegen {
 
         let mut iter_bb = LLVMGetFirstBasicBlock(func);
         while iter_bb != ptr::null_mut() {
-            if LLVMIsATerminatorInst(LLVMGetLastInstruction(iter_bb)) == ptr::null_mut() {
+            let last = LLVMGetLastInstruction(iter_bb);
+            if last as *const _ == ptr::null() || LLVMIsATerminatorInst(last) == ptr::null_mut() {
                 let terminator_builder = LLVMCreateBuilderInContext(self.context);
                 LLVMPositionBuilderAtEnd(terminator_builder, iter_bb);
                 match **func_ret_ty {
@@ -418,26 +414,16 @@ impl Codegen {
             let ref v = self.global_varmap.get(name).unwrap();
             (v.llvm_val, v.llvm_ty)
         } else {
+            let name = CString::new(name.as_str()).unwrap();
             match *ty {
                 Type::Func(_, _, _) => {
                     let llvmty = self.type_to_llvmty(ty);
-                    (
-                        LLVMAddFunction(
-                            self.module,
-                            CString::new(name.as_str()).unwrap().as_ptr(),
-                            llvmty,
-                        ),
-                        llvmty,
-                    )
+                    (LLVMAddFunction(self.module, name.as_ptr(), llvmty), llvmty)
                 }
                 _ => {
                     let llvmty = self.type_to_llvmty(ty);
                     (
-                        LLVMAddGlobal(
-                            self.module,
-                            self.type_to_llvmty(ty),
-                            CString::new(name.as_str()).unwrap().as_ptr(),
-                        ),
+                        LLVMAddGlobal(self.module, self.type_to_llvmty(ty), name.as_ptr()),
                         llvmty,
                     )
                 }
@@ -592,7 +578,7 @@ impl Codegen {
             .as_mut_slice()
             .as_mut_ptr(),
             5,
-            CString::new("").unwrap().as_ptr(),
+            "\0".as_ptr() as *const i8,
         );
         Ok((ptr::null_mut(), None))
     }
@@ -618,7 +604,7 @@ impl Codegen {
                 .as_mut_slice()
                 .as_mut_ptr(),
                 2,
-                CString::new("gep").unwrap().as_ptr(),
+                "gep\0".as_ptr() as *const i8,
             );
             let idx = LLVMBuildGEP(
                 self.builder,
@@ -627,7 +613,7 @@ impl Codegen {
                     .as_mut_slice()
                     .as_mut_ptr(),
                 1,
-                CString::new("gep").unwrap().as_ptr(),
+                "gep\0".as_ptr() as *const i8,
             );
             self.gen_init_local(idx, e, elem_ty)?;
         }
@@ -651,7 +637,7 @@ impl Codegen {
                 self.builder,
                 var,
                 i as u32,
-                CString::new("structref").unwrap().as_ptr(),
+                "structref\0".as_ptr() as *const i8,
             );
             self.gen_init_local(idx, elem_ast, field_ty)?;
         }
@@ -693,11 +679,8 @@ impl Codegen {
         } else {
             LLVMPositionBuilderBefore(builder, first_inst);
         }
-        let var = LLVMBuildAlloca(
-            builder,
-            llvm_var_ty,
-            CString::new(name.as_str()).unwrap().as_ptr(),
-        );
+        let c_name = CString::new(name.as_str()).unwrap();
+        let var = LLVMBuildAlloca(builder, llvm_var_ty, c_name.as_ptr());
         self.local_varmap.last_mut().unwrap().insert(
             name.as_str().to_string(),
             VarInfo::new(ty.clone(), llvm_var_ty, var),
@@ -747,7 +730,7 @@ impl Codegen {
                     llvm::LLVMRealPredicate::LLVMRealONE,
                     val,
                     LLVMConstNull(LLVMTypeOf(val)),
-                    CString::new("to_bool").unwrap().as_ptr(),
+                    "to_bool\0".as_ptr() as *const i8,
                 )
             }
             _ => LLVMBuildICmp(
@@ -755,7 +738,7 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("to_bool").unwrap().as_ptr(),
+                "to_bool\0".as_ptr() as *const i8,
             ),
         }
     }
@@ -767,7 +750,7 @@ impl Codegen {
                     llvm::LLVMRealPredicate::LLVMRealOEQ,
                     val,
                     LLVMConstNull(LLVMTypeOf(val)),
-                    CString::new("to_bool").unwrap().as_ptr(),
+                    "to_bool\0".as_ptr() as *const i8,
                 )
             }
             _ => LLVMBuildICmp(
@@ -775,7 +758,7 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntEQ,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("to_bool").unwrap().as_ptr(),
+                "to_bool\0".as_ptr() as *const i8,
             ),
         }
     }
@@ -791,9 +774,9 @@ impl Codegen {
 
         let func = self.cur_func.unwrap();
 
-        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
-        let bb_else = LLVMAppendBasicBlock(func, CString::new("else").unwrap().as_ptr());
-        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+        let bb_then = LLVMAppendBasicBlock(func, "then\0".as_ptr() as *const i8);
+        let bb_else = LLVMAppendBasicBlock(func, "else\0".as_ptr() as *const i8);
+        let bb_merge = LLVMAppendBasicBlock(func, "merge\0".as_ptr() as *const i8);
 
         LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
 
@@ -823,11 +806,9 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func = self.cur_func.unwrap();
 
-        let bb_before_loop =
-            LLVMAppendBasicBlock(func, CString::new("before_loop").unwrap().as_ptr());
-        let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
-        let bb_after_loop =
-            LLVMAppendBasicBlock(func, CString::new("after_loop").unwrap().as_ptr());
+        let bb_before_loop = LLVMAppendBasicBlock(func, "before_loop\0".as_ptr() as *const i8);
+        let bb_loop = LLVMAppendBasicBlock(func, "loop\0".as_ptr() as *const i8);
+        let bb_after_loop = LLVMAppendBasicBlock(func, "after_loop\0".as_ptr() as *const i8);
         self.continue_labels.push_back(bb_loop);
         self.break_labels.push_back(bb_after_loop);
 
@@ -859,11 +840,9 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func = self.cur_func.unwrap();
 
-        let bb_before_loop =
-            LLVMAppendBasicBlock(func, CString::new("before_loop").unwrap().as_ptr());
-        let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
-        let bb_after_loop =
-            LLVMAppendBasicBlock(func, CString::new("after_loop").unwrap().as_ptr());
+        let bb_before_loop = LLVMAppendBasicBlock(func, "before_loop\0".as_ptr() as *const i8);
+        let bb_loop = LLVMAppendBasicBlock(func, "loop\0".as_ptr() as *const i8);
+        let bb_after_loop = LLVMAppendBasicBlock(func, "after_loop\0".as_ptr() as *const i8);
         self.continue_labels.push_back(bb_loop);
         self.break_labels.push_back(bb_after_loop);
 
@@ -895,9 +874,8 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func = self.cur_func.unwrap();
         let cond_val = self.gen(cond)?.0;
-        let bb_after_switch =
-            LLVMAppendBasicBlock(func, CString::new("after_switch").unwrap().as_ptr());
-        let default = LLVMAppendBasicBlock(func, CString::new("default").unwrap().as_ptr());
+        let bb_after_switch = LLVMAppendBasicBlock(func, "after_switch\0".as_ptr() as *const i8);
+        let default = LLVMAppendBasicBlock(func, "default\0".as_ptr() as *const i8);
         let switch = LLVMBuildSwitch(self.builder, cond_val, default, 10);
         self.break_labels.push_back(bb_after_switch);
         self.switch_list
@@ -931,7 +909,7 @@ impl Codegen {
         let func = self.cur_func.unwrap();
         let expr_val = self.gen(expr)?.0;
         let (switch, _, ty) = *self.switch_list.back().unwrap();
-        let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
+        let label = LLVMAppendBasicBlock(func, "label\0".as_ptr() as *const i8);
 
         // if the above case doesn't have 'break'
         // switch(X) {
@@ -972,12 +950,10 @@ impl Codegen {
     ) -> CodegenR<(LLVMValueRef, Option<Type>)> {
         let func = self.cur_func.unwrap();
 
-        let bb_before_loop =
-            LLVMAppendBasicBlock(func, CString::new("before_loop").unwrap().as_ptr());
-        let bb_loop = LLVMAppendBasicBlock(func, CString::new("loop").unwrap().as_ptr());
-        let bb_step = LLVMAppendBasicBlock(func, CString::new("step").unwrap().as_ptr());
-        let bb_after_loop =
-            LLVMAppendBasicBlock(func, CString::new("after_loop").unwrap().as_ptr());
+        let bb_before_loop = LLVMAppendBasicBlock(func, "before_loop\0".as_ptr() as *const i8);
+        let bb_loop = LLVMAppendBasicBlock(func, "loop\0".as_ptr() as *const i8);
+        let bb_step = LLVMAppendBasicBlock(func, "step\0".as_ptr() as *const i8);
+        let bb_after_loop = LLVMAppendBasicBlock(func, "after_loop\0".as_ptr() as *const i8);
         self.continue_labels.push_back(bb_step);
         self.break_labels.push_back(bb_after_loop);
         self.gen(init)?;
@@ -1025,12 +1001,12 @@ impl Codegen {
                 LLVMBuildBr(self.builder, *label);
             }
             hash_map::Entry::Vacant(v) => {
-                let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
+                let label = LLVMAppendBasicBlock(func, "label\0".as_ptr() as *const i8);
                 LLVMBuildBr(self.builder, label);
                 v.insert(label);
             }
         };
-        let tmp_label = LLVMAppendBasicBlock(func, CString::new("tmp_label").unwrap().as_ptr());
+        let tmp_label = LLVMAppendBasicBlock(func, "tmp_label\0".as_ptr() as *const i8);
         LLVMPositionBuilderAtEnd(self.builder, tmp_label);
 
         Ok((ptr::null_mut(), None))
@@ -1044,7 +1020,7 @@ impl Codegen {
                 LLVMPositionBuilderAtEnd(self.builder, *label);
             }
             hash_map::Entry::Vacant(v) => {
-                let label = LLVMAppendBasicBlock(func, CString::new("label").unwrap().as_ptr());
+                let label = LLVMAppendBasicBlock(func, "label\0".as_ptr() as *const i8);
                 v.insert(label);
                 LLVMBuildBr(self.builder, label);
                 LLVMPositionBuilderAtEnd(self.builder, label);
@@ -1070,14 +1046,14 @@ impl Codegen {
                     self.builder,
                     self.make_int(0, &Bits::Bits32, false)?.0,
                     self.make_int(1, &Bits::Bits32, false)?.0,
-                    CString::new("sub").unwrap().as_ptr(),
+                    "sub\0".as_ptr() as *const i8,
                 );
                 Ok((
                     LLVMBuildXor(
                         self.builder,
                         val,
                         minus_one,
-                        CString::new("bitwisenot").unwrap().as_ptr(),
+                        "bitwisenot\0".as_ptr() as *const i8,
                     ),
                     ty,
                 ))
@@ -1087,7 +1063,7 @@ impl Codegen {
             node::CUnaryOps::Minus => {
                 let (val, ty) = self.gen(expr)?;
                 Ok((
-                    LLVMBuildNeg(self.builder, val, CString::new("minus").unwrap().as_ptr()),
+                    LLVMBuildNeg(self.builder, val, "minus\0".as_ptr() as *const i8),
                     ty,
                 ))
             }
@@ -1211,14 +1187,14 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("eql").unwrap().as_ptr(),
+                "eql\0".as_ptr() as *const i8,
             )
         };
 
         let func = self.cur_func.unwrap();
 
-        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
-        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+        let bb_then = LLVMAppendBasicBlock(func, "then\0".as_ptr() as *const i8);
+        let bb_merge = LLVMAppendBasicBlock(func, "merge\0".as_ptr() as *const i8);
         let x = LLVMGetInsertBlock(self.builder);
 
         LLVMBuildCondBr(self.builder, lhs_val, bb_then, bb_merge);
@@ -1232,7 +1208,7 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("eql").unwrap().as_ptr(),
+                "eql\0".as_ptr() as *const i8,
             )
         };
         let y = LLVMGetInsertBlock(self.builder);
@@ -1243,7 +1219,7 @@ impl Codegen {
         let phi = LLVMBuildPhi(
             self.builder,
             LLVMTypeOf(rhs_val),
-            CString::new("logand").unwrap().as_ptr(),
+            "logand\0".as_ptr() as *const i8,
         );
         LLVMAddIncoming(
             phi,
@@ -1274,14 +1250,14 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("eql").unwrap().as_ptr(),
+                "eql\0".as_ptr() as *const i8,
             )
         };
 
         let func = self.cur_func.unwrap();
 
-        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
-        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+        let bb_then = LLVMAppendBasicBlock(func, "then\0".as_ptr() as *const i8);
+        let bb_merge = LLVMAppendBasicBlock(func, "merge\0".as_ptr() as *const i8);
         let x = LLVMGetInsertBlock(self.builder);
 
         LLVMBuildCondBr(self.builder, lhs_val, bb_merge, bb_then);
@@ -1295,7 +1271,7 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("eql").unwrap().as_ptr(),
+                "eql\0".as_ptr() as *const i8,
             )
         };
         LLVMBuildBr(self.builder, bb_merge);
@@ -1305,7 +1281,7 @@ impl Codegen {
         let phi = LLVMBuildPhi(
             self.builder,
             LLVMTypeOf(rhs_val),
-            CString::new("logor").unwrap().as_ptr(),
+            "logor\0".as_ptr() as *const i8,
         );
         LLVMAddIncoming(
             phi,
@@ -1347,7 +1323,7 @@ impl Codegen {
         let casted_src = self.typecast(src, a);
         LLVMBuildStore(self.builder, casted_src, dst);
         Ok((
-            LLVMBuildLoad(self.builder, dst, CString::new("load").unwrap().as_ptr()),
+            LLVMBuildLoad(self.builder, dst, "load\0".as_ptr() as *const i8),
             Some((dst_ty).clone()),
         ))
     }
@@ -1359,105 +1335,76 @@ impl Codegen {
         op: &node::CBinOps,
     ) -> LLVMValueRef {
         match *op {
-            node::CBinOps::Add => LLVMBuildAdd(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("add").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Sub => LLVMBuildSub(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("sub").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Mul => LLVMBuildMul(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("mul").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Div => LLVMBuildSDiv(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("div").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Rem => LLVMBuildSRem(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("rem").unwrap().as_ptr(),
-            ),
+            node::CBinOps::Add => {
+                LLVMBuildAdd(self.builder, lhs, rhs, "add\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Sub => {
+                LLVMBuildSub(self.builder, lhs, rhs, "sub\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Mul => {
+                LLVMBuildMul(self.builder, lhs, rhs, "mul\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Div => {
+                LLVMBuildSDiv(self.builder, lhs, rhs, "div\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Rem => {
+                LLVMBuildSRem(self.builder, lhs, rhs, "rem\0".as_ptr() as *const i8)
+            }
             node::CBinOps::Eq => LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntEQ,
                 lhs,
                 rhs,
-                CString::new("eql").unwrap().as_ptr(),
+                "eql\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Ne => LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 lhs,
                 rhs,
-                CString::new("ne").unwrap().as_ptr(),
+                "ne\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Lt => LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntSLT,
                 lhs,
                 rhs,
-                CString::new("lt").unwrap().as_ptr(),
+                "lt\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Gt => LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntSGT,
                 lhs,
                 rhs,
-                CString::new("gt").unwrap().as_ptr(),
+                "gt\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Le => LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntSLE,
                 lhs,
                 rhs,
-                CString::new("le").unwrap().as_ptr(),
+                "le\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Ge => LLVMBuildICmp(
                 self.builder,
                 llvm::LLVMIntPredicate::LLVMIntSGE,
                 lhs,
                 rhs,
-                CString::new("ge").unwrap().as_ptr(),
+                "ge\0".as_ptr() as *const i8,
             ),
-            node::CBinOps::Shl => LLVMBuildShl(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("shl").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Shr => LLVMBuildAShr(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("shr").unwrap().as_ptr(),
-            ),
-            node::CBinOps::And => LLVMBuildAnd(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("and").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Or => {
-                LLVMBuildOr(self.builder, lhs, rhs, CString::new("or").unwrap().as_ptr())
+            node::CBinOps::Shl => {
+                LLVMBuildShl(self.builder, lhs, rhs, "shl\0".as_ptr() as *const i8)
             }
-            node::CBinOps::Xor => LLVMBuildXor(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("xor").unwrap().as_ptr(),
-            ),
+            node::CBinOps::Shr => {
+                LLVMBuildAShr(self.builder, lhs, rhs, "shr\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::And => {
+                LLVMBuildAnd(self.builder, lhs, rhs, "and\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Or => LLVMBuildOr(self.builder, lhs, rhs, "or\0".as_ptr() as *const i8),
+            node::CBinOps::Xor => {
+                LLVMBuildXor(self.builder, lhs, rhs, "xor\0".as_ptr() as *const i8)
+            }
             node::CBinOps::Comma => rhs,
             _ => panic!(),
         }
@@ -1476,7 +1423,7 @@ impl Codegen {
                 self.builder,
                 self.make_int(0, &Bits::Bits32, false)?.0,
                 rhs,
-                CString::new("sub").unwrap().as_ptr(),
+                "sub\0".as_ptr() as *const i8,
             ),
             _ => rhs,
         }];
@@ -1486,7 +1433,7 @@ impl Codegen {
                 lhs,
                 numidx.as_mut_slice().as_mut_ptr(),
                 1,
-                CString::new("add").unwrap().as_ptr(),
+                "add\0".as_ptr() as *const i8,
             ),
             Some(ty),
         ))
@@ -1499,71 +1446,59 @@ impl Codegen {
         op: &node::CBinOps,
     ) -> LLVMValueRef {
         match *op {
-            node::CBinOps::Add => LLVMBuildFAdd(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("fadd").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Sub => LLVMBuildFSub(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("fsub").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Mul => LLVMBuildFMul(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("fmul").unwrap().as_ptr(),
-            ),
-            node::CBinOps::Div => LLVMBuildFDiv(
-                self.builder,
-                lhs,
-                rhs,
-                CString::new("fdiv").unwrap().as_ptr(),
-            ),
+            node::CBinOps::Add => {
+                LLVMBuildFAdd(self.builder, lhs, rhs, "fadd\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Sub => {
+                LLVMBuildFSub(self.builder, lhs, rhs, "fsub\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Mul => {
+                LLVMBuildFMul(self.builder, lhs, rhs, "fmul\0".as_ptr() as *const i8)
+            }
+            node::CBinOps::Div => {
+                LLVMBuildFDiv(self.builder, lhs, rhs, "fdiv\0".as_ptr() as *const i8)
+            }
             node::CBinOps::Eq => LLVMBuildFCmp(
                 self.builder,
                 llvm::LLVMRealPredicate::LLVMRealOEQ,
                 lhs,
                 rhs,
-                CString::new("feql").unwrap().as_ptr(),
+                "feql\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Ne => LLVMBuildFCmp(
                 self.builder,
                 llvm::LLVMRealPredicate::LLVMRealONE,
                 lhs,
                 rhs,
-                CString::new("fne").unwrap().as_ptr(),
+                "fne\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Lt => LLVMBuildFCmp(
                 self.builder,
                 llvm::LLVMRealPredicate::LLVMRealOLT,
                 lhs,
                 rhs,
-                CString::new("flt").unwrap().as_ptr(),
+                "flt\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Gt => LLVMBuildFCmp(
                 self.builder,
                 llvm::LLVMRealPredicate::LLVMRealOGT,
                 lhs,
                 rhs,
-                CString::new("fgt").unwrap().as_ptr(),
+                "fgt\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Le => LLVMBuildFCmp(
                 self.builder,
                 llvm::LLVMRealPredicate::LLVMRealOLE,
                 lhs,
                 rhs,
-                CString::new("fle").unwrap().as_ptr(),
+                "fle\0".as_ptr() as *const i8,
             ),
             node::CBinOps::Ge => LLVMBuildFCmp(
                 self.builder,
                 llvm::LLVMRealPredicate::LLVMRealOGE,
                 lhs,
                 rhs,
-                CString::new("fge").unwrap().as_ptr(),
+                "fge\0".as_ptr() as *const i8,
             ),
             _ => ptr::null_mut(),
         }
@@ -1582,15 +1517,15 @@ impl Codegen {
                 llvm::LLVMIntPredicate::LLVMIntNE,
                 val,
                 LLVMConstNull(LLVMTypeOf(val)),
-                CString::new("eql").unwrap().as_ptr(),
+                "eql\0".as_ptr() as *const i8,
             )
         };
 
         let func = self.cur_func.unwrap();
 
-        let bb_then = LLVMAppendBasicBlock(func, CString::new("then").unwrap().as_ptr());
-        let bb_else = LLVMAppendBasicBlock(func, CString::new("else").unwrap().as_ptr());
-        let bb_merge = LLVMAppendBasicBlock(func, CString::new("merge").unwrap().as_ptr());
+        let bb_then = LLVMAppendBasicBlock(func, "then\0".as_ptr() as *const i8);
+        let bb_else = LLVMAppendBasicBlock(func, "else\0".as_ptr() as *const i8);
+        let bb_merge = LLVMAppendBasicBlock(func, "merge\0".as_ptr() as *const i8);
 
         LLVMBuildCondBr(self.builder, cond_val, bb_then, bb_else);
 
@@ -1614,7 +1549,7 @@ impl Codegen {
         let phi = LLVMBuildPhi(
             self.builder,
             LLVMTypeOf(then_val),
-            CString::new("ternary_phi").unwrap().as_ptr(),
+            "ternary_phi\0".as_ptr() as *const i8,
         );
         LLVMAddIncoming(
             phi,
@@ -1665,7 +1600,7 @@ impl Codegen {
                     self.builder,
                     strct,
                     idx,
-                    CString::new("structref").unwrap().as_ptr(),
+                    "structref\0".as_ptr() as *const i8,
                 ),
                 Some(Type::Ptr(Box::new(
                     rectype.field_types[idx as usize].clone(),
@@ -1743,14 +1678,14 @@ impl Codegen {
                             .as_mut_slice()
                             .as_mut_ptr(),
                             2,
-                            CString::new("gep").unwrap().as_ptr(),
+                            "gep\0".as_ptr() as *const i8,
                         ),
                         Some(Type::Ptr(Box::new((**ary_elemty).clone()))),
                     ));
                 }
                 _ => {
                     return Ok((
-                        LLVMBuildLoad(self.builder, val, CString::new("var").unwrap().as_ptr()),
+                        LLVMBuildLoad(self.builder, val, "var\0".as_ptr() as *const i8),
                         Some((**elem_ty).clone()),
                     ));
                 }
@@ -1817,11 +1752,7 @@ impl Codegen {
 
         let (llvm_func, llvm_functy) = match LLVMGetTypeKind(func.llvm_ty) {
             llvm::LLVMTypeKind::LLVMPointerTypeKind => (
-                LLVMBuildLoad(
-                    self.builder,
-                    func.llvm_val,
-                    CString::new("load").unwrap().as_ptr(),
-                ),
+                LLVMBuildLoad(self.builder, func.llvm_val, "load\0".as_ptr() as *const i8),
                 LLVMGetElementType(func.llvm_ty),
             ),
             _ => (func.llvm_val, func.llvm_ty),
@@ -1861,7 +1792,7 @@ impl Codegen {
                 llvm_func,
                 args_val.as_mut_slice().as_mut_ptr(),
                 args_len as u32,
-                CString::new("").unwrap().as_ptr(),
+                "\0".as_ptr() as *const i8,
             ),
             Some((*func_ret_ty).clone()),
         ))
@@ -1934,12 +1865,9 @@ impl Codegen {
         Ok((LLVMConstReal(LLVMDoubleType(), f), Some(Type::Double)))
     }
     pub unsafe fn make_const_str(&mut self, s: &String) -> CodegenR<(LLVMValueRef, Option<Type>)> {
+        let s = CString::new(s.as_str()).unwrap();
         Ok((
-            LLVMBuildGlobalStringPtr(
-                self.builder,
-                CString::new(s.as_str()).unwrap().as_ptr(),
-                CString::new("str").unwrap().as_ptr(),
-            ),
+            LLVMBuildGlobalStringPtr(self.builder, s.as_ptr(), "str\0".as_ptr() as *const i8),
             Some(Type::Ptr(Box::new(Type::Char(Sign::Signed)))),
         ))
     }
@@ -1947,7 +1875,7 @@ impl Codegen {
     // Functions Related to Types
     pub unsafe fn typecast(&self, val: LLVMValueRef, to: LLVMTypeRef) -> LLVMValueRef {
         let v_ty = LLVMTypeOf(val);
-        let inst_name = CString::new("").unwrap().as_ptr();
+        let inst_name = "\0".as_ptr() as *const i8;
 
         if matches!(LLVMGetTypeKind(to), llvm::LLVMTypeKind::LLVMVoidTypeKind) {
             return val;
@@ -2005,18 +1933,18 @@ impl Codegen {
             &Type::Array(ref elemty, ref size) => {
                 LLVMArrayType(self.type_to_llvmty(&**elemty), *size as u32)
             }
-            &Type::Func(ref ret_type, ref param_types, ref is_vararg) => LLVMFunctionType(
-                self.type_to_llvmty(&**ret_type),
-                || -> *mut LLVMTypeRef {
-                    let mut param_llvm_types: Vec<LLVMTypeRef> = Vec::new();
-                    for param_type in &*param_types {
-                        param_llvm_types.push(self.type_to_llvmty(&param_type));
-                    }
-                    param_llvm_types.as_mut_slice().as_mut_ptr()
-                }(),
-                (*param_types).len() as u32,
-                if *is_vararg { 1 } else { 0 },
-            ),
+            &Type::Func(ref ret_type, ref param_types, ref is_vararg) => {
+                let mut param_llvm_types: Vec<LLVMTypeRef> = Vec::new();
+                for param_type in &*param_types {
+                    param_llvm_types.push(self.type_to_llvmty(&param_type));
+                }
+                LLVMFunctionType(
+                    self.type_to_llvmty(&**ret_type),
+                    param_llvm_types.as_mut_slice().as_mut_ptr(),
+                    (*param_types).len() as u32,
+                    if *is_vararg { 1 } else { 0 },
+                )
+            }
             &Type::Struct(ref name, ref fields) => self.make_struct(name, fields),
             &Type::Union(ref name, ref fields, ref max_size_field_pos) => {
                 self.make_union(name, fields, *max_size_field_pos)
@@ -2044,7 +1972,8 @@ impl Codegen {
                     rectype.llvm_rectype
                 }
             } else {
-                LLVMStructCreateNamed(self.context, CString::new(name.as_str()).unwrap().as_ptr())
+                let name = CString::new(name.as_str()).unwrap();
+                LLVMStructCreateNamed(self.context, name.as_ptr())
             }
         };
 
