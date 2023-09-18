@@ -1,4 +1,4 @@
-#! /bin/bash
+#!/bin/bash
 
 bc=$(echo $1 | sed -e s/\.c$/\.bc/)
 s=$(echo $1 | sed -e s/\.c$/\.s/)
